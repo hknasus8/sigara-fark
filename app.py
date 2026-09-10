@@ -2,6 +2,7 @@ import streamlit as st
 import cv2
 import numpy as np
 import os
+import pandas as pd
 from PIL import Image
 
 # Sayfa yapılandırması
@@ -11,7 +12,7 @@ st.set_page_config(
     layout="wide"
 )
 
-# Kenar çubuğuna güvenli logo ekleme (Boyutlandırma eklenerek hata riski ortadan kaldırıldı)
+# Kenar çubuğuna logo ekleme
 if os.path.exists("logo.jpg"):
     st.sidebar.image("logo.jpg", width=220)
 elif os.path.exists("logo.png"):
@@ -23,15 +24,33 @@ st.sidebar.markdown("---")
 st.sidebar.header("Denetim ve Bayi Seçimi")
 threshold_val = st.sidebar.slider("Fark Hassasiyet Eşiği", 10, 100, 30)
 
-# Örnek bayi listesi
-bayi_listesi = ["Bayi_001_Ahmet_Market", "Bayi_002_Mehmet_Tekel", "Bayi_003_Can_Büfe"]
+# Excel dosyasından bayileri dinamik olarak okuma
+excel_dosya_adi = "bayiler.xlsx"
+
+bayi_listesi = []
+if os.path.exists(excel_dosya_adi):
+    try:
+        # DATA sekmesinden 'UNVAN' sütununu okuyoruz
+        df_bayiler = pd.read_excel(excel_dosya_adi, sheet_name="DATA")
+        if "UNVAN" in df_bayiler.columns:
+            bayi_listesi = df_bayiler["UNVAN"].dropna().astype(str).tolist()
+        else:
+            bayi_listesi = df_bayiler.iloc[:, 0].dropna().astype(str).tolist()
+    except Exception as e:
+        st.sidebar.error(f"Excel okunurken hata oluştu: {e}")
+
+# Eğer liste boşsa uyarı ver
+if not bayi_listesi:
+    bayi_listesi = ["Excel dosyasından unvanlar okunamadı"]
+
 secilen_bayi = st.sidebar.selectbox("Denetlenecek Bayiyi Seçin", bayi_listesi)
 
 st.title("SİGARA STANDI AKILLI DENETİM SİSTEMİ - Fark Analizi")
 st.markdown(f"**Seçilen Bayi:** {secilen_bayi}")
+st.markdown("<p style='color: gray; font-size: 14px;'>Developed by Hakan</p>", unsafe_allow_html=True)
 st.markdown("---")
 
-# İki ayrı görsel yükleme alanı: Referans ve Mevcut Durum (Her koşulda sabit ve görünür)
+# İki ayrı görsel yükleme alanı: Referans ve Mevcut Durum
 col_up1, col_up2 = st.columns(2)
 with col_up1:
     ref_file = st.file_uploader("1. Referans (İdeal) Stand Görseli", type=["jpg", "jpeg", "png"], key="ref")
@@ -103,7 +122,7 @@ if ref_file is not None and curr_file is not None:
                     st.download_button(
                         label="📥 İşlenmiş Fotoğrafı İndir (JPG)",
                         data=encoded_image.tobytes(),
-                        file_name=f"{secilen_bayi}_analiz_sonucu.jpg",
+                        file_name=f"{secilen_bayi.replace(' ', '_')}_analiz_sonucu.jpg",
                         mime="image/jpeg"
                     )
 

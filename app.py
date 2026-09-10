@@ -24,8 +24,8 @@ st.sidebar.markdown("---")
 st.sidebar.header("Denetim ve Bayi Seçimi")
 threshold_val = st.sidebar.slider("Fark Hassasiyet Eşiği", 10, 100, 30)
 
-# Yandex Disk 'BAYİ' Klasörünün Güncel Paylaşım Linki
-YANDEX_ROOT_PUBLIC_KEY = "BURAYA_KOPYALADIGINIZ_LINKI_YAPISTIRIN"
+# Yandex Disk 'BAYİ' Klasörünün Public Linki
+YANDEX_ROOT_PUBLIC_KEY = "https://disk.yandex.com.tr/d/JXJNYBDAk6fePw"
 
 # Excel dosyasından bayileri okuma
 excel_dosya_adi = "bayiler.xlsx"

@@ -101,3 +101,4 @@ if ref_file is not None and curr_file is not None:
             st.dataframe(report_data, use_container_width=True)
 else:
     st.info("Lütfen analiz yapabilmek için yukarıdan hem **Referans Görseli** hem de **Mevcut Görseli** yükleyin.")
+    st.markdown("<br><p style='text-align: center; color: gray;'>Developed by Hakan</p>", unsafe_allow_html=True)

@@ -3,7 +3,7 @@ import cv2
 import numpy as np
 import os
 import pandas as pd
-from PIL import Image
+import requests
 
 # Sayfa yapılandırması
 st.set_page_config(
@@ -24,13 +24,15 @@ st.sidebar.markdown("---")
 st.sidebar.header("Denetim ve Bayi Seçimi")
 threshold_val = st.sidebar.slider("Fark Hassasiyet Eşiği", 10, 100, 30)
 
-# Excel dosyasından bayileri dinamik olarak okuma
-excel_dosya_adi = "bayiler.xlsx"
+# Yandex Disk Ana Klasör Public Linki
+YANDEX_ROOT_PUBLIC_KEY = "https://disk.yandex.com.tr/d/JXJNYBDAk6fePw"
 
+# Excel dosyasından bayileri okuma
+excel_dosya_adi = "bayiler.xlsx"
 bayi_listesi = []
+
 if os.path.exists(excel_dosya_adi):
     try:
-        # DATA sekmesinden 'UNVAN' sütununu okuyoruz
         df_bayiler = pd.read_excel(excel_dosya_adi, sheet_name="DATA")
         if "UNVAN" in df_bayiler.columns:
             bayi_listesi = df_bayiler["UNVAN"].dropna().astype(str).tolist()
@@ -39,36 +41,94 @@ if os.path.exists(excel_dosya_adi):
     except Exception as e:
         st.sidebar.error(f"Excel okunurken hata oluştu: {e}")
 
-# Eğer liste boşsa uyarı ver
 if not bayi_listesi:
     bayi_listesi = ["Excel dosyasından unvanlar okunamadı"]
 
 secilen_bayi = st.sidebar.selectbox("Denetlenecek Bayiyi Seçin", bayi_listesi)
 
-st.title("SİGARA STANDI AKILLI DENETİM SİSTEMİ - Fark Analizi")
+st.title("SİGARA STANDI AKıllı DENETİM SİSTEMİ - Fark Analizi")
 st.markdown(f"**Seçilen Bayi:** {secilen_bayi}")
 st.markdown("<p style='color: gray; font-size: 14px;'>Developed by Hakan</p>", unsafe_allow_html=True)
 st.markdown("---")
 
-# İki ayrı görsel yükleme alanı: Referans ve Mevcut Durum
+# Yandex Disk'ten bayi klasöründeki fotoğrafı bulup indiren fonksiyon
+def yandex_bayi_gorseli_getir(public_key, bayi_adi):
+    try:
+        # 1. Ana klasör içeriğini listele
+        api_url = f"https://cloud-api.yandex.net:443/v1/disk/public/resources?public_key={public_key}"
+        resp = requests.get(api_url)
+        if resp.status_code != 200:
+            return None
+        
+        data = resp.json()
+        items = data.get("_embedded", {}).get("items", [])
+        
+        # 2. Seçilen bayi adına eşleşen alt klasörü bul
+        bayi_klasor_path = None
+        for item in items:
+            if item.get("type") == "dir" and item.get("name").strip().lower() == bayi_adi.strip().lower():
+                bayi_klasor_path = item.get("path")
+                break
+        
+        if not bayi_klasor_path:
+            return None
+            
+        # 3. Bayi klasörünün içeriğini listele
+        sub_api_url = f"https://cloud-api.yandex.net:443/v1/disk/public/resources?public_key={public_key}&path={bayi_klasor_path}"
+        sub_resp = requests.get(sub_api_url)
+        if sub_resp.status_code != 200:
+            return None
+            
+        sub_items = sub_resp.json().get("_embedded", {}).get("items", [])
+        
+        # 4. İçindeki ilk görsel dosyasını bul (jpg, png vb.)
+        gorsel_download_url = None
+        for sub_item in sub_items:
+            if sub_item.get("type") == "file":
+                file_name = sub_item.get("name", "").lower()
+                if file_name.endswith((".jpg", ".jpeg", ".png")):
+                    gorsel_download_url = sub_item.get("file") # Doğrudan indirme bağlantısı
+                    break
+                    
+        if gorsel_download_url:
+            img_resp = requests.get(gorsel_download_url)
+            if img_resp.status_code == 200:
+                image_bytes = np.asarray(bytearray(img_resp.content), dtype=np.uint8)
+                return cv2.imdecode(image_bytes, cv2.IMREAD_COLOR)
+    except Exception as e:
+        print(f"Yandex bağlantı hatası: {e}")
+    return None
+
+# Referans görseli Yandex Disk'ten otomatik çekme
+ref_img = None
+with st.spinner(f"'{secilen_bayi}' için Yandex Disk'ten referans görsel aranıyor..."):
+    ref_img = yandex_bayi_gorseli_getir(YANDEX_ROOT_PUBLIC_KEY, secilen_bayi)
+
+# Görsel yükleme alanları
 col_up1, col_up2 = st.columns(2)
+
 with col_up1:
-    ref_file = st.file_uploader("1. Referans (İdeal) Stand Görseli", type=["jpg", "jpeg", "png"], key="ref")
+    if ref_img is not None:
+        st.success(f"✅ '{secilen_bayi}' Referans Görseli Yandex'ten Otomatik Yüklendi")
+        st.image(ref_img, channels="BGR", use_container_width=True)
+    else:
+        st.warning("⚠️ Yandex Disk'te bu bayiye ait klasör veya fotoğraf bulunamadı. Lütfen manuel yükleyin:")
+        ref_file = st.file_uploader("1. Referans (İdeal) Stand Görseli (Manuel)", type=["jpg", "jpeg", "png"], key="ref")
+        if ref_file is not None:
+            ref_bytes = np.asarray(bytearray(ref_file.read()), dtype=np.uint8)
+            ref_img = cv2.imdecode(ref_bytes, cv2.IMREAD_COLOR)
+
 with col_up2:
     curr_file = st.file_uploader("2. Kontrol Edilecek (Mevcut) Görsel", type=["jpg", "jpeg", "png"], key="curr")
 
 st.markdown("---")
 
-# Eğer her iki görsel de yüklendiyse analiz ekranını aç
-if ref_file is not None and curr_file is not None:
-    # Görselleri belleğe okuma
-    ref_bytes = np.asarray(bytearray(ref_file.read()), dtype=np.uint8)
-    ref_img = cv2.imdecode(ref_bytes, cv2.IMREAD_COLOR)
-
+# Eğer her iki görsel de hazırsa analizi başlat
+if ref_img is not None and curr_file is not None:
     curr_bytes = np.asarray(bytearray(curr_file.read()), dtype=np.uint8)
     curr_img = cv2.imdecode(curr_bytes, cv2.IMREAD_COLOR)
 
-    # Boyut uyumsuzluğu varsa mevcut görseli referansa göre boyutlandır
+    # Boyut uyumsuzluğu varsa boyutlandır
     if ref_img.shape != curr_img.shape:
         curr_img = cv2.resize(curr_img, (ref_img.shape[1], ref_img.shape[0]))
 
@@ -82,24 +142,17 @@ if ref_file is not None and curr_file is not None:
 
     if st.button("Farkı Analiz Et ve Eksikleri Bul", type="primary"):
         with st.spinner("Görseller karşılaştırılıyor ve farklar hesaplanıyor..."):
-            # Gri tonlamaya dönüştürme
             gray_ref = cv2.cvtColor(ref_img, cv2.COLOR_BGR2GRAY)
             gray_curr = cv2.cvtColor(curr_img, cv2.COLOR_BGR2GRAY)
 
-            # İki görsel arasındaki mutlak farkı bulma
             diff = cv2.absdiff(gray_ref, gray_curr)
-            
-            # Eşikleme (Thresholding) ile gürültüleri ayıklama
             _, thresh = cv2.threshold(diff, threshold_val, 255, cv2.THRESH_BINARY)
-
-            # Konturları (farklı alanları) tespit etme
             contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
-            # Mevcut görsel üzerine tespit edilen farkları kutu içine alma
             result_img = curr_img.copy()
             eksik_sayisi = 0
-            
             report_data = []
+            
             for i, c in enumerate(contours):
                 if cv2.contourArea(c) > 400: 
                     x, y, w, h = cv2.boundingRect(c)
@@ -109,14 +162,13 @@ if ref_file is not None and curr_file is not None:
                         "Bayi": secilen_bayi,
                         "Fark ID": eksik_sayisi,
                         "Konum (X, Y)": f"X: {x}, Y: {y}",
-                        "Durum": "Eksik / Değişiklik Tespit Edildi"
+                        "Durum": "Eksik / Değişiklik Tespir Edildi"
                     })
 
             with col3:
                 st.subheader("Tespit Edilen Farklar")
                 st.image(result_img, channels="BGR", use_container_width=True)
 
-                # İşlenmiş görseli JPG olarak indirme butonu
                 success, encoded_image = cv2.imencode(".jpg", result_img)
                 if success:
                     st.download_button(
@@ -131,11 +183,10 @@ if ref_file is not None and curr_file is not None:
         else:
             st.success(f"{secilen_bayi} denetimi tamamlandı: Referans görsel ile mevcut görsel arasında belirgin bir fark bulunamadı.")
         
-        # Detaylı Rapor Tablosu
         st.subheader("Denetim Raporu Detayı")
         if report_data:
             st.dataframe(report_data, use_container_width=True)
 else:
-    st.info("Lütfen analiz yapabilmek için yukarıdan hem **1. Referans (İdeal) Stand Görselini** hem de **2. Kontrol Edilecek (Mevcut) Görseli** yükleyin.")
+    st.info("Lütfen sol menüden bayiyi seçin (Yandex Disk'ten fotoğraf otomatik gelecektir) ve sağdan **2. Kontrol Edilecek Görseli** yükleyin.")
 
 st.markdown("<br><p style='text-align: center; color: gray;'>Developed by Hakan</p>", unsafe_allow_html=True)

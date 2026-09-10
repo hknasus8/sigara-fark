@@ -51,10 +51,11 @@ st.markdown(f"**Seçilen Bayi:** {secilen_bayi}")
 st.markdown("<p style='color: gray; font-size: 14px;'>Developed by Hakan</p>", unsafe_allow_html=True)
 st.markdown("---")
 
-# Yandex Disk'ten bayi klasöründeki fotoğrafı bulup indiren fonksiyon
+# Yandex Disk'ten esnek eşleşme ile bayi klasörünü ve görseli bulan fonksiyon
 def yandex_bayi_gorseli_getir(public_key, bayi_adi):
     try:
-        api_url = f"https://cloud-api.yandex.net:443/v1/disk/public/resources?public_key={public_key}"
+        # 1000'den fazla öğe için limit artırımı (limit=2000)
+        api_url = f"https://cloud-api.yandex.net:443/v1/disk/public/resources?public_key={public_key}&limit=2000"
         resp = requests.get(api_url)
         if resp.status_code != 200:
             return None
@@ -62,16 +63,21 @@ def yandex_bayi_gorseli_getir(public_key, bayi_adi):
         data = resp.json()
         items = data.get("_embedded", {}).get("items", [])
         
+        hedef_aranan = bayi_adi.strip().lower()
         bayi_klasor_path = None
+        
         for item in items:
-            if item.get("type") == "dir" and item.get("name").strip().lower() == bayi_adi.strip().lower():
-                bayi_klasor_path = item.get("path")
-                break
+            if item.get("type") == "dir":
+                Item_Adi = item.get("name", "").strip().lower()
+                # Tam eşleşme veya içerilme kontrolü (boşluk ve karakter esnekliği)
+                if hedef_aranan in Item_Adi or Item_Adi in hedef_aranan:
+                    bayi_klasor_path = item.get("path")
+                    break
         
         if not bayi_klasor_path:
             return None
             
-        sub_api_url = f"https://cloud-api.yandex.net:443/v1/disk/public/resources?public_key={public_key}&path={bayi_klasor_path}"
+        sub_api_url = f"https://cloud-api.yandex.net:443/v1/disk/public/resources?public_key={public_key}&path={bayi_klasor_path}&limit=100"
         sub_resp = requests.get(sub_api_url)
         if sub_resp.status_code != 200:
             return None
@@ -97,7 +103,7 @@ def yandex_bayi_gorseli_getir(public_key, bayi_adi):
 
 # Referans görseli Yandex Disk'ten otomatik çekme
 ref_img = None
-with st.spinner(f"'{secilen_bayi}' için Yandex Disk'ten referans görsel aranıyor..."):
+with st.spinner(f"'{secilen_bayi}' için Yandex Disk'te arama yapılıyor..."):
     ref_img = yandex_bayi_gorseli_getir(YANDEX_ROOT_PUBLIC_KEY, secilen_bayi)
 
 # Görsel yükleme alanları

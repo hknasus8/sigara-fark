@@ -24,8 +24,8 @@ st.sidebar.markdown("---")
 st.sidebar.header("Denetim ve Bayi Seçimi")
 threshold_val = st.sidebar.slider("Fark Hassasiyet Eşiği", 10, 100, 30)
 
-# Yandex Disk Ana Klasör Public Linki
-YANDEX_ROOT_PUBLIC_KEY = "https://disk.yandex.com.tr/d/JXJNYBDAk6fePw"
+# Yandex Disk 'BAYİ' Klasörünün Güncel Paylaşım Linki
+YANDEX_ROOT_PUBLIC_KEY = "BURAYA_KOPYALADIGINIZ_LINKI_YAPISTIRIN"
 
 # Excel dosyasından bayileri okuma
 excel_dosya_adi = "bayiler.xlsx"
@@ -46,7 +46,7 @@ if not bayi_listesi:
 
 secilen_bayi = st.sidebar.selectbox("Denetlenecek Bayiyi Seçin", bayi_listesi)
 
-st.title("SİGARA STANDI AKıllı DENETİM SİSTEMİ - Fark Analizi")
+st.title("SİGARA STANDI AKILLI DENETİM SİSTEMİ - Fark Analizi")
 st.markdown(f"**Seçilen Bayi:** {secilen_bayi}")
 st.markdown("<p style='color: gray; font-size: 14px;'>Developed by Hakan</p>", unsafe_allow_html=True)
 st.markdown("---")
@@ -54,7 +54,6 @@ st.markdown("---")
 # Yandex Disk'ten bayi klasöründeki fotoğrafı bulup indiren fonksiyon
 def yandex_bayi_gorseli_getir(public_key, bayi_adi):
     try:
-        # 1. Ana klasör içeriğini listele
         api_url = f"https://cloud-api.yandex.net:443/v1/disk/public/resources?public_key={public_key}"
         resp = requests.get(api_url)
         if resp.status_code != 200:
@@ -63,7 +62,6 @@ def yandex_bayi_gorseli_getir(public_key, bayi_adi):
         data = resp.json()
         items = data.get("_embedded", {}).get("items", [])
         
-        # 2. Seçilen bayi adına eşleşen alt klasörü bul
         bayi_klasor_path = None
         for item in items:
             if item.get("type") == "dir" and item.get("name").strip().lower() == bayi_adi.strip().lower():
@@ -73,7 +71,6 @@ def yandex_bayi_gorseli_getir(public_key, bayi_adi):
         if not bayi_klasor_path:
             return None
             
-        # 3. Bayi klasörünün içeriğini listele
         sub_api_url = f"https://cloud-api.yandex.net:443/v1/disk/public/resources?public_key={public_key}&path={bayi_klasor_path}"
         sub_resp = requests.get(sub_api_url)
         if sub_resp.status_code != 200:
@@ -81,13 +78,12 @@ def yandex_bayi_gorseli_getir(public_key, bayi_adi):
             
         sub_items = sub_resp.json().get("_embedded", {}).get("items", [])
         
-        # 4. İçindeki ilk görsel dosyasını bul (jpg, png vb.)
         gorsel_download_url = None
         for sub_item in sub_items:
             if sub_item.get("type") == "file":
                 file_name = sub_item.get("name", "").lower()
                 if file_name.endswith((".jpg", ".jpeg", ".png")):
-                    gorsel_download_url = sub_item.get("file") # Doğrudan indirme bağlantısı
+                    gorsel_download_url = sub_item.get("file")
                     break
                     
         if gorsel_download_url:
@@ -123,12 +119,10 @@ with col_up2:
 
 st.markdown("---")
 
-# Eğer her iki görsel de hazırsa analizi başlat
 if ref_img is not None and curr_file is not None:
     curr_bytes = np.asarray(bytearray(curr_file.read()), dtype=np.uint8)
     curr_img = cv2.imdecode(curr_bytes, cv2.IMREAD_COLOR)
 
-    # Boyut uyumsuzluğu varsa boyutlandır
     if ref_img.shape != curr_img.shape:
         curr_img = cv2.resize(curr_img, (ref_img.shape[1], ref_img.shape[0]))
 
@@ -162,7 +156,7 @@ if ref_img is not None and curr_file is not None:
                         "Bayi": secilen_bayi,
                         "Fark ID": eksik_sayisi,
                         "Konum (X, Y)": f"X: {x}, Y: {y}",
-                        "Durum": "Eksik / Değişiklik Tespir Edildi"
+                        "Durum": "Eksik / Değişiklik Tespit Edildi"
                     })
 
             with col3:

@@ -1,6 +1,7 @@
 import streamlit as st
 import cv2
 import numpy as np
+import os
 from PIL import Image
 
 # Sayfa yapılandırması
@@ -10,20 +11,36 @@ st.set_page_config(
     layout="wide"
 )
 
-st.title("SİGARA STANDI AKILLI DENETİM SİSTEMİ - Fark Analizi")
-st.markdown("---")
+# Kenar çubuğuna güvenli logo ekleme (Boyutlandırma eklenerek hata riski ortadan kaldırıldı)
+if os.path.exists("logo.jpg"):
+    st.sidebar.image("logo.jpg", width=220)
+elif os.path.exists("logo.png"):
+    st.sidebar.image("logo.png", width=220)
+
+st.sidebar.markdown("---")
 
 # Kenar çubuğu ayarları
-st.sidebar.header("Denetim Ayarları")
+st.sidebar.header("Denetim ve Bayi Seçimi")
 threshold_val = st.sidebar.slider("Fark Hassasiyet Eşiği", 10, 100, 30)
 
-# İki görsel yükleme alanı: Referans ve Mevcut Durum
+# Örnek bayi listesi
+bayi_listesi = ["Bayi_001_Ahmet_Market", "Bayi_002_Mehmet_Tekel", "Bayi_003_Can_Büfe"]
+secilen_bayi = st.sidebar.selectbox("Denetlenecek Bayiyi Seçin", bayi_listesi)
+
+st.title("SİGARA STANDI AKILLI DENETİM SİSTEMİ - Fark Analizi")
+st.markdown(f"**Seçilen Bayi:** {secilen_bayi}")
+st.markdown("---")
+
+# İki ayrı görsel yükleme alanı: Referans ve Mevcut Durum (Her koşulda sabit ve görünür)
 col_up1, col_up2 = st.columns(2)
 with col_up1:
     ref_file = st.file_uploader("1. Referans (İdeal) Stand Görseli", type=["jpg", "jpeg", "png"], key="ref")
 with col_up2:
     curr_file = st.file_uploader("2. Kontrol Edilecek (Mevcut) Görsel", type=["jpg", "jpeg", "png"], key="curr")
 
+st.markdown("---")
+
+# Eğer her iki görsel de yüklendiyse analiz ekranını aç
 if ref_file is not None and curr_file is not None:
     # Görselleri belleğe okuma
     ref_bytes = np.asarray(bytearray(ref_file.read()), dtype=np.uint8)
@@ -65,12 +82,12 @@ if ref_file is not None and curr_file is not None:
             
             report_data = []
             for i, c in enumerate(contours):
-                # Belirli bir alanın üzerindeki değişimleri dikkate al (küçük parazitleri ele)
                 if cv2.contourArea(c) > 400: 
                     x, y, w, h = cv2.boundingRect(c)
                     cv2.rectangle(result_img, (x, y), (x + w, y + h), (0, 0, 255), 3)
                     eksik_sayisi += 1
                     report_data.append({
+                        "Bayi": secilen_bayi,
                         "Fark ID": eksik_sayisi,
                         "Konum (X, Y)": f"X: {x}, Y: {y}",
                         "Durum": "Eksik / Değişiklik Tespit Edildi"
@@ -86,19 +103,20 @@ if ref_file is not None and curr_file is not None:
                     st.download_button(
                         label="📥 İşlenmiş Fotoğrafı İndir (JPG)",
                         data=encoded_image.tobytes(),
-                        file_name="fark_analiz_sonucu.jpg",
+                        file_name=f"{secilen_bayi}_analiz_sonucu.jpg",
                         mime="image/jpeg"
                     )
 
         if eksik_sayisi > 0:
-            st.error(f"Denetim tamamlandı! Toplam {eksik_sayisi} farklılık / eksik bölge kırmızı çerçeveyle işaretlendi.")
+            st.error(f"{secilen_bayi} denetimi tamamlandı: Toplam {eksik_sayisi} farklılık / eksik bölge kırmızı çerçeveyle işaretlendi.")
         else:
-            st.success("Denetim tamamlandı! Referans görsel ile mevcut görsel arasında belirgin bir fark bulunamadı.")
+            st.success(f"{secilen_bayi} denetimi tamamlandı: Referans görsel ile mevcut görsel arasında belirgin bir fark bulunamadı.")
         
         # Detaylı Rapor Tablosu
         st.subheader("Denetim Raporu Detayı")
         if report_data:
             st.dataframe(report_data, use_container_width=True)
 else:
-    st.info("Lütfen analiz yapabilmek için yukarıdan hem **Referans Görseli** hem de **Mevcut Görseli** yükleyin.")
-    st.markdown("<br><p style='text-align: center; color: gray;'>Developed by Hakan</p>", unsafe_allow_html=True)
+    st.info("Lütfen analiz yapabilmek için yukarıdan hem **1. Referans (İdeal) Stand Görselini** hem de **2. Kontrol Edilecek (Mevcut) Görseli** yükleyin.")
+
+st.markdown("<br><p style='text-align: center; color: gray;'>Developed by Hakan</p>", unsafe_allow_html=True)

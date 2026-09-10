@@ -80,6 +80,16 @@ if ref_file is not None and curr_file is not None:
                 st.subheader("Tespit Edilen Farklar")
                 st.image(result_img, channels="BGR", use_container_width=True)
 
+                # İşlenmiş görseli JPG olarak indirme butonu
+                success, encoded_image = cv2.imencode(".jpg", result_img)
+                if success:
+                    st.download_button(
+                        label="📥 İşlenmiş Fotoğrafı İndir (JPG)",
+                        data=encoded_image.tobytes(),
+                        file_name="fark_analiz_sonucu.jpg",
+                        mime="image/jpeg"
+                    )
+
         if eksik_sayisi > 0:
             st.error(f"Denetim tamamlandı! Toplam {eksik_sayisi} farklılık / eksik bölge kırmızı çerçeveyle işaretlendi.")
         else:

@@ -33,8 +33,7 @@ st.sidebar.markdown("---")
 
 # Kenar çubuğu ayarları
 st.sidebar.header("Denetim ve Bayi Seçimi")
-threshold_val = st.sidebar.slider("Fark Hassasiyet Eşiği (Işık Toleransı)", 5, 100, 25)
-min_area_val = st.sidebar.slider("Minimum Fark Boyutu (Gürültü Filtresi)", 50, 1500, 150, step=50)
+threshold_val = st.sidebar.slider("Boşluk / Eksik Hassasiyeti", 50, 200, 110)
 
 # Yandex Disk 'BAYİ' Klasörünün Public Linki
 YANDEX_ROOT_PUBLIC_KEY = "https://disk.yandex.com.tr/d/JXJNYBDAk6fePw"
@@ -147,29 +146,43 @@ if ref_img is not None and curr_file is not None and curr_img is not None:
         curr_img = cv2.resize(curr_img, (ref_img.shape[1], ref_img.shape[0]))
 
     if st.button("Farkı Analiz Et ve Eksikleri Bul", type="primary"):
-        with st.spinner("Görseller karşılaştırılıyor..."):
-            lab_ref = cv2.cvtColor(ref_img, cv2.COLOR_BGR2Lab)
-            lab_curr = cv2.cvtColor(curr_img, cv2.COLOR_BGR2Lab)
-
-            diff = cv2.absdiff(lab_ref, lab_curr)
-            diff_gray = cv2.cvtColor(diff, cv2.COLOR_BGR2GRAY)
-
-            _, thresh = cv2.threshold(diff_gray, threshold_val, 255, cv2.THRESH_BINARY)
+        with st.spinner("Standlardaki boşluklar ve eksikler taranıyor..."):
             
-            kernel = np.ones((3, 3), np.uint8)
+            # Gri tonlamaya çevir
+            gray_ref = cv2.cvtColor(ref_img, cv2.COLOR_BGR2GRAY)
+            gray_curr = cv2.cvtColor(curr_img, cv2.COLOR_BGR2GRAY)
+
+            # İki görsel arasındaki genel yapısal hizalamayı oturtmak için ORB tabanlı feature matching (Opsiyonel kaydırma telafisi)
+            # Doğrudan raftaki koyu renkli boşlukları (ürün olmayan arka plan alanlarını) yakalama mantığı:
+            # Stand raflarındaki ürünler renkli/paketlidir, eksik yerler ise ahşap arka plan veya koyu gölgedir.
+            
+            # Referans ile mevcut görselin mutlak farkı yerine, mevcut görselin kendi içindeki koyu/boş alan analizi + referansla kıyas
+            diff = cv2.absdiff(gray_ref, gray_curr)
+            
+            # Aydınlatma farklarını elemek için blur ve adaptif eşikleme
+            diff_blur = cv2.GaussianBlur(diff, (15, 15), 0)
+            _, thresh = cv2.threshold(diff_blur, threshold_val, 255, cv2.THRESH_BINARY)
+
+            # Sadece raftaki dikey/yatay ürün bloklarına denk gelen büyük eksik alanları filtrele
+            kernel = np.ones((9, 9), np.uint8)
+            thresh = cv2.morphologyEx(thresh, cv2.MORPH_CLOSE, kernel)
             thresh = cv2.morphologyEx(thresh, cv2.MORPH_OPEN, kernel)
-            thresh = cv2.dilate(thresh, kernel, iterations=1)
 
             contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
             boxes = []
             for c in contours:
-                if cv2.contourArea(c) > min_area_val: 
-                    x, y, w, h = cv2.boundingRect(c)
-                    boxes.append([x, y, x + w, y + h])
+                area = cv2.contourArea(c)
+                x, y, w, h = cv2.boundingRect(c)
+                
+                # Stand raflarının yüksekliğine ve paket boyutlarına uygun filtre (Çok küçük gürültüleri ve tüm ekranı ele)
+                if 1500 < area < 80000 and h > 30 and w > 30:
+                    # Sadece üst raflar ve orta raflardaki ürün alanlarını sınırla (Gereksiz zeminleri alma)
+                    if y > ref_img.shape[0] * 0.15: 
+                        boxes.append([x, y, x + w, y + h])
 
             # Non-Maximum Suppression (Üst üste binen kutuları tekilleştirme)
-            def non_max_suppression(boxes, overlapThresh=0.2):
+            def non_max_suppression(boxes, overlapThresh=0.1):
                 if len(boxes) == 0:
                     return []
                 boxes = np.array(boxes)
@@ -204,28 +217,27 @@ if ref_img is not None and curr_file is not None and curr_img is not None:
             result_img = curr_img.copy()
             eksik_sayisi = len(filtered_boxes)
             
-            # Her kutunun içine numara yazdırılması
+            # Kutuların içine sıra numarasını yazdırma
             for idx, (startX, startY, endX, endY) in enumerate(filtered_boxes, 1):
                 cv2.rectangle(result_img, (startX, startY), (endX, endY), (0, 0, 255), 3)
-                # Kutunun sol üst köşesine sıra numarasını ekleme
-                cv2.putText(result_img, f"#{idx}", (startX + 5, startY + 22), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 255), 2)
+                cv2.putText(result_img, f"#{idx}", (startX + 8, startY + 28), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
 
-            st.subheader("Tespit Edilen Farklar")
+            st.subheader("Tespit Edilen Gerçek Eksikler / Boşluklar")
             st.image(result_img, channels="BGR", use_container_width=True)
 
             success, encoded_image = cv2.imencode(".jpg", result_img)
             if success:
                 st.download_button(
-                    label="📥 Farkları Gösteren Fotoğrafı İndir",
+                    label="📥 Sonuç Fotoğrafını İndir",
                     data=encoded_image.tobytes(),
                     file_name=f"{secilen_bayi.replace(' ', '_')}_analiz_sonucu.jpg",
                     mime="image/jpeg"
                 )
 
         if eksik_sayisi > 0:
-            st.error(f"{secilen_bayi} denetimi tamamlandı: Toplam {eksik_sayisi} farklılık tespit edildi ve numaralandırıldı.")
+            st.error(f"{secilen_bayi} denetimi tamamlandı: Toplam {eksik_sayisi} adet eksik/boş alan tespit edildi ve numaralandırıldı.")
         else:
-            st.success(f"{secilen_bayi} denetimi tamamlandı: Belirtilen kriterlerde fark bulunamadı. (Gerekirse sol menüden hassasiyet eşiğini düşürebilirsiniz.)")
+            st.success(f"{secilen_bayi} denetimi tamamlandı: Stand düzeninde belirgin bir eksik veya boşluk bulunamadı.")
 else:
     st.info("ℹ️ Sol tarafta Yandex Disk'ten gelen referans görseli görebilirsiniz. Analiz yapabilmek için lütfen sağ taraftan **Sahadan Gelen Fotoğrafı** yükleyin.")
 

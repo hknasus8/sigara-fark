@@ -201,6 +201,14 @@ with col_up2:
 
 st.markdown("---")
 
+# Session state tanımlamaları
+if "result_img" not in st.session_state:
+    st.session_state.result_img = None
+if "eksik_sayisi" not in st.session_state:
+    st.session_state.eksik_sayisi = 0
+if "analiz_yapildi" not in st.session_state:
+    st.session_state.analiz_yapildi = False
+
 if ref_img is not None and curr_file is not None and curr_img is not None:
     if st.button("Farkı Analiz Et ve Eksikleri Bul", type="primary"):
         with st.spinner("Gelişmiş açı ve eksik analizi yapılıyor..."):
@@ -268,7 +276,6 @@ if ref_img is not None and curr_file is not None and curr_img is not None:
             result_img = curr_img.copy()
             eksik_sayisi = len(filtered_boxes)
             
-            # İnce ve şık çerçeveler (kalınlık 2)
             for idx, (startX, startY, endX, endY) in enumerate(filtered_boxes, 1):
                 cv2.rectangle(result_img, (startX, startY), (endX, endY), (0, 0, 255), 2)
                 cv2.putText(result_img, f"#{idx}", (startX + 3, startY + 18), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 1)
@@ -277,25 +284,28 @@ if ref_img is not None and curr_file is not None and curr_img is not None:
             cv2.putText(result_img, f"Bayi: {secilen_bayi}", (15, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2, cv2.LINE_AA)
             cv2.putText(result_img, f"Tespit Edilen Eksik/Fark Adeti: {eksik_sayisi}", (15, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 255) if eksik_sayisi > 0 else (0, 255, 0), 2, cv2.LINE_AA)
 
-            # Sonuçlar kısmına session state ile hafızada tutulan boyut ayarı ekledik
-            st.subheader("Tespit Edilen Eksikler ve Farklar")
-            
-            # Doğrudan ana ekranda çalışan boyutlandırma çubuğu
-            sonuc_gorsel_genisligi = st.slider("🔍 Sonuç Görseli Boyutunu Ayarla (Piksel)", 300, 2000, 800, step=100, key="dinamik_boyut")
-            
-            st.image(result_img, channels="BGR", width=sonuc_gorsel_genisligi)
+            st.session_state.result_img = result_img
+            st.session_state.eksik_sayisi = eksik_sayisi
+            st.session_state.analiz_yapildi = True
 
-            success, encoded_image = cv2.imencode(".jpg", result_img)
-            if success:
-                st.download_button(
-                    label="📥 Sonuç Fotoğrafını İndir",
-                    data=encoded_image.tobytes(),
-                    file_name=f"{secilen_bayi.replace(' ', '_')}_analiz_sonucu.jpg",
-                    mime="image/jpeg"
-                )
+    if st.session_state.analiz_yapildi and st.session_state.result_img is not None:
+        st.subheader("Tespit Edilen Eksikler ve Farklar")
+        
+        sonuc_gorsel_genisligi = st.slider("🔍 Sonuç Görseli Boyutunu Ayarla (Piksel)", 300, 2000, 800, step=100, key="dinamik_boyut")
+        
+        st.image(st.session_state.result_img, channels="BGR", width=sonuc_gorsel_genisligi)
 
-        if eksik_sayisi > 0:
-            st.error(f"{secilen_bayi} denetimi tamamlandı: Toplam {eksik_sayisi} adet eksik/fark alanı tespit edildi.")
+        success, encoded_image = cv2.imencode(".jpg", st.session_state.result_img)
+        if success:
+            st.download_button(
+                label="📥 Sonuç Fotoğrafını İndir",
+                data=encoded_image.tobytes(),
+                file_name=f"{secilen_bayi.replace(' ', '_')}_analiz_sonucu.jpg",
+                mime="image/jpeg"
+            )
+
+        if st.session_state.eksik_sayisi > 0:
+            st.error(f"{secilen_bayi} denetimi tamamlandı: Toplam {st.session_state.eksik_sayisi} adet eksik/fark alanı tespit edildi.")
         else:
             st.success(f"{secilen_bayi} denetimi tamamlandı: İki görsel arasında belirgin bir fark bulunamadı.")
 else:

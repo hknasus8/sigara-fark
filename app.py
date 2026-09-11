@@ -39,6 +39,17 @@ hide_st_style = """
 """
 st.markdown(hide_st_style, unsafe_allow_html=True)
 
+# Görsel boyutlandırma optimizasyon fonksiyonu (Hız kazandırır)
+def resmi_boyutlandir(img, max_genislik=1000):
+    if img is None:
+        return None
+    h, w = img.shape[:2]
+    if w > max_genislik:
+        oran = max_genislik / float(w)
+        yeni_yukseklik = int(h * oran)
+        return cv2.resize(img, (max_genislik, yeni_yukseklik), interpolation=cv2.INTER_AREA)
+    return img
+
 # --- ŞİFRE KONTROLÜ VE EKRAN MANTIĞI ---
 if "authenticated" not in st.session_state:
     st.session_state.authenticated = False
@@ -98,7 +109,7 @@ with col_baslik:
     st.markdown("<p style='color: gray; font-size: 14px; margin-top: -15px;'>Developed by Hakan</p>", unsafe_allow_html=True)
 
 with col_cikis:
-    st.write("") # Dikey hizalama için boşluk
+    st.write("") 
     if st.button("🚪 Çıkış Yap", type="secondary"):
         st.session_state.authenticated = False
         st.rerun()
@@ -110,8 +121,9 @@ secilen_bayi = st.selectbox("Bayi Seçimi", bayi_listesi, label_visibility="coll
 st.markdown(f"**Seçilen Bayi:** `{secilen_bayi}`")
 st.markdown("---")
 
-# Yandex Disk'ten esnek eşleşme ile bayi klasörünü ve görseli bulan fonksiyon
-def yandex_bayi_gorseli_getir(public_key, bayi_adi):
+# Yandex Disk'ten esnek eşleşme ile bayi klasörünü ve görseli bulan fonksiyon (Performans önbellekli)
+@st.cache_data(ttl=600, show_spinner=False)
+def yandex_bayi_gorseli_getir_cached(public_key, bayi_adi):
     try:
         api_url = f"https://cloud-api.yandex.net:443/v1/disk/public/resources?public_key={public_key}&limit=2000"
         resp = requests.get(api_url)
@@ -153,15 +165,16 @@ def yandex_bayi_gorseli_getir(public_key, bayi_adi):
             img_resp = requests.get(gorsel_download_url)
             if img_resp.status_code == 200:
                 image_bytes = np.asarray(bytearray(img_resp.content), dtype=np.uint8)
-                return cv2.imdecode(image_bytes, cv2.IMREAD_COLOR)
+                img = cv2.imdecode(image_bytes, cv2.IMREAD_COLOR)
+                return resmi_boyutlandir(img)
     except Exception as e:
         print(f"Yandex bağlantı hatası: {e}")
     return None
 
-# Referans görseli Yandex Disk'ten otomatik çekme
+# Referans görseli Yandex Disk'ten çekme
 ref_img = None
 with st.spinner(f"'{secilen_bayi}' için Yandex Disk'te arama yapılıyor..."):
-    ref_img = yandex_bayi_gorseli_getir(YANDEX_ROOT_PUBLIC_KEY, secilen_bayi)
+    ref_img = yandex_bayi_gorseli_getir_cached(YANDEX_ROOT_PUBLIC_KEY, secilen_bayi)
 
 # Görseller: Referans Görsel (Yandex) ve Sahadan Gelen (Manuel Yükleme)
 col_up1, col_up2 = st.columns(2)
@@ -181,7 +194,9 @@ with col_up2:
     curr_img = None
     if curr_file is not None:
         curr_bytes = np.asarray(bytearray(curr_file.read()), dtype=np.uint8)
-        curr_img = cv2.imdecode(curr_bytes, cv2.IMREAD_COLOR)
+        raw_curr_img = cv2.imdecode(curr_bytes, cv2.IMREAD_COLOR)
+        # Sahadan gelen fotoğrafı da hız için optimize boyuta indiriyoruz
+        curr_img = resmi_boyutlandir(raw_curr_img)
         st.success("✅ Fotoğraf yüklendi")
         st.image(curr_img, channels="BGR", use_container_width=True)
 
@@ -192,7 +207,7 @@ if ref_img is not None and curr_file is not None and curr_img is not None:
         with st.spinner("Gelişmiş açı ve eksik analizi yapılıyor..."):
             
             if ref_img.shape[:2] != curr_img.shape[:2]:
-                curr_img = cv2.resize(curr_img, (ref_img.shape[1], ref_img.shape[0]))
+                curr_img = cv2.resize(curr_img, (ref_img.shape[1], ref_img.shape[0]), interpolation=cv2.INTER_AREA)
 
             gray_ref = cv2.cvtColor(ref_img, cv2.COLOR_BGR2GRAY)
             gray_curr = cv2.cvtColor(curr_img, cv2.COLOR_BGR2GRAY)

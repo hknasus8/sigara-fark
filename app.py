@@ -115,44 +115,34 @@ ref_img = None
 with st.spinner(f"'{secilen_bayi}' için Yandex Disk'te arama yapılıyor..."):
     ref_img = yandex_bayi_gorseli_getir(YANDEX_ROOT_PUBLIC_KEY, secilen_bayi)
 
-# Görsel yükleme alanları
+# Üst kısım: Referans Görsel (Yandex) ve Sahadan Gelen (Manuel Yükleme) Yan Yana
 col_up1, col_up2 = st.columns(2)
 
 with col_up1:
-    st.markdown("**Referans Görsel Durumu:**")
+    st.subheader("1. Referans (İdeal) Görsel")
     if ref_img is not None:
-        st.success(f"✅ '{secilen_bayi}' Referans Görseli Yandex'ten Otomatik Yüklendi")
+        st.success(f"✅ '{secilen_bayi}' Yandex Disk'ten Yüklendi")
+        st.image(ref_img, channels="BGR", use_container_width=True)
     else:
-        st.warning("⚠️ Yandex Disk'te bu bayiye ait klasör bulunamadı:")
-        ref_file = st.file_uploader("1. Referans (İdeal) Stand Görseli (Manuel)", type=["jpg", "jpeg", "png"], key="ref")
-        if ref_file is not None:
-            ref_bytes = np.asarray(bytearray(ref_file.read()), dtype=np.uint8)
-            ref_img = cv2.imdecode(ref_bytes, cv2.IMREAD_COLOR)
+        st.warning(f"⚠️ '{secilen_bayi}' için Yandex Disk'te klasör veya görsel bulunamadı.")
 
 with col_up2:
-    st.markdown("**Kontrol Edilecek Sahat Fotoğrafı:**")
-    curr_file = st.file_uploader("2. Kontrol Edilecek (Mevcut) Görsel", type=["jpg", "jpeg", "png"], key="curr")
+    st.subheader("2. Kontrol Edilecek (Mevcut) Görsel")
+    curr_file = st.file_uploader("Sahadan gelen fotoğrafı yükleyin", type=["jpg", "jpeg", "png"], key="curr")
     
     curr_img = None
     if curr_file is not None:
         curr_bytes = np.asarray(bytearray(curr_file.read()), dtype=np.uint8)
         curr_img = cv2.imdecode(curr_bytes, cv2.IMREAD_COLOR)
         st.success("✅ Sahadan gelen foto yüklendi")
+        st.image(curr_img, channels="BGR", use_container_width=True)
 
 st.markdown("---")
 
-# Eğer referans görsel ve sahadan gelen mevcut görsel hazırsa yan yana ekranda göster
+# Eğer hem referans görsel (Yandex'ten) hem de sahadan gelen görsel hazırsa analiz bölümünü aç
 if ref_img is not None and curr_file is not None and curr_img is not None:
     if ref_img.shape != curr_img.shape:
         curr_img = cv2.resize(curr_img, (ref_img.shape[1], ref_img.shape[0]))
-
-    col1, col2, col3 = st.columns(3)
-    with col1:
-        st.subheader("Referans Görsel")
-        st.image(ref_img, channels="BGR", use_container_width=True)
-    with col2:
-        st.subheader("Sahadan Gelen")
-        st.image(curr_img, channels="BGR", use_container_width=True)
 
     if st.button("Farkı Analiz Et ve Eksikleri Bul", type="primary"):
         with st.spinner("Görseller karşılaştırılıyor ve farklar hesaplanıyor..."):
@@ -172,24 +162,23 @@ if ref_img is not None and curr_file is not None and curr_img is not None:
                     cv2.rectangle(result_img, (x, y), (x + w, y + h), (0, 0, 255), 3)
                     eksik_sayisi += 1
 
-            with col3:
-                st.subheader("Tespit Edilen Farklar")
-                st.image(result_img, channels="BGR", use_container_width=True)
+            st.subheader("Tespit Edilen Farklar")
+            st.image(result_img, channels="BGR", use_container_width=True)
 
-                success, encoded_image = cv2.imencode(".jpg", result_img)
-                if success:
-                    st.download_button(
-                        label="📥 Farkları Gösteren Fotoğrafı İndir",
-                        data=encoded_image.tobytes(),
-                        file_name=f"{secilen_bayi.replace(' ', '_')}_analiz_sonucu.jpg",
-                        mime="image/jpeg"
-                    )
+            success, encoded_image = cv2.imencode(".jpg", result_img)
+            if success:
+                st.download_button(
+                    label="📥 Farkları Gösteren Fotoğrafı İndir",
+                    data=encoded_image.tobytes(),
+                    file_name=f"{secilen_bayi.replace(' ', '_')}_analiz_sonucu.jpg",
+                    mime="image/jpeg"
+                )
 
         if eksik_sayisi > 0:
             st.error(f"{secilen_bayi} denetimi tamamlandı: Toplam {eksik_sayisi} farklılık / eksik bölge kırmızı çerçeveyle işaretlendi.")
         else:
             st.success(f"{secilen_bayi} denetimi tamamlandı: Referans görsel ile mevcut görsel arasında belirgin bir fark bulunamadı.")
 else:
-    st.info("Lütfen sol menüden bayiyi seçin (Yandex Disk'ten fotoğraf otomatik gelecektir) ve sağdan **Sahadan Gelen Fotoğrafı** yükleyin. Her iki görsel yüklendiğinde karşılaştırma ekranı otomatik açılacaktır.")
+    st.info("ℹ️ Sol tarafta Yandex Disk'ten gelen referans görseli görebilirsiniz. Analiz yapabilmek için lütfen sağ taraftan **Sahadan Gelen Fotoğrafı** yükleyin.")
 
 st.markdown("<br><p style='text-align: center; color: gray;'>Developed by Hakan</p>", unsafe_allow_html=True)

@@ -12,6 +12,24 @@ st.set_page_config(
     layout="wide"
 )
 
+# --- ŞİFRE KONTROLÜ ---
+if "authenticated" not in st.session_state:
+    st.session_state.authenticated = False
+
+if not st.session_state.authenticated:
+    st.title("🔐 Sigara Standı Akıllı Denetim Sistemi - Giriş")
+    st.markdown("Devam etmek için lütfen giriş şifresini girin.")
+    
+    sifre_input = st.text_input("Şifre", type="password")
+    if st.button("Giriş Yap", type="primary"):
+        if sifre_input == "qwert123":
+            st.session_state.authenticated = True
+            st.rerun()
+        else:
+            st.error("❌ Hatalı şifre! Lütfen tekrar deneyin.")
+    st.stop()
+# ---------------------
+
 # Sağ üstteki menüleri gizleyen CSS stilleri
 hide_st_style = """
     <style>
@@ -211,8 +229,7 @@ if ref_img is not None and curr_file is not None and curr_img is not None:
                 cv2.rectangle(result_img, (startX, startY), (endX, endY), (0, 0, 255), 3)
                 cv2.putText(result_img, f"#{idx}", (startX + 5, startY + 22), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 255), 2)
 
-            # --- GÖRSEL ÜZERİNE BİLGİ YAZDIRMA ---
-            # Üst kısma arka plan şeridi ve metinler ekleyerek profesyonel görünüm sağlıyoruz
+            # Görsel üzerine bayi adı ve eksik sayısını yazdırma
             cv2.rectangle(result_img, (0, 0), (img_w, 90), (0, 0, 0), -1)
             cv2.putText(result_img, f"Bayi: {secilen_bayi}", (20, 35), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 2, cv2.LINE_AA)
             cv2.putText(result_img, f"Tespit Edilen Eksik/Fark Adeti: {eksik_sayisi}", (20, 70), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255) if eksik_sayisi > 0 else (0, 255, 0), 2, cv2.LINE_AA)

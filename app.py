@@ -39,15 +39,24 @@ hide_st_style = """
 """
 st.markdown(hide_st_style, unsafe_allow_html=True)
 
-# --- KENAR ÇUĞUNA LOGO EKLEME (Giriş ekranında da görünmesi için en üste alındı) ---
-logo_bulundu = False
-for logo_adi in ["logo.jpg", "logo.JPG", "logo_new.jpg", "logo_new.JPG", "logo_yeni.jpg", "logo.png"]:
-    if os.path.exists(logo_adi):
-        st.sidebar.image(logo_adi, width=220)
-        logo_bulundu = True
-        break
+# --- KENAR ÇUĞUNA LOGO EKLEME (Raw GitHub URL ve Yerel Yedekli) ---
+logo_url = "https://raw.githubusercontent.com/hknasus8/sigara-fark/ana/logo.jpg"
+logo_yuklendi = False
 
-if not logo_bulundu:
+try:
+    st.sidebar.image(logo_url, width=220)
+    logo_yuklendi = True
+except Exception:
+    pass
+
+if not logo_yuklendi:
+    for logo_adi in ["logo.jpg", "logo.JPG", "logo_new.jpg", "logo_new.JPG", "logo_yeni.jpg", "logo.png"]:
+        if os.path.exists(logo_adi):
+            st.sidebar.image(logo_adi, width=220)
+            logo_yuklendi = True
+            break
+
+if not logo_yuklendi:
     st.sidebar.warning("⚠️ Logo dosyası bulunamadı.")
 # ------------------------------------------------------------------------------
 

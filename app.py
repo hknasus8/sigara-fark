@@ -4,6 +4,7 @@ import numpy as np
 import os
 import pandas as pd
 import requests
+from skimage.measure import structural_similarity as ssim
 
 # Sayfa yapılandırması
 st.set_page_config(
@@ -141,7 +142,7 @@ st.markdown("---")
 
 if ref_img is not None and curr_file is not None and curr_img is not None:
     if st.button("Farkı Analiz Et ve Eksikleri Bul", type="primary"):
-        with st.spinner("Otsu otomatik eşikleme ile farklar analiz ediliyor..."):
+        with st.spinner("SSIM (Yapısal Benzerlik) analizi yapılıyor..."):
             
             # Boyutları birebir eşitleme
             if ref_img.shape[:2] != curr_img.shape[:2]:
@@ -151,18 +152,21 @@ if ref_img is not None and curr_file is not None and curr_img is not None:
             gray_ref = cv2.cvtColor(ref_img, cv2.COLOR_BGR2GRAY)
             gray_curr = cv2.cvtColor(curr_img, cv2.COLOR_BGR2GRAY)
 
-            # Mutlak fark (Absolute Difference)[cite: 1]
-            diff = cv2.absdiff(gray_ref, gray_curr)
+            # skimage kütüphanesinden gelen SSIM entegrasyonu[cite: 3]
+            (score, diff) = ssim(gray_ref, gray_curr, full=True)
+            
+            # Fark haritasını 0-255 aralığına dönüştürme[cite: 3]
+            diff = (diff * 255).astype("uint8")
+            diff = cv2.bitwise_not(diff) # Eksik/fark olan yerleri beyaz yapma
 
-            # OTOMATİK EŞİKLEME (Otsu Thresholding) - Manuel ayar gerektirmez[cite: 1]
+            # Eşikleme ve gürültü temizleme
             _, thresh = cv2.threshold(diff, 0, 255, cv2.THRESH_BINARY | cv2.THRESH_OTSU)
 
-            # Genişletme (Dilation) ile kopuk farkları birleştirme[cite: 1]
-            kernel = np.ones((5, 5), np.uint8)
-            dilate = cv2.dilate(thresh, kernel, iterations=2)
+            kernel = np.ones((3, 3), np.uint8)
+            thresh = cv2.morphologyEx(thresh, cv2.MORPH_OPEN, kernel)
+            thresh = cv2.dilate(thresh, kernel, iterations=2)
 
-            # Kontur bulma (Contours)[cite: 1]
-            contours, _ = cv2.findContours(dilate.copy(), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+            contours, _ = cv2.findContours(thresh.copy(), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
             boxes = []
             img_h, img_w = curr_img.shape[:2]
@@ -215,6 +219,7 @@ if ref_img is not None and curr_file is not None and curr_img is not None:
                 cv2.rectangle(result_img, (startX, startY), (endX, endY), (0, 0, 255), 3)
                 cv2.putText(result_img, f"#{idx}", (startX + 5, startY + 22), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 255), 2)
 
+            st.info(f"Genel Benzerlik Oranı (SSIM Skoru): %{score * 100:.2f}")
             st.subheader("Tespit Edilen Eksikler ve Farklar")
             st.image(result_img, channels="BGR", use_container_width=True)
 
@@ -228,9 +233,9 @@ if ref_img is not None and curr_file is not None and curr_img is not None:
                 )
 
         if eksik_sayisi > 0:
-            st.error(f"{secilen_bayi} denetimi tamamlandı: Toplam {eksik_sayisi} adet fark otomatik olarak tespit edildi.")
+            st.error(f"{secilen_bayi} denetimi tamamlandı: Toplam {eksik_sayisi} adet fark SSIM algoritması ile tespit edildi.")
         else:
-            st.success(f"{secilen_bayi} denetimi tamamlandı: İki görsel arasında fark bulunamadı.")
+            st.success(f"{secilen_bayi} denetimi tamamlandı: İki görsel arasında belirgin bir fark bulunamadı.")
 else:
     st.info("ℹ️ Sol tarafta Yandex Disk'ten gelen referans görseli görebilirsiniz. Analiz yapabilmek için lütfen sağ taraftan **Sahadan Gelen Fotoğrafı** yükleyin.")
 

@@ -33,8 +33,8 @@ st.sidebar.markdown("---")
 
 # Kenar çubuğu ayarları
 st.sidebar.header("Denetim ve Bayi Seçimi")
-threshold_val = st.sidebar.slider("Fark Hassasiyet Eşiği (Işık Toleransı)", 10, 100, 35)
-min_area_val = st.sidebar.slider("Minimum Fark Boyutu (Küçük Hatalar İçin Düşürün)", 200, 3000, 1000, step=100)
+threshold_val = st.sidebar.slider("Fark Hassasiyet Eşiği (Işık Toleransı)", 10, 100, 40)
+min_area_val = st.sidebar.slider("Minimum Fark Boyutu (Gürültü Filtresi)", 100, 2000, 400, step=50)
 
 # Yandex Disk 'BAYİ' Klasörünün Public Linki
 YANDEX_ROOT_PUBLIC_KEY = "https://disk.yandex.com.tr/d/JXJNYBDAk6fePw"
@@ -147,33 +147,26 @@ if ref_img is not None and curr_file is not None and curr_img is not None:
         curr_img = cv2.resize(curr_img, (ref_img.shape[1], ref_img.shape[0]))
 
     if st.button("Farkı Analiz Et ve Eksikleri Bul", type="primary"):
-        with st.spinner("Görseller karşılaştırılıyor ve eksikler tespit ediliyor..."):
-            # Griye çevir
-            gray_ref = cv2.cvtColor(ref_img, cv2.COLOR_BGR2GRAY)
-            gray_curr = cv2.cvtColor(curr_img, cv2.COLOR_BGR2GRAY)
+        with st.spinner("Görseller karşılaştırılıyor..."):
+            # Renk uzayını Lab formatına çevir (Işık ve gölge değişimlerinden en az etkilenen uzaydır)
+            lab_ref = cv2.cvtColor(ref_img, cv2.COLOR_BGR2Lab)
+            lab_curr = cv2.cvtColor(curr_img, cv2.COLOR_BGR2Lab)
 
-            # Histogram eşitleme (Işık farklarını dengelemek için)
-            gray_ref = cv2.equalizeHist(gray_ref)
-            gray_curr = cv2.equalizeHist(gray_curr)
+            # Sadece parlaklık (L) kanalı yerine renk kanalları (a, b) üzerinden de fark alarak ışık oynamalarını filtrele
+            diff = cv2.absdiff(lab_ref, lab_curr)
+            diff_gray = cv2.cvtColor(diff, cv2.COLOR_BGR2GRAY)
 
-            # Bulanıklaştırma
-            gray_ref = cv2.GaussianBlur(gray_ref, (5, 5), 0)
-            gray_curr = cv2.GaussianBlur(gray_curr, (5, 5), 0)
-
-            # Mutlak fark
-            diff = cv2.absdiff(gray_ref, gray_curr)
-            _, thresh = cv2.threshold(diff, threshold_val, 255, cv2.THRESH_BINARY)
+            _, thresh = cv2.threshold(diff_gray, threshold_val, 255, cv2.THRESH_BINARY)
             
-            # Morfolojik işlemler
-            kernel = np.ones((5, 5), np.uint8)
+            # Morfolojik iyileştirme
+            kernel = np.ones((3, 3), np.uint8)
             thresh = cv2.morphologyEx(thresh, cv2.MORPH_OPEN, kernel)
-            thresh = cv2.dilate(thresh, kernel, iterations=1)
+            thresh = cv2.dilate(thresh, kernel, iterations=2)
 
             contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
             boxes = []
             for c in contours:
-                # Kenar çubuğundan gelen dinamik minimum alan filtresi
                 if cv2.contourArea(c) > min_area_val: 
                     x, y, w, h = cv2.boundingRect(c)
                     boxes.append([x, y, x + w, y + h])
@@ -230,9 +223,9 @@ if ref_img is not None and curr_file is not None and curr_img is not None:
                 )
 
         if eksik_sayisi > 0:
-            st.error(f"{secilen_bayi} denetimi tamamlandı: Toplam {eksik_sayisi} adet farklılık tespit edildi.")
+            st.error(f"{secilen_bayi} denetimi tamamlandı: Toplam {eksik_sayisi} farklılık tespit edildi.")
         else:
-            st.success(f"{secilen_bayi} denetimi tamamlandı: Belirtilen eşik değerlerinde fark bulunamadı.")
+            st.success(f"{secilen_bayi} denetimi tamamlandı: Belirtilen kriterlerde fark bulunamadı.")
 else:
     st.info("ℹ️ Sol tarafta Yandex Disk'ten gelen referans görseli görebilirsiniz. Analiz yapabilmek için lütfen sağ taraftan **Sahadan Gelen Fotoğrafı** yükleyin.")
 

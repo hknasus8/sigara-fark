@@ -39,23 +39,21 @@ hide_st_style = """
 """
 st.markdown(hide_st_style, unsafe_allow_html=True)
 
-# --- KENAR ÇUĞUNA LOGO EKLEME ---
-logo_yolu = "logo.jpg"
-if os.path.exists(logo_yolu):
-    st.sidebar.image(logo_yolu, width=220)
-else:
-    # Alternatif link denemesi (main dalı üzerinden)
-    try:
-        st.sidebar.image("https://raw.githubusercontent.com/hknasus8/sigara-fark/main/logo.jpg", width=220)
-    except Exception:
-        st.sidebar.warning("⚠️ Logo dosyası bulunamadı.")
-# ------------------------------------------------------------------------------
-
-# --- ŞİFRE KONTROLÜ ---
+# --- ŞİFRE KONTROLÜ VE LOGO MANTIĞI ---
 if "authenticated" not in st.session_state:
     st.session_state.authenticated = False
 
 if not st.session_state.authenticated:
+    # Yalnızca giriş yapmadan önce (şifre ekranında) kenar çubuğuna logo ekleme
+    logo_yolu = "logo.jpg"
+    if os.path.exists(logo_yolu):
+        st.sidebar.image(logo_yolu, width=220)
+    else:
+        try:
+            st.sidebar.image("https://raw.githubusercontent.com/hknasus8/sigara-fark/main/logo.jpg", width=220)
+        except Exception:
+            pass
+
     st.title("🔐 Sigara Standı Akıllı Denetim Sistemi - Giriş")
     st.markdown("Devam etmek için lütfen giriş şifresini girin.")
     

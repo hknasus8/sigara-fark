@@ -115,23 +115,24 @@ ref_img = None
 with st.spinner(f"'{secilen_bayi}' için Yandex Disk'te arama yapılıyor..."):
     ref_img = yandex_bayi_gorseli_getir(YANDEX_ROOT_PUBLIC_KEY, secilen_bayi)
 
-# Görsel yükleme alanları (Hizalama için boşluklar eklendi)
+# Görsel yükleme alanları (Dikey hizalama uyumlu)
 col_up1, col_up2 = st.columns(2)
 
 with col_up1:
-    st.info("Referans Görsel Durumu:") # Sağdaki bilgi kutusuyla aynı boyutta alan oluşturur
+    st.markdown("**Referans Görsel Durumu:**")
     if ref_img is not None:
         st.success(f"✅ '{secilen_bayi}' Referans Görseli Yandex'ten Otomatik Yüklendi")
-        st.image(ref_img, channels="BGR", use_container_width=True)
+        # Yükseklik hizalamasını tam eşitlemek için boşluk bırakıyoruz
+        st.write("") 
     else:
-        st.warning("⚠️ Yandex Disk'te bu bayiye ait klasör bulunamadı, manuel yükleyin:")
+        st.warning("⚠️ Yandex Disk'te bu bayiye ait klasör bulunamadı:")
         ref_file = st.file_uploader("1. Referans (İdeal) Stand Görseli (Manuel)", type=["jpg", "jpeg", "png"], key="ref")
         if ref_file is not None:
             ref_bytes = np.asarray(bytearray(ref_file.read()), dtype=np.uint8)
             ref_img = cv2.imdecode(ref_bytes, cv2.IMREAD_COLOR)
 
 with col_up2:
-    st.info("Kontrol edilecek mevcut sahadaki fotoğrafı yükleyin:")
+    st.markdown("**Kontrol Edilecek Sahat Fotoğrafı:**")
     curr_file = st.file_uploader("2. Kontrol Edilecek (Mevcut) Görsel", type=["jpg", "jpeg", "png"], key="curr")
     
     curr_img = None
@@ -139,7 +140,6 @@ with col_up2:
         curr_bytes = np.asarray(bytearray(curr_file.read()), dtype=np.uint8)
         curr_img = cv2.imdecode(curr_bytes, cv2.IMREAD_COLOR)
         st.success("✅ Sahadan gelen foto yüklendi")
-        st.image(curr_img, channels="BGR", use_container_width=True)
 
 st.markdown("---")
 

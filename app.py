@@ -39,18 +39,18 @@ hide_st_style = """
 """
 st.markdown(hide_st_style, unsafe_allow_html=True)
 
-# --- ŞİFRE KONTROLÜ VE LOGO MANTIĞI ---
+# --- ŞİFRE KONTROLÜ VE EKRAN MANTIĞI ---
 if "authenticated" not in st.session_state:
     st.session_state.authenticated = False
 
 if not st.session_state.authenticated:
-    # Yalnızca giriş yapmadan önce (şifre ekranında) kenar çubuğuna logo ekleme
+    # Şifre ekranında (giriş yapmadan önce) logonun doğrudan ekranda görünmesi
     logo_yolu = "logo.jpg"
     if os.path.exists(logo_yolu):
-        st.sidebar.image(logo_yolu, width=220)
+        st.image(logo_yolu, width=180)
     else:
         try:
-            st.sidebar.image("https://raw.githubusercontent.com/hknasus8/sigara-fark/main/logo.jpg", width=220)
+            st.image("https://raw.githubusercontent.com/hknasus8/sigara-fark/main/logo.jpg", width=180)
         except Exception:
             pass
 

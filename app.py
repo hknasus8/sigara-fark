@@ -54,7 +54,6 @@ st.markdown("---")
 # Yandex Disk'ten esnek eşleşme ile bayi klasörünü ve görseli bulan fonksiyon
 def yandex_bayi_gorseli_getir(public_key, bayi_adi):
     try:
-        # 1000'den fazla öğe için limit artırımı (limit=2000)
         api_url = f"https://cloud-api.yandex.net:443/v1/disk/public/resources?public_key={public_key}&limit=2000"
         resp = requests.get(api_url)
         if resp.status_code != 200:
@@ -69,7 +68,6 @@ def yandex_bayi_gorseli_getir(public_key, bayi_adi):
         for item in items:
             if item.get("type") == "dir":
                 Item_Adi = item.get("name", "").strip().lower()
-                # Tam eşleşme veya içerilme kontrolü (boşluk ve karakter esnekliği)
                 if hedef_aranan in Item_Adi or Item_Adi in hedef_aranan:
                     bayi_klasor_path = item.get("path")
                     break
@@ -121,14 +119,21 @@ with col_up1:
             ref_img = cv2.imdecode(ref_bytes, cv2.IMREAD_COLOR)
 
 with col_up2:
+    st.info("Kontrol edilecek mevcut sahadaki fotoğrafı yükleyin:")
     curr_file = st.file_uploader("2. Kontrol Edilecek (Mevcut) Görsel", type=["jpg", "jpeg", "png"], key="curr")
+    
+    # DÜZELTME: Mevcut görsel seçildiği an hemen önizlemesinin görünmesi sağlandı
+    curr_img = None
+    if curr_file is not None:
+        curr_bytes = np.asarray(bytearray(curr_file.read()), dtype=np.uint8)
+        curr_img = cv2.imdecode(curr_bytes, cv2.IMREAD_COLOR)
+        st.success("✅ Mevcut Görsel Yüklendi")
+        st.image(curr_img, channels="BGR", use_container_width=True)
 
 st.markdown("---")
 
-if ref_img is not None and curr_file is not None:
-    curr_bytes = np.asarray(bytearray(curr_file.read()), dtype=np.uint8)
-    curr_img = cv2.imdecode(curr_bytes, cv2.IMREAD_COLOR)
-
+# Eğer referans görsel ve mevcut görsel hazırsa analiz ekranını başlat
+if ref_img is not None and curr_file is not None and curr_img is not None:
     if ref_img.shape != curr_img.shape:
         curr_img = cv2.resize(curr_img, (ref_img.shape[1], ref_img.shape[0]))
 

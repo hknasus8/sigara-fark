@@ -39,6 +39,18 @@ hide_st_style = """
 """
 st.markdown(hide_st_style, unsafe_allow_html=True)
 
+# --- KENAR ÇUĞUNA LOGO EKLEME (Giriş ekranında da görünmesi için en üste alındı) ---
+logo_bulundu = False
+for logo_adi in ["logo.jpg", "logo.JPG", "logo_new.jpg", "logo_new.JPG", "logo_yeni.jpg", "logo.png"]:
+    if os.path.exists(logo_adi):
+        st.sidebar.image(logo_adi, width=220)
+        logo_bulundu = True
+        break
+
+if not logo_bulundu:
+    st.sidebar.warning("⚠️ Logo dosyası bulunamadı.")
+# ------------------------------------------------------------------------------
+
 # --- ŞİFRE KONTROLÜ ---
 if "authenticated" not in st.session_state:
     st.session_state.authenticated = False
@@ -56,16 +68,6 @@ if not st.session_state.authenticated:
             st.error("❌ Hatalı şifre! Lütfen tekrar deneyin.")
     st.stop()
 # ---------------------
-
-# Kenar çubuğuna logo ekleme (GitHub'daki dosya adlarıyla tam uyumlu kontrol)
-if os.path.exists("logo_new.jpg"):
-    st.sidebar.image("logo_new.jpg", width=220)
-elif os.path.exists("logo_yeni.jpg"):
-    st.sidebar.image("logo_yeni.jpg", width=220)
-elif os.path.exists("logo.jpg"):
-    st.sidebar.image("logo.jpg", width=220)
-elif os.path.exists("logo.png"):
-    st.sidebar.image("logo.png", width=220)
 
 st.sidebar.markdown("---")
 st.sidebar.header("Uygulama Ayarları")

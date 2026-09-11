@@ -141,7 +141,7 @@ if ref_img is not None and curr_file is not None and curr_img is not None:
         st.subheader("Referans Görsel")
         st.image(ref_img, channels="BGR", use_container_width=True)
     with col2:
-        st.subheader("Sahadan Gelen")  # <--- Burası değiştirildi
+        st.subheader("Sahadan Gelen")
         st.image(curr_img, channels="BGR", use_container_width=True)
 
     if st.button("Farkı Analiz Et ve Eksikleri Bul", type="primary"):
@@ -176,7 +176,7 @@ if ref_img is not None and curr_file is not None and curr_img is not None:
                 success, encoded_image = cv2.imencode(".jpg", result_img)
                 if success:
                     st.download_button(
-                        label="📥 İşlenmiş Fotoğrafı İndir (JPG)",
+                        label="📥 Farkları Gösteren Fotoğrafı İndir",  # <--- Buton yazısı güncellendi
                         data=encoded_image.tobytes(),
                         file_name=f"{secilen_bayi.replace(' ', '_')}_analiz_sonucu.jpg",
                         mime="image/jpeg"

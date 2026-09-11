@@ -12,7 +12,7 @@ st.set_page_config(
     layout="wide"
 )
 
-# Sağ üstteki Share, GitHub ve üst menü çubuğunu gizleyen CSS stilleri
+# Sağ üstteki menüleri gizleyen CSS stilleri
 hide_st_style = """
     <style>
     #MainMenu {visibility: hidden;}
@@ -33,8 +33,8 @@ st.sidebar.markdown("---")
 
 # Kenar çubuğu ayarları
 st.sidebar.header("Denetim ve Bayi Seçimi")
-threshold_val = st.sidebar.slider("Fark Hassasiyet Eşiği", 10, 100, 35)
-min_area_val = st.sidebar.slider("Minimum Fark Boyutu (Gürültü Filtresi)", 50, 2000, 200, step=50)
+threshold_val = st.sidebar.slider("Fark Hassasiyet Eşiği", 10, 150, 45)
+min_area_val = st.sidebar.slider("Minimum Eksik Boyutu", 100, 3000, 400, step=100)
 
 # Yandex Disk 'BAYİ' Klasörünün Public Linki
 YANDEX_ROOT_PUBLIC_KEY = "https://disk.yandex.com.tr/d/JXJNYBDAk6fePw"
@@ -125,7 +125,7 @@ with col_up1:
         st.success(f"✅ '{secilen_bayi}' Yandex Disk'ten Yüklendi")
         st.image(ref_img, channels="BGR", use_container_width=True)
     else:
-        st.warning(f"⚠️ '{secilen_bayi}' için Yandex Disk'te klasör veya görsel bulunamadı. Alternatif olarak manuel yükleme ekleyebilirsiniz.")
+        st.warning(f"⚠️ '{secilen_bayi}' için Yandex Disk'te klasör veya görsel bulunamadı.")
 
 with col_up2:
     st.subheader("2. Kontrol Edilecek (Mevcut) Görsel")
@@ -142,60 +142,41 @@ st.markdown("---")
 
 if ref_img is not None and curr_file is not None and curr_img is not None:
     if st.button("Farkı Analiz Et ve Eksikleri Bul", type="primary"):
-        with st.spinner("Görseller hizalanıyor ve karşılaştırılıyor..."):
+        with st.spinner("Görseller karşılaştırılıyor ve eksikler tespit ediliyor..."):
             
-            # Boyutları eşitleme (ilk güvenlik adımı)
-            if ref_img.shape != curr_img.shape:
+            # Boyutları milimetrik olarak birebir eşitleme
+            if ref_img.shape[:2] != curr_img.shape[:2]:
                 curr_img = cv2.resize(curr_img, (ref_img.shape[1], ref_img.shape[0]))
 
-            # -------------------------------------------------------------
-            # ORB ve Homografi ile Görüntü Hizalama (Açı/Kayıma Telafisi)
-            # -------------------------------------------------------------
+            # Gri tonlama
             gray_ref = cv2.cvtColor(ref_img, cv2.COLOR_BGR2GRAY)
             gray_curr = cv2.cvtColor(curr_img, cv2.COLOR_BGR2GRAY)
 
-            orb = cv2.ORB_create(5000)
-            kp1, des1 = orb.detectAndCompute(gray_ref, None)
-            kp2, des2 = orb.detectAndCompute(gray_curr, None)
-
-            if des1 is not None and des2 is not None and len(kp1) > 10 and len(kp2) > 10:
-                bf = cv2.BFMatcher(cv2.NORM_HAMMING, crossCheck=True)
-                matches = bf.match(des1, des2)
-                matches = sorted(matches, key=lambda x: x.distance)
-                
-                good_matches = matches[:int(len(matches) * 0.25)]
-                if len(good_matches) > 4:
-                    src_pts = np.float32([kp1[m.queryIdx].pt for m in good_matches]).reshape(-1, 1, 2)
-                    dst_pts = np.float32([kp2[m.trainIdx].pt for m in good_matches]).reshape(-1, 1, 2)
-                    
-                    matrix, mask = cv2.findHomography(dst_pts, src_pts, cv2.RANSAC, 5.0)
-                    if matrix is not None:
-                        h, w = ref_img.shape[:2]
-                        curr_img = cv2.warpPerspective(curr_img, matrix, (w, h))
-                        gray_curr = cv2.cvtColor(curr_img, cv2.COLOR_BGR2GRAY)
-
-            # -------------------------------------------------------------
-            # Fark ve Eşikleme Analizi
-            # -------------------------------------------------------------
-            lab_ref = cv2.cvtColor(ref_img, cv2.COLOR_BGR2Lab)
-            lab_curr = cv2.cvtColor(curr_img, cv2.COLOR_BGR2Lab)
-
-            diff = cv2.absdiff(lab_ref, lab_curr)
-            diff_gray = cv2.cvtColor(diff, cv2.COLOR_BGR2GRAY)
-
-            _, thresh = cv2.threshold(diff_gray, threshold_val, 255, cv2.THRESH_BINARY)
+            # Doğrudan mutlak piksel farkı alma (Hizalama kaymalarını önlemek için saf boyut eşitleme üzerine kurulu)
+            diff = cv2.absdiff(gray_ref, gray_curr)
             
+            # Aydınlatma farklarını törpülemek için hafif blur ve eşikleme
+            diff_blur = cv2.GaussianBlur(diff, (5, 5), 0)
+            _, thresh = cv2.threshold(diff_blur, threshold_val, 255, cv2.THRESH_BINARY)
+
+            # Gürültüleri temizleme
             kernel = np.ones((3, 3), np.uint8)
             thresh = cv2.morphologyEx(thresh, cv2.MORPH_OPEN, kernel)
-            thresh = cv2.dilate(thresh, kernel, iterations=2)
+            thresh = cv2.morphologyEx(thresh, cv2.MORPH_CLOSE, kernel)
 
             contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
             boxes = []
+            img_h, img_w = curr_img.shape[:2]
+            
             for c in contours:
-                if cv2.contourArea(c) > min_area_val: 
-                    x, y, w, h = cv2.boundingRect(c)
-                    boxes.append([x, y, x + w, y + h])
+                area = cv2.contourArea(c)
+                x, y, w, h = cv2.boundingRect(c)
+                
+                # Standın raf içi bölgesi (Kenar çerçeveleri ve dışarıdaki alanlar hariç tutulur)
+                if (img_w * 0.05 < x < img_w * 0.95) and (img_h * 0.10 < y < img_h * 0.95):
+                    if area > min_area_val: 
+                        boxes.append([x, y, x + w, y + h])
 
             # Non-Maximum Suppression (Üst üste binen kutuları tekilleştirme)
             def non_max_suppression(boxes, overlapThresh=0.2):
@@ -237,22 +218,22 @@ if ref_img is not None and curr_file is not None and curr_img is not None:
                 cv2.rectangle(result_img, (startX, startY), (endX, endY), (0, 0, 255), 3)
                 cv2.putText(result_img, f"#{idx}", (startX + 5, startY + 22), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 255), 2)
 
-            st.subheader("Tespit Edilen Farklar")
+            st.subheader("Tespit Edilen Eksikler ve Farklar")
             st.image(result_img, channels="BGR", use_container_width=True)
 
             success, encoded_image = cv2.imencode(".jpg", result_img)
             if success:
                 st.download_button(
-                    label="📥 Farkları Gösteren Fotoğrafı İndir",
+                    label="📥 Sonuç Fotoğrafını İndir",
                     data=encoded_image.tobytes(),
                     file_name=f"{secilen_bayi.replace(' ', '_')}_analiz_sonucu.jpg",
                     mime="image/jpeg"
                 )
 
         if eksik_sayisi > 0:
-            st.error(f"{secilen_bayi} denetimi tamamlandı: Toplam {eksik_sayisi} farklılık tespit edildi ve numaralandırıldı.")
+            st.error(f"{secilen_bayi} denetimi tamamlandı: Toplam {eksik_sayisi} adet eksik/fark alanı tespit edildi ve numaralandırıldı.")
         else:
-            st.success(f"{secilen_bayi} denetimi tamamlandı: Belirtilen kriterlerde fark bulunamadı.")
+            st.success(f"{secilen_bayi} denetimi tamamlandı: İki görsel arasında belirgin bir fark bulunamadı.")
 else:
     st.info("ℹ️ Sol tarafta Yandex Disk'ten gelen referans görseli görebilirsiniz. Analiz yapabilmek için lütfen sağ taraftan **Sahadan Gelen Fotoğrafı** yükleyin.")
 

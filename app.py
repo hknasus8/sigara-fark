@@ -149,18 +149,63 @@ if ref_img is not None and curr_file is not None and curr_img is not None:
             gray_ref = cv2.cvtColor(ref_img, cv2.COLOR_BGR2GRAY)
             gray_curr = cv2.cvtColor(curr_img, cv2.COLOR_BGR2GRAY)
 
+            # Gürültüyü azaltmak için hafif bulanıklaştırma
+            gray_ref = cv2.GaussianBlur(gray_ref, (5, 5), 0)
+            gray_curr = cv2.GaussianBlur(gray_curr, (5, 5), 0)
+
             diff = cv2.absdiff(gray_ref, gray_curr)
             _, thresh = cv2.threshold(diff, threshold_val, 255, cv2.THRESH_BINARY)
+            
+            # Dağınık pikselleri birleştirmek için morfolojik işlemler (dilation)
+            kernel = np.ones((5, 5), np.uint8)
+            thresh = cv2.dilate(thresh, kernel, iterations=2)
+
             contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
-            result_img = curr_img.copy()
-            eksik_sayisi = 0
-            
-            for i, c in enumerate(contours):
-                if cv2.contourArea(c) > 400: 
+            boxes = []
+            for c in contours:
+                if cv2.contourArea(c) > 600:  # Küçük gürültü alanlarını elemek için eşik yükseltildi
                     x, y, w, h = cv2.boundingRect(c)
-                    cv2.rectangle(result_img, (x, y), (x + w, y + h), (0, 0, 255), 3)
-                    eksik_sayisi += 1
+                    boxes.append([x, y, x + w, y + h])
+
+            # İç içe veya üst üste binen kutuları tekilleştirme (Non-Maximum Suppression mantığı)
+            def non_max_suppression(boxes, overlapThresh=0.2):
+                if len(boxes) == 0:
+                    return []
+                boxes = np.array(boxes)
+                pick = []
+                x1 = boxes[:, 0]
+                y1 = boxes[:, 1]
+                x2 = boxes[:, 2]
+                y2 = boxes[:, 3]
+                area = (x2 - x1 + 1) * (y2 - y1 + 1)
+                idxs = np.argsort(y2)
+                
+                while len(idxs) > 0:
+                    last = len(idxs) - 1
+                    i = idxs[last]
+                    pick.append(i)
+                    
+                    xx1 = np.maximum(x1[i], x1[idxs[:last]])
+                    yy1 = np.maximum(y1[i], y1[idxs[:last]])
+                    xx2 = np.minimum(x2[i], x2[idxs[:last]])
+                    yy2 = np.minimum(y2[i], y2[idxs[:last]])
+                    
+                    w = np.maximum(0, xx2 - xx1 + 1)
+                    h = np.maximum(0, yy2 - yy1 + 1)
+                    
+                    overlap = (w * h) / area[idxs[:last]]
+                    idxs = np.delete(idxs, np.concatenate(([last], np.where(overlap > overlapThresh)[0])))
+                    
+                return boxes[pick].astype("int")
+
+            filtered_boxes = non_max_suppression(boxes)
+
+            result_img = curr_img.copy()
+            eksik_sayisi = len(filtered_boxes)
+            
+            for (startX, startY, endX, endY) in filtered_boxes:
+                cv2.rectangle(result_img, (startX, startY), (endX, endY), (0, 0, 255), 3)
 
             st.subheader("Tespit Edilen Farklar")
             st.image(result_img, channels="BGR", use_container_width=True)
@@ -175,7 +220,7 @@ if ref_img is not None and curr_file is not None and curr_img is not None:
                 )
 
         if eksik_sayisi > 0:
-            st.error(f"{secilen_bayi} denetimi tamamlandı: Toplam {eksik_sayisi} farklılık / eksik bölge kırmızı çerçeveyle işaretlendi.")
+            st.error(f"{secilen_bayi} denetimi tamamlandı: Toplam {eksik_sayisi} farklılık / eksik bölge temizlenmiş kutularla işaretlendi.")
         else:
             st.success(f"{secilen_bayi} denetimi tamamlandı: Referans görsel ile mevcut görsel arasında belirgin bir fark bulunamadı.")
 else:

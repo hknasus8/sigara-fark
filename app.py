@@ -32,7 +32,7 @@ elif os.path.exists("logo.png"):
 st.sidebar.markdown("---")
 
 # Kenar çubuğu ayarları
-st.sidebar.header("Denetim dan Bayi Seçimi")
+st.sidebar.header("Denetim ve Bayi Seçimi")
 threshold_val = st.sidebar.slider("Fark Hassasiyet Eşiği", 10, 100, 30)
 
 # Yandex Disk 'BAYİ' Klasörünün Public Linki
@@ -115,15 +115,16 @@ ref_img = None
 with st.spinner(f"'{secilen_bayi}' için Yandex Disk'te arama yapılıyor..."):
     ref_img = yandex_bayi_gorseli_getir(YANDEX_ROOT_PUBLIC_KEY, secilen_bayi)
 
-# Görsel yükleme alanları
+# Görsel yükleme alanları (Hizalama için boşluklar eklendi)
 col_up1, col_up2 = st.columns(2)
 
 with col_up1:
+    st.info("Referans Görsel Durumu:") # Sağdaki bilgi kutusuyla aynı boyutta alan oluşturur
     if ref_img is not None:
         st.success(f"✅ '{secilen_bayi}' Referans Görseli Yandex'ten Otomatik Yüklendi")
         st.image(ref_img, channels="BGR", use_container_width=True)
     else:
-        st.warning("⚠️ Yandex Disk'te bu bayiye ait klasör veya fotoğraf bulunamadı. Lütfen manuel yükleyin:")
+        st.warning("⚠️ Yandex Disk'te bu bayiye ait klasör bulunamadı, manuel yükleyin:")
         ref_file = st.file_uploader("1. Referans (İdeal) Stand Görseli (Manuel)", type=["jpg", "jpeg", "png"], key="ref")
         if ref_file is not None:
             ref_bytes = np.asarray(bytearray(ref_file.read()), dtype=np.uint8)

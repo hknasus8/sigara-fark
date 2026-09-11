@@ -73,6 +73,15 @@ if not st.session_state.authenticated:
 
     st.title("🔐 Sigara Standı Akıllı Denetim Sistemi - Giriş")
     st.markdown("<p style='color: gray; font-size: 14px; margin-top: -15px;'>Developed by Hakan</p>", unsafe_allow_html=True)
+    
+    # Kullanıcı Hatırlatmaları Bilgi Kutusu
+    st.info(
+        "📌 **Fotoğraf Çekimi İçin Önemli Hatırlatmalar:**\n\n"
+        "* Fotoğraf çekerken cihazı titretmemeye özen gösterin.\n"
+        "* Ortam ışığının çok fazla parlak ya da karanlık olmamasına dikkat ediniz.\n"
+        "* Fotoğrafın bulanık olmamasına ve etiketlerin okunur olmasına dikkat ediniz."
+    )
+
     st.markdown("Devam etmek için lütfen giriş şifresini girin.")
     
     sifre_input = st.text_input("Şifre", type="password")

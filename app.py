@@ -5,6 +5,12 @@ import os
 import pandas as pd
 import requests
 import difflib
+import easyocr
+
+# EasyOCR okuyucusunu önbelleğe alarak performans sağlayalım (Türkçe ve İngilizce destekli)
+@st.cache_resource
+def get_ocr_reader():
+    return easyocr.Reader(['tr', 'en'], gpu=False)
 
 # Sayfa yapılandırması
 st.set_page_config(
@@ -27,7 +33,7 @@ st.components.v1.html(
     width=0
 )
 
-# Sağ üstteki Share, GitHub ve diğer araç çubuğu elemanlarını gizleyen CSS
+# Sağ üstteki araç çubuğu elemanlarını gizleyen CSS
 hide_st_style = """
     <style>
     #MainMenu {visibility: hidden;}
@@ -51,7 +57,7 @@ def resmi_boyutlandir(img, max_genislik=1000):
         return cv2.resize(img, (max_genislik, yeni_yukseklik), interpolation=cv2.INTER_AREA)
     return img
 
-# --- GÜVENLİ ŞİFRE KONTROLÜ (FALLBACK YOK) ---
+# --- GÜVENLİ ŞİFRE KONTROLÜ ---
 if "app_password" not in st.secrets:
     st.error("⚠️ Kritik Güvenlik Uyarısı: 'app_password' Streamlit secrets içinde tanımlı değil!")
     st.stop()
@@ -74,7 +80,6 @@ if not st.session_state.authenticated:
     st.title("🔐 Sigara Standı Akıllı Denetim Sistemi - Giriş")
     st.markdown("<p style='color: gray; font-size: 14px; margin-top: -15px;'>Developed by Hakan</p>", unsafe_allow_html=True)
     
-    # Kullanıcı Hatırlatmaları Bilgi Kutusu
     st.info(
         "📌 **Fotoğraf Çekimi İçin Önemli Hatırlatmalar:**\n\n"
         "* Fotoğraf çekerken cihazı titretmemeye özen gösterin.\n"
@@ -101,7 +106,6 @@ min_area_val = st.sidebar.slider("Minimum Eksik Boyutu (Hassasiyet)", 50, 2000, 
 # Yandex Disk 'BAYİ' Klasörünün Public Linki
 YANDEX_ROOT_PUBLIC_KEY = "https://disk.yandex.com.tr/d/JXJNYBDAk6fePw"
 
-# Önce fonksiyon tanımlanıyor (NameError önlemi)
 @st.cache_data(ttl=600, show_spinner=False)
 def yandex_bayi_gorseli_getir_cached(public_key, bayi_adi):
     try:
@@ -168,12 +172,12 @@ if os.path.exists(excel_dosya_adi):
         else:
             bayi_listesi = df_bayiler.iloc[:, 0].dropna().astype(str).tolist()
     except Exception as e:
-        st.error(f"Excel okunurken hata oluştu (openpyxl kurulu olduğundan emin olun): {e}")
+        st.error(f"Excel okunurken hata oluştu: {e}")
 
 if not bayi_listesi:
     bayi_listesi = ["Excel dosyasından unvanlar okunamadı"]
 
-# ANA EKRAN - BAŞLIK VE SAĞ ÜST ÇIKIŞ BUTONU
+# ANA EKRAN - BAŞLIK VE ÇIKIŞ
 col_baslik, col_cikis = st.columns([5, 1])
 
 with col_baslik:
@@ -192,7 +196,6 @@ st.subheader("1. Denetlenecek Bayiyi Seçin")
 secilen_bayi = st.selectbox("Bayi Seçimi", bayi_listesi, label_visibility="collapsed")
 st.markdown(f"**Seçilen Bayi:** `{secilen_bayi}`")
 
-# Yandex Cache Temizleme Butonu (st.toast ile optimize edildi)
 if st.button("🔄 Yandex Bağlantısını ve Önbelleği Yenile"):
     yandex_bayi_gorseli_getir_cached.clear()
     st.toast("Önbellek temizlendi, veriler yeniden çekiliyor...", icon="🔄")
@@ -200,13 +203,11 @@ if st.button("🔄 Yandex Bağlantısını ve Önbelleği Yenile"):
 
 st.markdown("---")
 
-# Referans görseli Yandex Disk'ten çekme
 ref_img = None
 hata_mesaji = None
 with st.spinner(f"'{secilen_bayi}' için Yandex Disk'te arama yapılıyor..."):
     ref_img, hata_mesaji = yandex_bayi_gorseli_getir_cached(YANDEX_ROOT_PUBLIC_KEY, secilen_bayi)
 
-# Görseller: Referans Görsel (Yandex) ve Sahadan Gelen (Manuel Yükleme)
 col_up1, col_up2 = st.columns(2)
 
 with col_up1:
@@ -231,7 +232,6 @@ with col_up2:
 
 st.markdown("---")
 
-# Kullanıcının standdaki toplam ürün sayısını elle girebileceği alan
 st.subheader("4. Stand Kapasite Ayarı")
 ideal_urun_sayisi = st.number_input(
     "Standda Bulunması Gereken Toplam Ürün (Slot) Sayısı",
@@ -243,7 +243,6 @@ ideal_urun_sayisi = st.number_input(
 
 st.markdown("---")
 
-# Session state tanımlamaları
 if "result_img" not in st.session_state:
     st.session_state.result_img = None
 if "eksik_sayisi" not in st.session_state:
@@ -252,14 +251,28 @@ if "raf_yuzdesi" not in st.session_state:
     st.session_state.raf_yuzdesi = 100.0
 if "analiz_yapildi" not in st.session_state:
     st.session_state.analiz_yapildi = False
+if "ocr_raporu" not in st.session_state:
+    st.session_state.ocr_raporu = []
 
 if ref_img is not None and curr_file is not None and curr_img is not None:
-    if st.button("Farkı Analiz Et ve Eksikleri Bul", type="primary"):
-        with st.spinner("Gelişmiş açı ve eksik analizi yapılıyor..."):
+    if st.button("Farkı Analiz Et ve Etiketleri Oku", type="primary"):
+        with st.spinner("Gelişmiş görsel fark analizi ve OCR etiket okuma yapılıyor..."):
             
             if ref_img.shape[:2] != curr_img.shape[:2]:
                 curr_img = cv2.resize(curr_img, (ref_img.shape[1], ref_img.shape[0]), interpolation=cv2.INTER_AREA)
 
+            # --- OCR İLE ETİKET OKUMA VE KARŞILAŞTIRMA ---
+            reader = get_ocr_reader()
+            ref_results = reader.readtext(ref_img)
+            curr_results = reader.readtext(curr_img)
+
+            ref_texts = [text.strip().lower() for (_, text, conf) in ref_results if conf > 0.3]
+            curr_texts = [text.strip().lower() for (_, text, conf) in curr_results if conf > 0.3]
+
+            eksik_etiketler = [t for t in ref_texts if t not in curr_texts]
+            st.session_state.ocr_raporu = eksik_etiketler
+
+            # --- GÖRSEL PİKSEL VE KONTUR ANALİZİ ---
             gray_ref = cv2.cvtColor(ref_img, cv2.COLOR_BGR2GRAY)
             gray_curr = cv2.cvtColor(curr_img, cv2.COLOR_BGR2GRAY)
 
@@ -337,7 +350,7 @@ if ref_img is not None and curr_file is not None and curr_img is not None:
             st.session_state.analiz_yapildi = True
 
     if st.session_state.analiz_yapildi and st.session_state.result_img is not None:
-        st.subheader("Tespit Edilen Eksikler ve Raf Doğruluk Raporu")
+        st.subheader("Tespit Edilen Eksikler ve Metin/Etiket Raporu")
         
         col_m1, col_m2 = st.columns(2)
         with col_m1:
@@ -345,6 +358,13 @@ if ref_img is not None and curr_file is not None and curr_img is not None:
         with col_m2:
             st.metric(label="⚠️ Tespit Edilen Eksik/Boşluk Alan", value=f"{st.session_state.eksik_sayisi} Adet")
         
+        # OCR Metin Eşleşme Raporunu Göster
+        if st.session_state.ocr_raporu:
+            st.warning(f"🔍 OCR ile referansta olup sahada okunamayan/eşleşmeyen {len(st.session_state.ocr_raporu)} metin/etiket tespit edildi:")
+            st.write(st.session_state.ocr_raporu)
+        else:
+            st.success("✅ OCR Kontrolü: Referans görseldeki tüm etiket metinleri sahadaki fotoğrafta da doğrulandı.")
+
         sonuc_gorsel_genisligi = st.slider("🔍 Sonuç Görseli Boyutunu Ayarla (Piksel)", 300, 2000, 800, step=100, key="dinamik_boyut")
         
         st.image(st.session_state.result_img, channels="BGR", width=sonuc_gorsel_genisligi)
@@ -359,7 +379,7 @@ if ref_img is not None and curr_file is not None and curr_img is not None:
             )
 
         if st.session_state.eksik_sayisi > 0:
-            st.error(f"{secilen_bayi} denetimi tamamlandı: Toplam {st.session_state.eksik_sayisi} eksik alan bulundu. Girilen kapasiteye göre raf uygunluk seviyesi %{st.session_state.raf_yuzdesi:.1f}.")
+            st.error(f"{secilen_bayi} denetimi tamamlandı: Toplam {st.session_state.eksik_sayisi} eksik alan bulundu.")
         else:
             st.success(f"{secilen_bayi} denetimi tamamlandı: Raf düzeni kusursuz (%100).")
 else:

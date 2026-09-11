@@ -72,6 +72,7 @@ if not st.session_state.authenticated:
             pass
 
     st.title("🔐 Sigara Standı Akıllı Denetim Sistemi - Giriş")
+    st.markdown("<p style='color: gray; font-size: 14px; margin-top: -15px;'>Developed by Hakan</p>", unsafe_allow_html=True)
     st.markdown("Devam etmek için lütfen giriş şifresini girin.")
     
     sifre_input = st.text_input("Şifre", type="password")

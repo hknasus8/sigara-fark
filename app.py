@@ -33,7 +33,8 @@ st.sidebar.markdown("---")
 
 # Kenar çubuğu ayarları
 st.sidebar.header("Denetim ve Bayi Seçimi")
-threshold_val = st.sidebar.slider("Fark Hassasiyet Eşiği (Işık Toleransı)", 20, 100, 45)
+threshold_val = st.sidebar.slider("Fark Hassasiyet Eşiği (Işık Toleransı)", 10, 100, 35)
+min_area_val = st.sidebar.slider("Minimum Fark Boyutu (Küçük Hatalar İçin Düşürün)", 200, 3000, 1000, step=100)
 
 # Yandex Disk 'BAYİ' Klasörünün Public Linki
 YANDEX_ROOT_PUBLIC_KEY = "https://disk.yandex.com.tr/d/JXJNYBDAk6fePw"
@@ -146,39 +147,39 @@ if ref_img is not None and curr_file is not None and curr_img is not None:
         curr_img = cv2.resize(curr_img, (ref_img.shape[1], ref_img.shape[0]))
 
     if st.button("Farkı Analiz Et ve Eksikleri Bul", type="primary"):
-        with st.spinner("Görseller karşılaştırılıyor ve gerçek eksikler filtreleniyor..."):
+        with st.spinner("Görseller karşılaştırılıyor ve eksikler tespit ediliyor..."):
             # Griye çevir
             gray_ref = cv2.cvtColor(ref_img, cv2.COLOR_BGR2GRAY)
             gray_curr = cv2.cvtColor(curr_img, cv2.COLOR_BGR2GRAY)
 
-            # Histogram eşitleme (farklı ışık koşullarından kaynaklanan ton farklarını tolere etmek için)
+            # Histogram eşitleme (Işık farklarını dengelemek için)
             gray_ref = cv2.equalizeHist(gray_ref)
             gray_curr = cv2.equalizeHist(gray_curr)
 
-            # Bulanıklaştırma (gürültüyü azaltmak için)
-            gray_ref = cv2.GaussianBlur(gray_ref, (7, 7), 0)
-            gray_curr = cv2.GaussianBlur(gray_curr, (7, 7), 0)
+            # Bulanıklaştırma
+            gray_ref = cv2.GaussianBlur(gray_ref, (5, 5), 0)
+            gray_curr = cv2.GaussianBlur(gray_curr, (5, 5), 0)
 
             # Mutlak fark
             diff = cv2.absdiff(gray_ref, gray_curr)
             _, thresh = cv2.threshold(diff, threshold_val, 255, cv2.THRESH_BINARY)
             
-            # Morfolojik temizlik (küçük parazitleri yok et, sadece blok değişimleri tut)
-            kernel = np.ones((7, 7), np.uint8)
+            # Morfolojik işlemler
+            kernel = np.ones((5, 5), np.uint8)
             thresh = cv2.morphologyEx(thresh, cv2.MORPH_OPEN, kernel)
-            thresh = cv2.dilate(thresh, kernel, iterations=2)
+            thresh = cv2.dilate(thresh, kernel, iterations=1)
 
             contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
             boxes = []
             for c in contours:
-                # Küçük alanları (ürün üzerindeki yazı veya ufak oynamaları) kesinlikle elemek için alanı büyüttük
-                if cv2.contourArea(c) > 2500: 
+                # Kenar çubuğundan gelen dinamik minimum alan filtresi
+                if cv2.contourArea(c) > min_area_val: 
                     x, y, w, h = cv2.boundingRect(c)
                     boxes.append([x, y, x + w, y + h])
 
             # Non-Maximum Suppression (Üst üste binen kutuları tekilleştirme)
-            def non_max_suppression(boxes, overlapThresh=0.3):
+            def non_max_suppression(boxes, overlapThresh=0.2):
                 if len(boxes) == 0:
                     return []
                 boxes = np.array(boxes)
@@ -216,7 +217,7 @@ if ref_img is not None and curr_file is not None and curr_img is not None:
             for (startX, startY, endX, endY) in filtered_boxes:
                 cv2.rectangle(result_img, (startX, startY), (endX, endY), (0, 0, 255), 3)
 
-            st.subheader("Tespit Edilen Gerçek Farklar")
+            st.subheader("Tespit Edilen Farklar")
             st.image(result_img, channels="BGR", use_container_width=True)
 
             success, encoded_image = cv2.imencode(".jpg", result_img)
@@ -229,9 +230,9 @@ if ref_img is not None and curr_file is not None and curr_img is not None:
                 )
 
         if eksik_sayisi > 0:
-            st.error(f"{secilen_bayi} denetimi tamamlandı: Toplam {eksik_sayisi} adet anlamlı eksik/farklı bölge tespit edildi.")
+            st.error(f"{secilen_bayi} denetimi tamamlandı: Toplam {eksik_sayisi} adet farklılık tespit edildi.")
         else:
-            st.success(f"{secilen_bayi} denetimi tamamlandı: Referans görsel ile mevcut görsel arasında önemli bir fark bulunamadı.")
+            st.success(f"{secilen_bayi} denetimi tamamlandı: Belirtilen eşik değerlerinde fark bulunamadı.")
 else:
     st.info("ℹ️ Sol tarafta Yandex Disk'ten gelen referans görseli görebilirsiniz. Analiz yapabilmek için lütfen sağ taraftan **Sahadan Gelen Fotoğrafı** yükleyin.")
 

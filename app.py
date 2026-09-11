@@ -253,17 +253,19 @@ if ref_img is not None and curr_file is not None and curr_img is not None:
             if ref_img.shape[:2] != curr_img.shape[:2]:
                 curr_img = cv2.resize(curr_img, (ref_img.shape[1], ref_img.shape[0]), interpolation=cv2.INTER_AREA)
 
+            # --- OCR İLE ETİKET OKUMA VE KARŞILAŞTIRMA ---
             reader = get_ocr_reader()
             ref_results = reader.readtext(ref_img)
             curr_results = reader.readtext(curr_img)
 
-            ref_texts = [text.strip().lower() for (_, text, conf) in ref_results if conf > 0.3 and len(text.strip()) > 1]
-            curr_texts = [text.strip().lower() for (_, text, conf) in curr_results if conf > 0.3 and len(text.strip()) > 1]
+            ref_texts = [text.strip().lower() for (_, text, conf) in ref_results if conf > 0.25 and len(text.strip()) > 2]
+            curr_texts = [text.strip().lower() for (_, text, conf) in curr_results if conf > 0.25 and len(text.strip()) > 2]
 
             st.session_state.ref_texts_count = len(ref_texts)
             eksik_etiketler = [t for t in ref_texts if t not in curr_texts]
             st.session_state.ocr_raporu = eksik_etiketler
 
+            # --- GÖRSEL PİKSEL VE KONTUR ANALİZİ ---
             gray_ref = cv2.cvtColor(ref_img, cv2.COLOR_BGR2GRAY)
             gray_curr = cv2.cvtColor(curr_img, cv2.COLOR_BGR2GRAY)
 
@@ -341,7 +343,7 @@ if ref_img is not None and curr_file is not None and curr_img is not None:
             st.session_state.analiz_yapildi = True
 
     if st.session_state.analiz_yapildi and st.session_state.result_img is not None:
-        st.subheader("Tespit Edilen Eksikler ve Metin/Etiket Raporu")
+        st.subheader("Tespit Edilen Eksikler ve Etiket Kontrol Raporu")
         
         col_m1, col_m2 = st.columns(2)
         with col_m1:
@@ -349,8 +351,9 @@ if ref_img is not None and curr_file is not None and curr_img is not None:
         with col_m2:
             st.metric(label="⚠️ Tespit Edilen Eksik/Boşluk Alan", value=f"{st.session_state.eksik_sayisi} Adet")
         
+        # OCR Kontrol Durumu Raporlaması
         if st.session_state.ref_texts_count == 0:
-            st.info("ℹ️ OCR Notu: Görsellerde okunabilir net bir etiket/metin bulunamadı. Kontrol yalnızca piksel ve boşluk analizi üzerinden yapılıyor.")
+            st.info("ℹ️ OCR Bilgisi: Görsellerdeki etiketler uzaktan çekildiği için okunabilir metin algılanamadı. Denetim yalnızca görsel piksel ve boşluk analizi üzerinden yapılıyor.")
         elif st.session_state.ocr_raporu:
             st.warning(f"🔍 OCR ile referansta olup sahada okunamayan/eşleşmeyen {len(st.session_state.ocr_raporu)} etiket metni tespit edildi:")
             for etiket in st.session_state.ocr_raporu:

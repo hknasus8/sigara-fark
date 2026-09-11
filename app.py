@@ -81,11 +81,6 @@ st.sidebar.markdown("---")
 st.sidebar.header("Uygulama Ayarları")
 min_area_val = st.sidebar.slider("Minimum Eksik Boyutu (Hassasiyet)", 50, 2000, 200, step=50)
 
-# Sonuç görselini büyütüp küçültmek için kenar çubuğuna ayar
-st.sidebar.markdown("---")
-st.sidebar.header("Görünüm Ayarları")
-sonuc_gorsel_genisligi = st.sidebar.slider("Sonuç Görseli Boyutu (Piksel)", 300, 2000, 800, step=100)
-
 # Yandex Disk 'BAYİ' Klasörünün Public Linki
 YANDEX_ROOT_PUBLIC_KEY = "https://disk.yandex.com.tr/d/JXJNYBDAk6fePw"
 
@@ -273,7 +268,7 @@ if ref_img is not None and curr_file is not None and curr_img is not None:
             result_img = curr_img.copy()
             eksik_sayisi = len(filtered_boxes)
             
-            # Çerçeve kalınlığı 6'dan 2'ye düşürüldü (daha ince ve şık görünüm)
+            # İnce ve şık çerçeveler (kalınlık 2)
             for idx, (startX, startY, endX, endY) in enumerate(filtered_boxes, 1):
                 cv2.rectangle(result_img, (startX, startY), (endX, endY), (0, 0, 255), 2)
                 cv2.putText(result_img, f"#{idx}", (startX + 3, startY + 18), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 1)
@@ -282,8 +277,12 @@ if ref_img is not None and curr_file is not None and curr_img is not None:
             cv2.putText(result_img, f"Bayi: {secilen_bayi}", (15, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2, cv2.LINE_AA)
             cv2.putText(result_img, f"Tespit Edilen Eksik/Fark Adeti: {eksik_sayisi}", (15, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 255) if eksik_sayisi > 0 else (0, 255, 0), 2, cv2.LINE_AA)
 
+            # Sonuçlar kısmına session state ile hafızada tutulan boyut ayarı ekledik
             st.subheader("Tespit Edilen Eksikler ve Farklar")
-            # Boyut kenar çubuğundaki ayara göre dinamik olarak ayarlanır
+            
+            # Doğrudan ana ekranda çalışan boyutlandırma çubuğu
+            sonuc_gorsel_genisligi = st.slider("🔍 Sonuç Görseli Boyutunu Ayarla (Piksel)", 300, 2000, 800, step=100, key="dinamik_boyut")
+            
             st.image(result_img, channels="BGR", width=sonuc_gorsel_genisligi)
 
             success, encoded_image = cv2.imencode(".jpg", result_img)

@@ -155,19 +155,12 @@ if ref_img is not None and curr_file is not None and curr_img is not None:
 
             result_img = curr_img.copy()
             eksik_sayisi = 0
-            report_data = []
             
             for i, c in enumerate(contours):
                 if cv2.contourArea(c) > 400: 
                     x, y, w, h = cv2.boundingRect(c)
                     cv2.rectangle(result_img, (x, y), (x + w, y + h), (0, 0, 255), 3)
                     eksik_sayisi += 1
-                    report_data.append({
-                        "Bayi": secilen_bayi,
-                        "Fark ID": eksik_sayisi,
-                        "Konum (X, Y)": f"X: {x}, Y: {y}",
-                        "Durum": "Eksik / Değişiklik Tespit Edildi"
-                    })
 
             with col3:
                 st.subheader("Tespit Edilen Farklar")
@@ -176,7 +169,7 @@ if ref_img is not None and curr_file is not None and curr_img is not None:
                 success, encoded_image = cv2.imencode(".jpg", result_img)
                 if success:
                     st.download_button(
-                        label="📥 Farkları Gösteren Fotoğrafı İndir",  # <--- Buton yazısı güncellendi
+                        label="📥 Farkları Gösteren Fotoğrafı İndir",
                         data=encoded_image.tobytes(),
                         file_name=f"{secilen_bayi.replace(' ', '_')}_analiz_sonucu.jpg",
                         mime="image/jpeg"
@@ -186,10 +179,6 @@ if ref_img is not None and curr_file is not None and curr_img is not None:
             st.error(f"{secilen_bayi} denetimi tamamlandı: Toplam {eksik_sayisi} farklılık / eksik bölge kırmızı çerçeveyle işaretlendi.")
         else:
             st.success(f"{secilen_bayi} denetimi tamamlandı: Referans görsel ile mevcut görsel arasında belirgin bir fark bulunamadı.")
-        
-        st.subheader("Denetim Raporu Detayı")
-        if report_data:
-            st.dataframe(report_data, use_container_width=True)
 else:
     st.info("Lütfen sol menüden bayiyi seçin (Yandex Disk'ten fotoğraf otomatik gelecektir) ve sağdan **2. Kontrol Edilecek Görseli** yükleyin.")
 

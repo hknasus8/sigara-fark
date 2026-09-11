@@ -33,7 +33,7 @@ st.sidebar.markdown("---")
 
 # Kenar çubuğu ayarları
 st.sidebar.header("Denetim ve Bayi Seçimi")
-threshold_val = st.sidebar.slider("Boşluk / Eksik Hassasiyeti", 50, 200, 110)
+threshold_val = st.sidebar.slider("Fark Hassasiyet Eşiği", 80, 220, 140)
 
 # Yandex Disk 'BAYİ' Klasörünün Public Linki
 YANDEX_ROOT_PUBLIC_KEY = "https://disk.yandex.com.tr/d/JXJNYBDAk6fePw"
@@ -146,42 +146,34 @@ if ref_img is not None and curr_file is not None and curr_img is not None:
         curr_img = cv2.resize(curr_img, (ref_img.shape[1], ref_img.shape[0]))
 
     if st.button("Farkı Analiz Et ve Eksikleri Bul", type="primary"):
-        with st.spinner("Standlardaki boşluklar ve eksikler taranıyor..."):
+        with st.spinner("Stand analizi yapılıyor..."):
             
-            # Gri tonlamaya çevir
             gray_ref = cv2.cvtColor(ref_img, cv2.COLOR_BGR2GRAY)
             gray_curr = cv2.cvtColor(curr_img, cv2.COLOR_BGR2GRAY)
 
-            # İki görsel arasındaki genel yapısal hizalamayı oturtmak için ORB tabanlı feature matching (Opsiyonel kaydırma telafisi)
-            # Doğrudan raftaki koyu renkli boşlukları (ürün olmayan arka plan alanlarını) yakalama mantığı:
-            # Stand raflarındaki ürünler renkli/paketlidir, eksik yerler ise ahşap arka plan veya koyu gölgedir.
-            
-            # Referans ile mevcut görselin mutlak farkı yerine, mevcut görselin kendi içindeki koyu/boş alan analizi + referansla kıyas
+            # Mutlak fark
             diff = cv2.absdiff(gray_ref, gray_curr)
-            
-            # Aydınlatma farklarını elemek için blur ve adaptif eşikleme
-            diff_blur = cv2.GaussianBlur(diff, (15, 15), 0)
-            _, thresh = cv2.threshold(diff_blur, threshold_val, 255, cv2.THRESH_BINARY)
+            _, thresh = cv2.threshold(diff, threshold_val, 255, cv2.THRESH_BINARY)
 
-            # Sadece raftaki dikey/yatay ürün bloklarına denk gelen büyük eksik alanları filtrele
-            kernel = np.ones((9, 9), np.uint8)
-            thresh = cv2.morphologyEx(thresh, cv2.MORPH_CLOSE, kernel)
+            kernel = np.ones((5, 5), np.uint8)
             thresh = cv2.morphologyEx(thresh, cv2.MORPH_OPEN, kernel)
+            thresh = cv2.morphologyEx(thresh, cv2.MORPH_CLOSE, kernel)
 
             contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
             boxes = []
+            img_h, img_w = curr_img.shape[:2]
+            
             for c in contours:
                 area = cv2.contourArea(c)
                 x, y, w, h = cv2.boundingRect(c)
                 
-                # Stand raflarının yüksekliğine ve paket boyutlarına uygun filtre (Çok küçük gürültüleri ve tüm ekranı ele)
-                if 1500 < area < 80000 and h > 30 and w > 30:
-                    # Sadece üst raflar ve orta raflardaki ürün alanlarını sınırla (Gereksiz zeminleri alma)
-                    if y > ref_img.shape[0] * 0.15: 
+                # KESİN FİLTRE: Sadece ahşap çerçeve dışındaki, raf içindeki orta alanları baz al
+                # Yan taraftaki sarı/ahşap kolonları (örneğin sol %30 ve sağ %5'lik kısımları) tamamen ele
+                if (img_w * 0.25 < x < img_w * 0.85) and (img_h * 0.20 < y < img_h * 0.90):
+                    if 3000 < area < 60000:  # Sadece gerçek paket/boşluk boyutundaki alanlar
                         boxes.append([x, y, x + w, y + h])
 
-            # Non-Maximum Suppression (Üst üste binen kutuları tekilleştirme)
             def non_max_suppression(boxes, overlapThresh=0.1):
                 if len(boxes) == 0:
                     return []
@@ -217,7 +209,6 @@ if ref_img is not None and curr_file is not None and curr_img is not None:
             result_img = curr_img.copy()
             eksik_sayisi = len(filtered_boxes)
             
-            # Kutuların içine sıra numarasını yazdırma
             for idx, (startX, startY, endX, endY) in enumerate(filtered_boxes, 1):
                 cv2.rectangle(result_img, (startX, startY), (endX, endY), (0, 0, 255), 3)
                 cv2.putText(result_img, f"#{idx}", (startX + 8, startY + 28), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
@@ -235,9 +226,9 @@ if ref_img is not None and curr_file is not None and curr_img is not None:
                 )
 
         if eksik_sayisi > 0:
-            st.error(f"{secilen_bayi} denetimi tamamlandı: Toplam {eksik_sayisi} adet eksik/boş alan tespit edildi ve numaralandırıldı.")
+            st.error(f"{secilen_bayi} denetimi tamamlandı: Toplam {eksik_sayisi} adet eksik alan tespit edildi.")
         else:
-            st.success(f"{secilen_bayi} denetimi tamamlandı: Stand düzeninde belirgin bir eksik veya boşluk bulunamadı.")
+            st.success(f"{secilen_bayi} denetimi tamamlandı: Stand düzeninde belirgin bir eksik bulunamadı.")
 else:
     st.info("ℹ️ Sol tarafta Yandex Disk'ten gelen referans görseli görebilirsiniz. Analiz yapabilmek için lütfen sağ taraftan **Sahadan Gelen Fotoğrafı** yükleyin.")
 

@@ -5,11 +5,24 @@ import os
 import pandas as pd
 import requests
 
-# Sayfa yapılandırması
+# Sayfa yapılandırması ve tarayıcı çevirisini engellemek için Türkçe dil etiketi (lang="tr")
 st.set_page_config(
     page_title="Sigara Standı Akıllı Denetim Sistemi",
     page_icon="🚬",
-    layout="wide"
+    layout="wide",
+    initial_sidebar_state="expanded"
+)
+
+# Tarayıcının Google Translate açmasını önleyen meta etiketi
+st.markdown(
+    """
+    <html lang="tr">
+    <head>
+        <meta http-equiv="Content-Language" content="tr">
+    </head>
+    </html>
+    """,
+    unsafe_allow_html=True
 )
 
 # Sağ üstteki Share, GitHub ve diğer araç çubuğu elemanlarını kesin olarak gizleyen güncel CSS
@@ -43,7 +56,7 @@ if not st.session_state.authenticated:
     st.stop()
 # ---------------------
 
-# Kenar çubuğuna logo ekleme (Güncellenen dosya adı: logo_yeni.jpg)
+# Kenar çubuğuna logo ekleme (Önce logo_yeni.jpg, bulunamazsa diğerleri kontrol edilir)
 if os.path.exists("logo_yeni.jpg"):
     st.sidebar.image("logo_yeni.jpg", width=220)
 elif os.path.exists("logo.jpg"):
@@ -229,7 +242,7 @@ if ref_img is not None and curr_file is not None and curr_img is not None:
             result_img = curr_img.copy()
             eksik_sayisi = len(filtered_boxes)
             
-            # Kalınlık 6 olarak ayarlandı
+            # Kalınlık 6 olarak ayarlandı (Daha kalın ve belirgin kırmızı çerçeveler)
             for idx, (startX, startY, endX, endY) in enumerate(filtered_boxes, 1):
                 cv2.rectangle(result_img, (startX, startY), (endX, endY), (0, 0, 255), 6)
                 cv2.putText(result_img, f"#{idx}", (startX + 5, startY + 25), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)

@@ -115,15 +115,13 @@ ref_img = None
 with st.spinner(f"'{secilen_bayi}' için Yandex Disk'te arama yapılıyor..."):
     ref_img = yandex_bayi_gorseli_getir(YANDEX_ROOT_PUBLIC_KEY, secilen_bayi)
 
-# Görsel yükleme alanları (Dikey hizalama uyumlu)
+# Görsel yükleme alanları
 col_up1, col_up2 = st.columns(2)
 
 with col_up1:
     st.markdown("**Referans Görsel Durumu:**")
     if ref_img is not None:
         st.success(f"✅ '{secilen_bayi}' Referans Görseli Yandex'ten Otomatik Yüklendi")
-        # Yükseklik hizalamasını tam eşitlemek için boşluk bırakıyoruz
-        st.write("") 
     else:
         st.warning("⚠️ Yandex Disk'te bu bayiye ait klasör bulunamadı:")
         ref_file = st.file_uploader("1. Referans (İdeal) Stand Görseli (Manuel)", type=["jpg", "jpeg", "png"], key="ref")
@@ -143,7 +141,7 @@ with col_up2:
 
 st.markdown("---")
 
-# Eğer referans görsel ve mevcut görsel hazırsa analiz ekranını başlat
+# Eğer referans görsel ve sahadan gelen mevcut görsel hazırsa yan yana ekranda göster
 if ref_img is not None and curr_file is not None and curr_img is not None:
     if ref_img.shape != curr_img.shape:
         curr_img = cv2.resize(curr_img, (ref_img.shape[1], ref_img.shape[0]))
@@ -192,6 +190,6 @@ if ref_img is not None and curr_file is not None and curr_img is not None:
         else:
             st.success(f"{secilen_bayi} denetimi tamamlandı: Referans görsel ile mevcut görsel arasında belirgin bir fark bulunamadı.")
 else:
-    st.info("Lütfen sol menüden bayiyi seçin (Yandex Disk'ten fotoğraf otomatik gelecektir) ve sağdan **2. Kontrol Edilecek Görseli** yükleyin.")
+    st.info("Lütfen sol menüden bayiyi seçin (Yandex Disk'ten fotoğraf otomatik gelecektir) ve sağdan **Sahadan Gelen Fotoğrafı** yükleyin. Her iki görsel yüklendiğinde karşılaştırma ekranı otomatik açılacaktır.")
 
 st.markdown("<br><p style='text-align: center; color: gray;'>Developed by Hakan</p>", unsafe_allow_html=True)

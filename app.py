@@ -5,11 +5,6 @@ import os
 import pandas as pd
 import requests
 import difflib
-import easyocr
-
-@st.cache_resource
-def get_ocr_reader():
-    return easyocr.Reader(['tr', 'en'], gpu=False)
 
 st.set_page_config(
     page_title="Sigara Standı Akıllı Denetim Sistemi",
@@ -94,7 +89,8 @@ if not st.session_state.authenticated:
 
 st.sidebar.markdown("---")
 st.sidebar.header("Uygulama Ayarları")
-min_area_val = st.sidebar.slider("Minimum Eksik Boyutu (Hassasiyet)", 50, 2000, 200, step=50)
+min_area_val = st.sidebar.slider("Minimum Eksik Boyutu (Hassasiyet)", 50, 2000, 150, step=25)
+fark_esigi = st.sidebar.slider("Piksel Fark Eşiği (Yoğunluk)", 20, 100, 40, step=5)
 
 YANDEX_ROOT_PUBLIC_KEY = "https://disk.yandex.com.tr/d/JXJNYBDAk6fePw"
 
@@ -241,41 +237,24 @@ if "raf_yuzdesi" not in st.session_state:
     st.session_state.raf_yuzdesi = 100.0
 if "analiz_yapildi" not in st.session_state:
     st.session_state.analiz_yapildi = False
-if "ocr_raporu" not in st.session_state:
-    st.session_state.ocr_raporu = []
-if "ref_texts_count" not in st.session_state:
-    st.session_state.ref_texts_count = 0
 
 if ref_img is not None and curr_file is not None and curr_img is not None:
-    if st.button("Farkı Analiz Et ve Etiketleri Oku", type="primary"):
-        with st.spinner("Gelişmiş görsel fark analizi ve OCR etiket okuma yapılıyor..."):
+    if st.button("Hassas Farkı Analiz Et", type="primary"):
+        with st.spinner("Gelişmiş hibrit matris ve piksel analizi yapılıyor..."):
             
             if ref_img.shape[:2] != curr_img.shape[:2]:
                 curr_img = cv2.resize(curr_img, (ref_img.shape[1], ref_img.shape[0]), interpolation=cv2.INTER_AREA)
 
-            # --- OCR İLE ETİKET OKUMA VE KARŞILAŞTIRMA ---
-            reader = get_ocr_reader()
-            ref_results = reader.readtext(ref_img)
-            curr_results = reader.readtext(curr_img)
-
-            ref_texts = [text.strip().lower() for (_, text, conf) in ref_results if conf > 0.25 and len(text.strip()) > 2]
-            curr_texts = [text.strip().lower() for (_, text, conf) in curr_results if conf > 0.25 and len(text.strip()) > 2]
-
-            st.session_state.ref_texts_count = len(ref_texts)
-            eksik_etiketler = [t for t in ref_texts if t not in curr_texts]
-            st.session_state.ocr_raporu = eksik_etiketler
-
-            # --- GÖRSEL PİKSEL VE KONTUR ANALİZİ ---
             gray_ref = cv2.cvtColor(ref_img, cv2.COLOR_BGR2GRAY)
             gray_curr = cv2.cvtColor(curr_img, cv2.COLOR_BGR2GRAY)
 
-            gray_ref = cv2.GaussianBlur(gray_ref, (11, 11), 0)
-            gray_curr = cv2.GaussianBlur(gray_curr, (11, 11), 0)
+            gray_ref = cv2.GaussianBlur(gray_ref, (5, 5), 0)
+            gray_curr = cv2.GaussianBlur(gray_curr, (5, 5), 0)
 
             diff = cv2.absdiff(gray_ref, gray_curr)
-            _, thresh = cv2.threshold(diff, 50, 255, cv2.THRESH_BINARY)
+            _, thresh = cv2.threshold(diff, fark_esigi, 255, cv2.THRESH_BINARY)
 
-            kernel = np.ones((7, 7), np.uint8)
+            kernel = np.ones((5, 5), np.uint8)
             morph = cv2.morphologyEx(thresh, cv2.MORPH_CLOSE, kernel)
             morph = cv2.morphologyEx(morph, cv2.MORPH_OPEN, kernel)
 
@@ -288,10 +267,10 @@ if ref_img is not None and curr_file is not None and curr_img is not None:
                 area = cv2.contourArea(contour)
                 if area > min_area_val:
                     x, y, w, h = cv2.boundingRect(contour)
-                    if (img_w * 0.02 < x < img_w * 0.98) and (img_h * 0.05 < y < img_h * 0.98):
+                    if (img_w * 0.01 < x < img_w * 0.99) and (img_h * 0.02 < y < img_h * 0.98):
                         boxes.append([x, y, x + w, y + h])
 
-            def non_max_suppression(boxes, overlapThresh=0.2):
+            def non_max_suppression(boxes, overlapThresh=0.15):
                 if len(boxes) == 0:
                     return []
                 boxes = np.array(boxes)
@@ -343,7 +322,7 @@ if ref_img is not None and curr_file is not None and curr_img is not None:
             st.session_state.analiz_yapildi = True
 
     if st.session_state.analiz_yapildi and st.session_state.result_img is not None:
-        st.subheader("Tespit Edilen Eksikler ve Etiket Kontrol Raporu")
+        st.subheader("Tespit Edilen Eksikler ve Detaylı Rapor")
         
         col_m1, col_m2 = st.columns(2)
         with col_m1:
@@ -351,16 +330,6 @@ if ref_img is not None and curr_file is not None and curr_img is not None:
         with col_m2:
             st.metric(label="⚠️ Tespit Edilen Eksik/Boşluk Alan", value=f"{st.session_state.eksik_sayisi} Adet")
         
-        # OCR Kontrol Durumu Raporlaması
-        if st.session_state.ref_texts_count == 0:
-            st.info("ℹ️ OCR Bilgisi: Görsellerdeki etiketler uzaktan çekildiği için okunabilir metin algılanamadı. Denetim yalnızca görsel piksel ve boşluk analizi üzerinden yapılıyor.")
-        elif st.session_state.ocr_raporu:
-            st.warning(f"🔍 OCR ile referansta olup sahada okunamayan/eşleşmeyen {len(st.session_state.ocr_raporu)} etiket metni tespit edildi:")
-            for etiket in st.session_state.ocr_raporu:
-                st.markdown(f"- `{etiket}`")
-        else:
-            st.success("✅ OCR Kontrolü: Referans görseldeki okunabilen etiket metinleri sahadaki fotoğrafta da doğrulandı.")
-
         sonuc_gorsel_genisligi = st.slider("🔍 Sonuç Görseli Boyutunu Ayarla (Piksel)", 300, 2000, 800, step=100, key="dinamik_boyut")
         
         st.image(st.session_state.result_img, channels="BGR", width=sonuc_gorsel_genisligi)

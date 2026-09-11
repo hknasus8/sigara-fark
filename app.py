@@ -25,7 +25,7 @@ st.markdown(
     unsafe_allow_html=True
 )
 
-# Sağ üstteki Share, GitHub ve diğer araç çubuğu elemanlarını kesin olarak gizleyen güncel CSS
+# Sağ üstteki Share, GitHub ve diğer araç çubuğu elemanlarını gizleyen CSS
 hide_st_style = """
     <style>
     #MainMenu {visibility: hidden;}
@@ -56,8 +56,10 @@ if not st.session_state.authenticated:
     st.stop()
 # ---------------------
 
-# Kenar çubuğuna logo ekleme (Önce logo_yeni.jpg, bulunamazsa diğerleri kontrol edilir)
-if os.path.exists("logo_yeni.jpg"):
+# Kenar çubuğuna logo ekleme (GitHub'daki dosya adıyla birebir eşleştirildi: logo_new.jpg)
+if os.path.exists("logo_new.jpg"):
+    st.sidebar.image("logo_new.jpg", width=220)
+elif os.path.exists("logo_yeni.jpg"):
     st.sidebar.image("logo_yeni.jpg", width=220)
 elif os.path.exists("logo.jpg"):
     st.sidebar.image("logo.jpg", width=220)
@@ -242,12 +244,10 @@ if ref_img is not None and curr_file is not None and curr_img is not None:
             result_img = curr_img.copy()
             eksik_sayisi = len(filtered_boxes)
             
-            # Kalınlık 6 olarak ayarlandı (Daha kalın ve belirgin kırmızı çerçeveler)
             for idx, (startX, startY, endX, endY) in enumerate(filtered_boxes, 1):
                 cv2.rectangle(result_img, (startX, startY), (endX, endY), (0, 0, 255), 6)
                 cv2.putText(result_img, f"#{idx}", (startX + 5, startY + 25), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
 
-            # Görsel üzerine bayi adı ve eksik sayısını yazdırma
             cv2.rectangle(result_img, (0, 0), (img_w, 90), (0, 0, 0), -1)
             cv2.putText(result_img, f"Bayi: {secilen_bayi}", (20, 35), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 2, cv2.LINE_AA)
             cv2.putText(result_img, f"Tespit Edilen Eksik/Fark Adeti: {eksik_sayisi}", (20, 70), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255) if eksik_sayisi > 0 else (0, 255, 0), 2, cv2.LINE_AA)

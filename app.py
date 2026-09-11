@@ -39,7 +39,7 @@ hide_st_style = """
 """
 st.markdown(hide_st_style, unsafe_allow_html=True)
 
-# Görsel boyutlandırma optimizasyon fonksiyonu (Hız kazandırır)
+# Görsel boyutlandırma optimizasyon fonksiyonu
 def resmi_boyutlandir(img, max_genislik=1000):
     if img is None:
         return None
@@ -81,6 +81,11 @@ st.sidebar.markdown("---")
 st.sidebar.header("Uygulama Ayarları")
 min_area_val = st.sidebar.slider("Minimum Eksik Boyutu (Hassasiyet)", 50, 2000, 200, step=50)
 
+# Sonuç görselini büyütüp küçültmek için kenar çubuğuna ayar
+st.sidebar.markdown("---")
+st.sidebar.header("Görünüm Ayarları")
+sonuc_gorsel_genisligi = st.sidebar.slider("Sonuç Görseli Boyutu (Piksel)", 300, 2000, 800, step=100)
+
 # Yandex Disk 'BAYİ' Klasörünün Public Linki
 YANDEX_ROOT_PUBLIC_KEY = "https://disk.yandex.com.tr/d/JXJNYBDAk6fePw"
 
@@ -121,7 +126,7 @@ secilen_bayi = st.selectbox("Bayi Seçimi", bayi_listesi, label_visibility="coll
 st.markdown(f"**Seçilen Bayi:** `{secilen_bayi}`")
 st.markdown("---")
 
-# Yandex Disk'ten esnek eşleşme ile bayi klasörünü ve görseli bulan fonksiyon (Performans önbellekli)
+# Yandex Disk'ten esnek eşleşme ile bayi klasörünü ve görseli bulan fonksiyon
 @st.cache_data(ttl=600, show_spinner=False)
 def yandex_bayi_gorseli_getir_cached(public_key, bayi_adi):
     try:
@@ -195,7 +200,6 @@ with col_up2:
     if curr_file is not None:
         curr_bytes = np.asarray(bytearray(curr_file.read()), dtype=np.uint8)
         raw_curr_img = cv2.imdecode(curr_bytes, cv2.IMREAD_COLOR)
-        # Sahadan gelen fotoğrafı da hız için optimize boyuta indiriyoruz
         curr_img = resmi_boyutlandir(raw_curr_img)
         st.success("✅ Fotoğraf yüklendi")
         st.image(curr_img, channels="BGR", use_container_width=True)
@@ -269,16 +273,18 @@ if ref_img is not None and curr_file is not None and curr_img is not None:
             result_img = curr_img.copy()
             eksik_sayisi = len(filtered_boxes)
             
+            # Çerçeve kalınlığı 6'dan 2'ye düşürüldü (daha ince ve şık görünüm)
             for idx, (startX, startY, endX, endY) in enumerate(filtered_boxes, 1):
-                cv2.rectangle(result_img, (startX, startY), (endX, endY), (0, 0, 255), 6)
-                cv2.putText(result_img, f"#{idx}", (startX + 5, startY + 25), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
+                cv2.rectangle(result_img, (startX, startY), (endX, endY), (0, 0, 255), 2)
+                cv2.putText(result_img, f"#{idx}", (startX + 3, startY + 18), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 1)
 
-            cv2.rectangle(result_img, (0, 0), (img_w, 90), (0, 0, 0), -1)
-            cv2.putText(result_img, f"Bayi: {secilen_bayi}", (20, 35), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 2, cv2.LINE_AA)
-            cv2.putText(result_img, f"Tespit Edilen Eksik/Fark Adeti: {eksik_sayisi}", (20, 70), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255) if eksik_sayisi > 0 else (0, 255, 0), 2, cv2.LINE_AA)
+            cv2.rectangle(result_img, (0, 0), (img_w, 80), (0, 0, 0), -1)
+            cv2.putText(result_img, f"Bayi: {secilen_bayi}", (15, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2, cv2.LINE_AA)
+            cv2.putText(result_img, f"Tespit Edilen Eksik/Fark Adeti: {eksik_sayisi}", (15, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 255) if eksik_sayisi > 0 else (0, 255, 0), 2, cv2.LINE_AA)
 
             st.subheader("Tespit Edilen Eksikler ve Farklar")
-            st.image(result_img, channels="BGR", use_container_width=True)
+            # Boyut kenar çubuğundaki ayara göre dinamik olarak ayarlanır
+            st.image(result_img, channels="BGR", width=sonuc_gorsel_genisligi)
 
             success, encoded_image = cv2.imencode(".jpg", result_img)
             if success:

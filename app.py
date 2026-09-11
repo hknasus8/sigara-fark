@@ -91,7 +91,7 @@ min_area_val = st.sidebar.slider("Minimum Eksik Boyutu (Hassasiyet)", 50, 2000, 
 # Yandex Disk 'BAYİ' Klasörünün Public Linki
 YANDEX_ROOT_PUBLIC_KEY = "https://disk.yandex.com.tr/d/JXJNYBDAk6fePw"
 
-# --- ÖNCE FONKSİYON TANIMLANIYOR (NameError Çözümü) ---
+# Önce fonksiyon tanımlanıyor (NameError önlemi)
 @st.cache_data(ttl=600, show_spinner=False)
 def yandex_bayi_gorseli_getir_cached(public_key, bayi_adi):
     try:
@@ -145,7 +145,6 @@ def yandex_bayi_gorseli_getir_cached(public_key, bayi_adi):
         return None, "Yandex sunucusuna bağlanırken zaman aşımı (timeout) oluştu."
     except Exception as e:
         return None, f"Yandex bağlantı hatası: {e}"
-# -----------------------------------------------------
 
 # Excel dosyasından bayileri okuma
 excel_dosya_adi = "bayiler.xlsx"
@@ -183,10 +182,10 @@ st.subheader("1. Denetlenecek Bayiyi Seçin")
 secilen_bayi = st.selectbox("Bayi Seçimi", bayi_listesi, label_visibility="collapsed")
 st.markdown(f"**Seçilen Bayi:** `{secilen_bayi}`")
 
-# Yandex Cache Temizleme Butonu (Artık fonksiyon yukarıda tanımlı olduğu için hata vermez)
+# Yandex Cache Temizleme Butonu (st.toast ile optimize edildi)
 if st.button("🔄 Yandex Bağlantısını ve Önbelleği Yenile"):
     yandex_bayi_gorseli_getir_cached.clear()
-    st.success("Önbellek temizlendi, veriler yeniden çekiliyor...")
+    st.toast("Önbellek temizlendi, veriler yeniden çekiliyor...", icon="🔄")
     st.rerun()
 
 st.markdown("---")

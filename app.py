@@ -141,9 +141,9 @@ st.markdown("---")
 
 if ref_img is not None and curr_file is not None and curr_img is not None:
     if st.button("Farkı Analiz Et ve Eksikleri Bul", type="primary"):
-        with st.spinner("OpenCV ile farklar analiz ediliyor..."):
+        with st.spinner("Görseller işleniyor ve farklar taranıyor..."):
             
-            # Boyutları birebir eşitleme
+            # Boyutları milimetrik olarak eşitleme
             if ref_img.shape[:2] != curr_img.shape[:2]:
                 curr_img = cv2.resize(curr_img, (ref_img.shape[1], ref_img.shape[0]))
 
@@ -151,18 +151,23 @@ if ref_img is not None and curr_file is not None and curr_img is not None:
             gray_ref = cv2.cvtColor(ref_img, cv2.COLOR_BGR2GRAY)
             gray_curr = cv2.cvtColor(curr_img, cv2.COLOR_BGR2GRAY)
 
-            # Mutlak fark
+            # Işık dalgalanmalarını önlemek için hafif bulanıklaştırma (Blur)
+            gray_ref = cv2.GaussianBlur(gray_ref, (5, 5), 0)
+            gray_curr = cv2.GaussianBlur(gray_curr, (5, 5), 0)
+
+            # Mutlak fark (Absolute Difference)
             diff = cv2.absdiff(gray_ref, gray_curr)
 
-            # Otomatik Otsu eşikleme
+            # Otsu otomatik eşikleme ile en ideal fark sınırını otomatik bulma
             _, thresh = cv2.threshold(diff, 0, 255, cv2.THRESH_BINARY | cv2.THRESH_OTSU)
 
-            # Dilation (Boşlukları birleştirme)
+            # Morfolojik işlemlerle kopuk pikselleri ve boşlukları birleştirme
             kernel = np.ones((5, 5), np.uint8)
             dilate = cv2.dilate(thresh, kernel, iterations=2)
+            morph = cv2.morphologyEx(dilate, cv2.MORPH_CLOSE, kernel)
 
-            # Kontur bulma
-            contours, _ = cv2.findContours(dilate.copy(), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+            # Kontur (hat) tespiti
+            contours, _ = cv2.findContours(morph.copy(), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
             boxes = []
             img_h, img_w = curr_img.shape[:2]
@@ -171,10 +176,11 @@ if ref_img is not None and curr_file is not None and curr_img is not None:
                 area = cv2.contourArea(contour)
                 if area > min_area_val:
                     x, y, w, h = cv2.boundingRect(contour)
+                    # Stand içi bölge filtresi (Çerçeve dışındaki dış etkenleri eleme)
                     if (img_w * 0.02 < x < img_w * 0.98) and (img_h * 0.05 < y < img_h * 0.98):
                         boxes.append([x, y, x + w, y + h])
 
-            # Non-Maximum Suppression (Üst üste binen kutuları tekilleştirme)
+            # Non-Maximum Suppression (Üst üste binen kutuları tekilleştirme algoritması)
             def non_max_suppression(boxes, overlapThresh=0.2):
                 if len(boxes) == 0:
                     return []
@@ -227,9 +233,9 @@ if ref_img is not None and curr_file is not None and curr_img is not None:
                 )
 
         if eksik_sayisi > 0:
-            st.error(f"{secilen_bayi} denetimi tamamlandı: Toplam {eksik_sayisi} adet fark tespit edildi.")
+            st.error(f"{secilen_bayi} denetimi tamamlandı: Toplam {eksik_sayisi} adet eksik/fark alanı tespit edildi.")
         else:
-            st.success(f"{secilen_bayi} denetimi tamamlandı: İki görsel arasında fark bulunamadı.")
+            st.success(f"{secilen_bayi} denetimi tamamlandı: İki görsel arasında belirgin bir fark bulunamadı.")
 else:
     st.info("ℹ️ Sol tarafta Yandex Disk'ten gelen referans görseli görebilirsiniz. Analiz yapabilmek için lütfen sağ taraftan **Sahadan Gelen Fotoğrafı** yükleyin.")
 

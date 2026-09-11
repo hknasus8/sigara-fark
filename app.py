@@ -4,6 +4,7 @@ import numpy as np
 import os
 import pandas as pd
 import requests
+import difflib
 
 # Sayfa yapılandırması
 st.set_page_config(
@@ -13,17 +14,17 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# Tarayıcının Google Translate açmasını kesin olarak engelleyen etiketler
-st.markdown(
+# Tarayıcının Google Translate açmasını engellemek için bileşen enjeksiyonu
+st.components.v1.html(
     """
-    <html lang="tr" translate="no">
-    <head>
-        <meta http-equiv="Content-Language" content="tr">
-        <meta name="google" content="notranslate">
-    </head>
-    </html>
+    <script>
+        const doc = window.parent.document;
+        doc.documentElement.lang = 'tr';
+        doc.documentElement.setAttribute('translate', 'no');
+    </script>
     """,
-    unsafe_allow_html=True
+    height=0,
+    width=0
 )
 
 # Sağ üstteki Share, GitHub ve diğer araç çubuğu elemanlarını gizleyen CSS
@@ -69,7 +70,9 @@ if not st.session_state.authenticated:
     
     sifre_input = st.text_input("Şifre", type="password")
     if st.button("Giriş Yap", type="primary"):
-        if sifre_input == "qwert123":
+        # Güvenli şifre kontrolü (st.secrets kullanımı)
+        app_pass = st.secrets.get("app_password", "qwert123")
+        if sifre_input == app_pass:
             st.session_state.authenticated = True
             st.rerun()
         else:
@@ -84,7 +87,7 @@ min_area_val = st.sidebar.slider("Minimum Eksik Boyutu (Hassasiyet)", 50, 2000, 
 # Yandex Disk 'BAYİ' Klasörünün Public Linki
 YANDEX_ROOT_PUBLIC_KEY = "https://disk.yandex.com.tr/d/JXJNYBDAk6fePw"
 
-# Excel dosyasından bayileri okuma
+# Excel dosyasından bayileri okuma (openpyxl gereksinimi kontrolü)
 excel_dosya_adi = "bayiler.xlsx"
 bayi_listesi = []
 
@@ -96,7 +99,7 @@ if os.path.exists(excel_dosya_adi):
         else:
             bayi_listesi = df_bayiler.iloc[:, 0].dropna().astype(str).tolist()
     except Exception as e:
-        st.error(f"Excel okunurken hata oluştu: {e}")
+        st.error(f"Excel okunurken hata oluştu (openpyxl kurulu olduğundan emin olun): {e}")
 
 if not bayi_listesi:
     bayi_listesi = ["Excel dosyasından unvanlar okunamadı"]
@@ -121,35 +124,38 @@ secilen_bayi = st.selectbox("Bayi Seçimi", bayi_listesi, label_visibility="coll
 st.markdown(f"**Seçilen Bayi:** `{secilen_bayi}`")
 st.markdown("---")
 
-# Yandex Disk'ten esnek eşleşme ile bayi klasörünü ve görseli bulan fonksiyon
+# Yandex Disk'ten difflib ile en yakın eşleşmeyi bulan ve timeout korumalı fonksiyon
 @st.cache_data(ttl=600, show_spinner=False)
 def yandex_bayi_gorseli_getir_cached(public_key, bayi_adi):
     try:
         api_url = f"https://cloud-api.yandex.net:443/v1/disk/public/resources?public_key={public_key}&limit=2000"
-        resp = requests.get(api_url)
+        resp = requests.get(api_url, timeout=10)
         if resp.status_code != 200:
-            return None
+            return None, f"Yandex API Hatası: HTTP {resp.status_code}"
         
         data = resp.json()
         items = data.get("_embedded", {}).get("items", [])
         
         hedef_aranan = bayi_adi.strip().lower()
-        bayi_klasor_path = None
+        en_iyi_eslesme_path = None
+        en_yuksek_benzerlik = 0.0
         
+        # Kesin substring yerine difflib ile en yakın klasör adını bulma
         for item in items:
             if item.get("type") == "dir":
-                Item_Adi = item.get("name", "").strip().lower()
-                if hedef_aranan in Item_Adi or Item_Adi in hedef_aranan:
-                    bayi_klasor_path = item.get("path")
-                    break
+                item_adi = item.get("name", "").strip().lower()
+                oran = difflib.SequenceMatcher(None, hedef_aranan, item_adi).ratio()
+                if oran > en_yuksek_benzerlik and oran > 0.4:  # %40 ve üzeri benzerlik eşiği
+                    en_yuksek_benzerlik = oran
+                    en_iyi_eslesme_path = item.get("path")
         
-        if not bayi_klasor_path:
-            return None
+        if not en_iyi_eslesme_path:
+            return None, "Yandex'te eşleşen klasör bulunamadı."
             
-        sub_api_url = f"https://cloud-api.yandex.net:443/v1/disk/public/resources?public_key={public_key}&path={bayi_klasor_path}&limit=100"
-        sub_resp = requests.get(sub_api_url)
+        sub_api_url = f"https://cloud-api.yandex.net:443/v1/disk/public/resources?public_key={public_key}&path={en_iyi_eslesme_path}&limit=100"
+        sub_resp = requests.get(sub_api_url, timeout=10)
         if sub_resp.status_code != 200:
-            return None
+            return None, "Klasör içeriği okunamadı."
             
         sub_items = sub_resp.json().get("_embedded", {}).get("items", [])
         
@@ -162,19 +168,23 @@ def yandex_bayi_gorseli_getir_cached(public_key, bayi_adi):
                     break
                     
         if gorsel_download_url:
-            img_resp = requests.get(gorsel_download_url)
+            img_resp = requests.get(gorsel_download_url, timeout=15)
             if img_resp.status_code == 200:
                 image_bytes = np.asarray(bytearray(img_resp.content), dtype=np.uint8)
                 img = cv2.imdecode(image_bytes, cv2.IMREAD_COLOR)
-                return resmi_boyutlandir(img)
+                return resmi_boyutlandir(img), None
+                
+        return None, "Klasör içerisinde uygun görsel (jpg/png) bulunamadı."
+    except requests.exceptions.Timeout:
+        return None, "Yandex sunucusuna bağlanırken zaman aşımı (timeout) oluştu."
     except Exception as e:
-        print(f"Yandex bağlantı hatası: {e}")
-    return None
+        return None, f"Yandex bağlantı hatası: {e}"
 
 # Referans görseli Yandex Disk'ten çekme
 ref_img = None
+hata_mesaji = None
 with st.spinner(f"'{secilen_bayi}' için Yandex Disk'te arama yapılıyor..."):
-    ref_img = yandex_bayi_gorseli_getir_cached(YANDEX_ROOT_PUBLIC_KEY, secilen_bayi)
+    ref_img, hata_mesaji = yandex_bayi_gorseli_getir_cached(YANDEX_ROOT_PUBLIC_KEY, secilen_bayi)
 
 # Görseller: Referans Görsel (Yandex) ve Sahadan Gelen (Manuel Yükleme)
 col_up1, col_up2 = st.columns(2)
@@ -185,7 +195,7 @@ with col_up1:
         st.success(f"✅ '{secilen_bayi}' Yandex'ten Yüklendi")
         st.image(ref_img, channels="BGR", use_container_width=True)
     else:
-        st.warning(f"⚠️ '{secilen_bayi}' için Yandex'te görsel bulunamadı.")
+        st.warning(f"⚠️ '{secilen_bayi}' için görsel yüklenemedi. Nedeni: {hata_mesaji}")
 
 with col_up2:
     st.subheader("3. Sahadan Gelen Görsel")
@@ -290,8 +300,9 @@ if ref_img is not None and curr_file is not None and curr_img is not None:
             result_img = curr_img.copy()
             eksik_sayisi = len(filtered_boxes)
             
-            # Kullanıcının elle girdiği toplam ürün sayısına göre net yüzde hesaplama
-            hesaplanan_yuzde = max(0.0, 100.0 - ((eksik_sayisi / ideal_urun_sayisi) * 100.0))
+            # Sıfıra bölünme riski korumasıyla yüzdelik hesaplama
+            guvenli_toplam_slot = max(1, ideal_urun_sayisi)
+            hesaplanan_yuzde = max(0.0, 100.0 - ((eksik_sayisi / guvenli_toplam_slot) * 100.0))
 
             for idx, (startX, startY, endX, endY) in enumerate(filtered_boxes, 1):
                 cv2.rectangle(result_img, (startX, startY), (endX, endY), (0, 0, 255), 2)

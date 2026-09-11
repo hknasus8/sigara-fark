@@ -254,9 +254,12 @@ if ref_img is not None and curr_file is not None and curr_img is not None:
             diff = cv2.absdiff(gray_ref, gray_curr)
             _, thresh = cv2.threshold(diff, fark_esigi, 255, cv2.THRESH_BINARY)
 
-            kernel = np.ones((5, 5), np.uint8)
-            morph = cv2.morphologyEx(thresh, cv2.MORPH_CLOSE, kernel)
-            morph = cv2.morphologyEx(morph, cv2.MORPH_OPEN, kernel)
+            # Yatayda birleştirme matrisi eklenerek paket içi bölünmelerin tek ürün sayılması sağlandı
+            kernel_close = np.ones((5, 15), np.uint8)
+            morph = cv2.morphologyEx(thresh, cv2.MORPH_CLOSE, kernel_close)
+            
+            kernel_open = np.ones((3, 3), np.uint8)
+            morph = cv2.morphologyEx(morph, cv2.MORPH_OPEN, kernel_open)
 
             contours, _ = cv2.findContours(morph.copy(), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 

@@ -5,7 +5,7 @@ import os
 import pandas as pd
 import requests
 
-# Sayfa yapılandırması ve tarayıcı çevirisini engellemek için Türkçe dil etiketi (lang="tr")
+# Sayfa yapılandırması
 st.set_page_config(
     page_title="Sigara Standı Akıllı Denetim Sistemi",
     page_icon="🚬",
@@ -13,12 +13,13 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# Tarayıcının Google Translate açmasını önleyen meta etiketi
+# Tarayıcının Google Translate açmasını kesin olarak engelleyen etiketler
 st.markdown(
     """
-    <html lang="tr">
+    <html lang="tr" translate="no">
     <head>
         <meta http-equiv="Content-Language" content="tr">
+        <meta name="google" content="notranslate">
     </head>
     </html>
     """,
@@ -56,7 +57,7 @@ if not st.session_state.authenticated:
     st.stop()
 # ---------------------
 
-# Kenar çubuğuna logo ekleme (GitHub'daki dosya adıyla birebir eşleştirildi: logo_new.jpg)
+# Kenar çubuğuna logo ekleme (GitHub'daki dosya adlarıyla tam uyumlu kontrol)
 if os.path.exists("logo_new.jpg"):
     st.sidebar.image("logo_new.jpg", width=220)
 elif os.path.exists("logo_yeni.jpg"):

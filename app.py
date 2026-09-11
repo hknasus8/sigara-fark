@@ -122,12 +122,11 @@ with col_up2:
     st.info("Kontrol edilecek mevcut sahadaki fotoğrafı yükleyin:")
     curr_file = st.file_uploader("2. Kontrol Edilecek (Mevcut) Görsel", type=["jpg", "jpeg", "png"], key="curr")
     
-    # DÜZELTME: Mevcut görsel seçildiği an hemen önizlemesinin görünmesi sağlandı
     curr_img = None
     if curr_file is not None:
         curr_bytes = np.asarray(bytearray(curr_file.read()), dtype=np.uint8)
         curr_img = cv2.imdecode(curr_bytes, cv2.IMREAD_COLOR)
-        st.success("✅ Mevcut Görsel Yüklendi")
+        st.success("✅ Sahadan gelen foto yüklendi")
         st.image(curr_img, channels="BGR", use_container_width=True)
 
 st.markdown("---")

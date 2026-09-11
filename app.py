@@ -33,7 +33,7 @@ st.sidebar.markdown("---")
 
 # Kenar çubuğu ayarları
 st.sidebar.header("Denetim ve Bayi Seçimi")
-threshold_val = st.sidebar.slider("Fark Hassasiyet Eşiği", 80, 220, 140)
+threshold_val = st.sidebar.slider("Fark Hassasiyet Eşiği", 30, 150, 70)
 
 # Yandex Disk 'BAYİ' Klasörünün Public Linki
 YANDEX_ROOT_PUBLIC_KEY = "https://disk.yandex.com.tr/d/JXJNYBDAk6fePw"
@@ -139,23 +139,19 @@ with col_up2:
 
 st.markdown("---")
 
-# Eğer hem referans görsel (Yandex'ten) hem de sahadan gelen görsel hazırsa analiz bölümünü aç
 if ref_img is not None and curr_file is not None and curr_img is not None:
-    # Boyutları eşitleme
     if ref_img.shape != curr_img.shape:
         curr_img = cv2.resize(curr_img, (ref_img.shape[1], ref_img.shape[0]))
 
     if st.button("Farkı Analiz Et ve Eksikleri Bul", type="primary"):
         with st.spinner("Stand analizi yapılıyor..."):
-            
             gray_ref = cv2.cvtColor(ref_img, cv2.COLOR_BGR2GRAY)
             gray_curr = cv2.cvtColor(curr_img, cv2.COLOR_BGR2GRAY)
 
-            # Mutlak fark
             diff = cv2.absdiff(gray_ref, gray_curr)
             _, thresh = cv2.threshold(diff, threshold_val, 255, cv2.THRESH_BINARY)
 
-            kernel = np.ones((5, 5), np.uint8)
+            kernel = np.ones((3, 3), np.uint8)
             thresh = cv2.morphologyEx(thresh, cv2.MORPH_OPEN, kernel)
             thresh = cv2.morphologyEx(thresh, cv2.MORPH_CLOSE, kernel)
 
@@ -168,10 +164,9 @@ if ref_img is not None and curr_file is not None and curr_img is not None:
                 area = cv2.contourArea(c)
                 x, y, w, h = cv2.boundingRect(c)
                 
-                # KESİN FİLTRE: Sadece ahşap çerçeve dışındaki, raf içindeki orta alanları baz al
-                # Yan taraftaki sarı/ahşap kolonları (örneğin sol %30 ve sağ %5'lik kısımları) tamamen ele
-                if (img_w * 0.25 < x < img_w * 0.85) and (img_h * 0.20 < y < img_h * 0.90):
-                    if 3000 < area < 60000:  # Sadece gerçek paket/boşluk boyutundaki alanlar
+                # Standın raf içi bölgesi
+                if (img_w * 0.20 < x < img_w * 0.90) and (img_h * 0.15 < y < img_h * 0.95):
+                    if 500 < area < 50000: 
                         boxes.append([x, y, x + w, y + h])
 
             def non_max_suppression(boxes, overlapThresh=0.1):
@@ -211,7 +206,7 @@ if ref_img is not None and curr_file is not None and curr_img is not None:
             
             for idx, (startX, startY, endX, endY) in enumerate(filtered_boxes, 1):
                 cv2.rectangle(result_img, (startX, startY), (endX, endY), (0, 0, 255), 3)
-                cv2.putText(result_img, f"#{idx}", (startX + 8, startY + 28), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
+                cv2.putText(result_img, f"#{idx}", (startX + 5, startY + 22), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 255), 2)
 
             st.subheader("Tespit Edilen Gerçek Eksikler / Boşluklar")
             st.image(result_img, channels="BGR", use_container_width=True)
@@ -226,9 +221,9 @@ if ref_img is not None and curr_file is not None and curr_img is not None:
                 )
 
         if eksik_sayisi > 0:
-            st.error(f"{secilen_bayi} denetimi tamamlandı: Toplam {eksik_sayisi} adet eksik alan tespit edildi.")
+            st.error(f"{secilen_bayi} denetimi tamamlandı: Toplam {eksik_sayisi} adet fark/eksik tespit edildi.")
         else:
-            st.success(f"{secilen_bayi} denetimi tamamlandı: Stand düzeninde belirgin bir eksik bulunamadı.")
+            st.success(f"{secilen_bayi} denetimi tamamlandı: Belirtilen eşikte fark bulunamadı.")
 else:
     st.info("ℹ️ Sol tarafta Yandex Disk'ten gelen referans görseli görebilirsiniz. Analiz yapabilmek için lütfen sağ taraftan **Sahadan Gelen Fotoğrafı** yükleyin.")
 

@@ -33,8 +33,8 @@ st.sidebar.markdown("---")
 
 # Kenar çubuğu ayarları
 st.sidebar.header("Denetim ve Bayi Seçimi")
-threshold_val = st.sidebar.slider("Fark Hassasiyet Eşiği (Işık Toleransı)", 10, 100, 40)
-min_area_val = st.sidebar.slider("Minimum Fark Boyutu (Gürültü Filtresi)", 100, 2000, 400, step=50)
+threshold_val = st.sidebar.slider("Fark Hassasiyet Eşiği (Işık Toleransı)", 5, 100, 25)
+min_area_val = st.sidebar.slider("Minimum Fark Boyutu (Gürültü Filtresi)", 50, 1500, 150, step=50)
 
 # Yandex Disk 'BAYİ' Klasörünün Public Linki
 YANDEX_ROOT_PUBLIC_KEY = "https://disk.yandex.com.tr/d/JXJNYBDAk6fePw"
@@ -148,20 +148,17 @@ if ref_img is not None and curr_file is not None and curr_img is not None:
 
     if st.button("Farkı Analiz Et ve Eksikleri Bul", type="primary"):
         with st.spinner("Görseller karşılaştırılıyor..."):
-            # Renk uzayını Lab formatına çevir (Işık ve gölge değişimlerinden en az etkilenen uzaydır)
             lab_ref = cv2.cvtColor(ref_img, cv2.COLOR_BGR2Lab)
             lab_curr = cv2.cvtColor(curr_img, cv2.COLOR_BGR2Lab)
 
-            # Sadece parlaklık (L) kanalı yerine renk kanalları (a, b) üzerinden de fark alarak ışık oynamalarını filtrele
             diff = cv2.absdiff(lab_ref, lab_curr)
             diff_gray = cv2.cvtColor(diff, cv2.COLOR_BGR2GRAY)
 
             _, thresh = cv2.threshold(diff_gray, threshold_val, 255, cv2.THRESH_BINARY)
             
-            # Morfolojik iyileştirme
             kernel = np.ones((3, 3), np.uint8)
             thresh = cv2.morphologyEx(thresh, cv2.MORPH_OPEN, kernel)
-            thresh = cv2.dilate(thresh, kernel, iterations=2)
+            thresh = cv2.dilate(thresh, kernel, iterations=1)
 
             contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
@@ -207,8 +204,11 @@ if ref_img is not None and curr_file is not None and curr_img is not None:
             result_img = curr_img.copy()
             eksik_sayisi = len(filtered_boxes)
             
-            for (startX, startY, endX, endY) in filtered_boxes:
+            # Her kutunun içine numara yazdırılması
+            for idx, (startX, startY, endX, endY) in enumerate(filtered_boxes, 1):
                 cv2.rectangle(result_img, (startX, startY), (endX, endY), (0, 0, 255), 3)
+                # Kutunun sol üst köşesine sıra numarasını ekleme
+                cv2.putText(result_img, f"#{idx}", (startX + 5, startY + 22), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 255), 2)
 
             st.subheader("Tespit Edilen Farklar")
             st.image(result_img, channels="BGR", use_container_width=True)
@@ -223,9 +223,9 @@ if ref_img is not None and curr_file is not None and curr_img is not None:
                 )
 
         if eksik_sayisi > 0:
-            st.error(f"{secilen_bayi} denetimi tamamlandı: Toplam {eksik_sayisi} farklılık tespit edildi.")
+            st.error(f"{secilen_bayi} denetimi tamamlandı: Toplam {eksik_sayisi} farklılık tespit edildi ve numaralandırıldı.")
         else:
-            st.success(f"{secilen_bayi} denetimi tamamlandı: Belirtilen kriterlerde fark bulunamadı.")
+            st.success(f"{secilen_bayi} denetimi tamamlandı: Belirtilen kriterlerde fark bulunamadı. (Gerekirse sol menüden hassasiyet eşiğini düşürebilirsiniz.)")
 else:
     st.info("ℹ️ Sol tarafta Yandex Disk'ten gelen referans görseli görebilirsiniz. Analiz yapabilmek için lütfen sağ taraftan **Sahadan Gelen Fotoğrafı** yükleyin.")
 

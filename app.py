@@ -23,7 +23,7 @@ hide_st_style = """
 """
 st.markdown(hide_st_style, unsafe_allow_html=True)
 
-# Kenar çubuğuna logo ekleme (Eğer varsa)
+# Kenar çubuğuna logo ekleme
 if os.path.exists("logo.jpg"):
     st.sidebar.image("logo.jpg", width=220)
 elif os.path.exists("logo.png"):
@@ -54,7 +54,7 @@ if not bayi_listesi:
     bayi_listesi = ["Excel dosyasından unvanlar okunamadı"]
 
 # ANA EKRAN - MOBİL UYUMLU BAYİ SEÇİMİ
-st.title("SİGARA STANDI AKILLİ DENETİM SİSTEMİ")
+st.title("SİGARA STANDI AKILLI DENETİM SİSTEMİ")
 st.markdown("<p style='color: gray; font-size: 14px;'>Developed by Hakan</p>", unsafe_allow_html=True)
 st.markdown("---")
 
@@ -210,6 +210,12 @@ if ref_img is not None and curr_file is not None and curr_img is not None:
             for idx, (startX, startY, endX, endY) in enumerate(filtered_boxes, 1):
                 cv2.rectangle(result_img, (startX, startY), (endX, endY), (0, 0, 255), 3)
                 cv2.putText(result_img, f"#{idx}", (startX + 5, startY + 22), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 255), 2)
+
+            # --- GÖRSEL ÜZERİNE BİLGİ YAZDIRMA ---
+            # Üst kısma arka plan şeridi ve metinler ekleyerek profesyonel görünüm sağlıyoruz
+            cv2.rectangle(result_img, (0, 0), (img_w, 90), (0, 0, 0), -1)
+            cv2.putText(result_img, f"Bayi: {secilen_bayi}", (20, 35), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 2, cv2.LINE_AA)
+            cv2.putText(result_img, f"Tespit Edilen Eksik/Fark Adeti: {eksik_sayisi}", (20, 70), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255) if eksik_sayisi > 0 else (0, 255, 0), 2, cv2.LINE_AA)
 
             st.subheader("Tespit Edilen Eksikler ve Farklar")
             st.image(result_img, channels="BGR", use_container_width=True)

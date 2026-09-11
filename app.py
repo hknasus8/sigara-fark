@@ -12,6 +12,17 @@ st.set_page_config(
     layout="wide"
 )
 
+# Sağ üstteki Share, GitHub ve üst menü çubuğunu gizleyen CSS stilleri
+hide_st_style = """
+    <style>
+    #MainMenu {visibility: hidden;}
+    header {visibility: hidden;}
+    footer {visibility: hidden;}
+    .stAppToolbar {visibility: hidden;}
+    </style>
+"""
+st.markdown(hide_st_style, unsafe_allow_html=True)
+
 # Kenar çubuğuna logo ekleme
 if os.path.exists("logo.jpg"):
     st.sidebar.image("logo.jpg", width=220)
@@ -21,7 +32,7 @@ elif os.path.exists("logo.png"):
 st.sidebar.markdown("---")
 
 # Kenar çubuğu ayarları
-st.sidebar.header("Denetim ve Bayi Seçimi")
+st.sidebar.header("Denetim dan Bayi Seçimi")
 threshold_val = st.sidebar.slider("Fark Hassasiyet Eşiği", 10, 100, 30)
 
 # Yandex Disk 'BAYİ' Klasörünün Public Linki

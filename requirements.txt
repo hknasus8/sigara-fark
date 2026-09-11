@@ -2,4 +2,6 @@ streamlit
 opencv-python-headless
 numpy
 pandas
+requests
+scikit-image
 openpyxl

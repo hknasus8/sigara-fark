@@ -227,9 +227,10 @@ if ref_img is not None and curr_file is not None and curr_img is not None:
             result_img = curr_img.copy()
             eksik_sayisi = len(filtered_boxes)
             
+            # Kalınlık 3 yerine 6 yapıldı (Daha kalın ve belirgin kırmızı çerçeveler)
             for idx, (startX, startY, endX, endY) in enumerate(filtered_boxes, 1):
-                cv2.rectangle(result_img, (startX, startY), (endX, endY), (0, 0, 255), 3)
-                cv2.putText(result_img, f"#{idx}", (startX + 5, startY + 22), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 255), 2)
+                cv2.rectangle(result_img, (startX, startY), (endX, endY), (0, 0, 255), 6)
+                cv2.putText(result_img, f"#{idx}", (startX + 5, startY + 25), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
 
             # Görsel üzerine bayi adı ve eksik sayısını yazdırma
             cv2.rectangle(result_img, (0, 0), (img_w, 90), (0, 0, 0), -1)

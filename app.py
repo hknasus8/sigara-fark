@@ -12,6 +12,19 @@ st.set_page_config(
     layout="wide"
 )
 
+# Sağ üstteki Share, GitHub ve diğer araç çubuğu elemanlarını kesin olarak gizleyen güncel CSS
+hide_st_style = """
+    <style>
+    #MainMenu {visibility: hidden;}
+    header {visibility: hidden;}
+    footer {visibility: hidden;}
+    .stAppToolbar {visibility: hidden; display: none !important;}
+    [data-testid="stHeader"] {visibility: hidden; display: none !important;}
+    [data-testid="stToolbar"] {visibility: hidden; display: none !important;}
+    </style>
+"""
+st.markdown(hide_st_style, unsafe_allow_html=True)
+
 # --- ŞİFRE KONTROLÜ ---
 if "authenticated" not in st.session_state:
     st.session_state.authenticated = False
@@ -29,17 +42,6 @@ if not st.session_state.authenticated:
             st.error("❌ Hatalı şifre! Lütfen tekrar deneyin.")
     st.stop()
 # ---------------------
-
-# Sağ üstteki menüleri gizleyen CSS stilleri
-hide_st_style = """
-    <style>
-    #MainMenu {visibility: hidden;}
-    header {visibility: hidden;}
-    footer {visibility: hidden;}
-    .stAppToolbar {visibility: hidden;}
-    </style>
-"""
-st.markdown(hide_st_style, unsafe_allow_html=True)
 
 # Kenar çubuğuna logo ekleme
 if os.path.exists("logo.jpg"):

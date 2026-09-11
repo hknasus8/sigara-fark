@@ -266,8 +266,9 @@ if ref_img is not None and curr_file is not None and curr_img is not None:
             ref_results = reader.readtext(ref_img)
             curr_results = reader.readtext(curr_img)
 
-            ref_texts = [text.strip().lower() for (_, text, conf) in ref_results if conf > 0.3]
-            curr_texts = [text.strip().lower() for (_, text, conf) in curr_results if conf > 0.3]
+            # Sadece anlamlı (uzunluğu 1 karakterden büyük olan) metinleri filtreleyelim
+            ref_texts = [text.strip().lower() for (_, text, conf) in ref_results if conf > 0.3 and len(text.strip()) > 1]
+            curr_texts = [text.strip().lower() for (_, text, conf) in curr_results if conf > 0.3 and len(text.strip()) > 1]
 
             eksik_etiketler = [t for t in ref_texts if t not in curr_texts]
             st.session_state.ocr_raporu = eksik_etiketler
@@ -358,10 +359,11 @@ if ref_img is not None and curr_file is not None and curr_img is not None:
         with col_m2:
             st.metric(label="⚠️ Tespit Edilen Eksik/Boşluk Alan", value=f"{st.session_state.eksik_sayisi} Adet")
         
-        # OCR Metin Eşleşme Raporunu Göster
+        # OCR Metin Eşleşme Raporunu Düzenli Gösterim
         if st.session_state.ocr_raporu:
-            st.warning(f"🔍 OCR ile referansta olup sahada okunamayan/eşleşmeyen {len(st.session_state.ocr_raporu)} metin/etiket tespit edildi:")
-            st.write(st.session_state.ocr_raporu)
+            st.warning(f"🔍 OCR ile referansta olup sahada okunamayan/eşleşmeyen {len(st.session_state.ocr_raporu)} etiket metni tespit edildi:")
+            for etiket in st.session_state.ocr_raporu:
+                st.markdown(f"- `{etiket}`")
         else:
             st.success("✅ OCR Kontrolü: Referans görseldeki tüm etiket metinleri sahadaki fotoğrafta da doğrulandı.")
 

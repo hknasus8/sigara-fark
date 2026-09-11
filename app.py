@@ -33,8 +33,8 @@ st.sidebar.markdown("---")
 
 # Kenar çubuğu ayarları
 st.sidebar.header("Denetim ve Bayi Seçimi")
-threshold_val = st.sidebar.slider("Fark Hassasiyet Eşiği", 10, 150, 45)
-min_area_val = st.sidebar.slider("Minimum Eksik Boyutu", 100, 3000, 400, step=100)
+threshold_val = st.sidebar.slider("Fark Hassasiyet Eşiği", 10, 100, 25)
+min_area_val = st.sidebar.slider("Minimum Eksik Boyutu", 50, 2000, 150, step=50)
 
 # Yandex Disk 'BAYİ' Klasörünün Public Linki
 YANDEX_ROOT_PUBLIC_KEY = "https://disk.yandex.com.tr/d/JXJNYBDAk6fePw"
@@ -142,9 +142,9 @@ st.markdown("---")
 
 if ref_img is not None and curr_file is not None and curr_img is not None:
     if st.button("Farkı Analiz Et ve Eksikleri Bul", type="primary"):
-        with st.spinner("Görseller karşılaştırılıyor ve eksikler tespit ediliyor..."):
+        with st.spinner("Görseller normalize ediliyor ve farklar tespit ediliyor..."):
             
-            # Boyutları milimetrik olarak birebir eşitleme
+            # Boyutları birebir eşitleme
             if ref_img.shape[:2] != curr_img.shape[:2]:
                 curr_img = cv2.resize(curr_img, (ref_img.shape[1], ref_img.shape[0]))
 
@@ -152,14 +152,17 @@ if ref_img is not None and curr_file is not None and curr_img is not None:
             gray_ref = cv2.cvtColor(ref_img, cv2.COLOR_BGR2GRAY)
             gray_curr = cv2.cvtColor(curr_img, cv2.COLOR_BGR2GRAY)
 
-            # Doğrudan mutlak piksel farkı alma (Hizalama kaymalarını önlemek için saf boyut eşitleme üzerine kurulu)
+            # Işık ve kontrast farklarını eşitlemek için Histogram Eşitleme (CLAHE)
+            clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+            gray_ref = clahe.apply(gray_ref)
+            gray_curr = clahe.apply(gray_curr)
+
+            # Mutlak piksel farkı
             diff = cv2.absdiff(gray_ref, gray_curr)
             
-            # Aydınlatma farklarını törpülemek için hafif blur ve eşikleme
-            diff_blur = cv2.GaussianBlur(diff, (5, 5), 0)
-            _, thresh = cv2.threshold(diff_blur, threshold_val, 255, cv2.THRESH_BINARY)
+            # Eşikleme ve gürültü temizleme
+            _, thresh = cv2.threshold(diff, threshold_val, 255, cv2.THRESH_BINARY)
 
-            # Gürültüleri temizleme
             kernel = np.ones((3, 3), np.uint8)
             thresh = cv2.morphologyEx(thresh, cv2.MORPH_OPEN, kernel)
             thresh = cv2.morphologyEx(thresh, cv2.MORPH_CLOSE, kernel)
@@ -173,8 +176,8 @@ if ref_img is not None and curr_file is not None and curr_img is not None:
                 area = cv2.contourArea(c)
                 x, y, w, h = cv2.boundingRect(c)
                 
-                # Standın raf içi bölgesi (Kenar çerçeveleri ve dışarıdaki alanlar hariç tutulur)
-                if (img_w * 0.05 < x < img_w * 0.95) and (img_h * 0.10 < y < img_h * 0.95):
+                # Standın içi filtrelemesi (Çok dışarı taşan alanlar hariç)
+                if (img_w * 0.02 < x < img_w * 0.98) and (img_h * 0.05 < y < img_h * 0.98):
                     if area > min_area_val: 
                         boxes.append([x, y, x + w, y + h])
 

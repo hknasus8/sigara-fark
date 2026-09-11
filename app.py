@@ -201,11 +201,25 @@ with col_up2:
 
 st.markdown("---")
 
+# Kullanıcının standdaki toplam ürün sayısını elle girebileceği alan
+st.subheader("4. Stand Kapasite Ayarı")
+ideal_urun_sayisi = st.number_input(
+    "Standda Bulunması Gereken Toplam Ürün (Slot) Sayısı",
+    min_value=1,
+    value=50,
+    step=1,
+    help="Bu sayı, tespit edilen eksiklere göre raf uygunluk yüzdesinin hesaplanmasında kullanılacaktır."
+)
+
+st.markdown("---")
+
 # Session state tanımlamaları
 if "result_img" not in st.session_state:
     st.session_state.result_img = None
 if "eksik_sayisi" not in st.session_state:
     st.session_state.eksik_sayisi = 0
+if "raf_yuzdesi" not in st.session_state:
+    st.session_state.raf_yuzdesi = 100.0
 if "analiz_yapildi" not in st.session_state:
     st.session_state.analiz_yapildi = False
 
@@ -276,20 +290,30 @@ if ref_img is not None and curr_file is not None and curr_img is not None:
             result_img = curr_img.copy()
             eksik_sayisi = len(filtered_boxes)
             
+            # Kullanıcının elle girdiği toplam ürün sayısına göre net yüzde hesaplama
+            hesaplanan_yuzde = max(0.0, 100.0 - ((eksik_sayisi / ideal_urun_sayisi) * 100.0))
+
             for idx, (startX, startY, endX, endY) in enumerate(filtered_boxes, 1):
                 cv2.rectangle(result_img, (startX, startY), (endX, endY), (0, 0, 255), 2)
                 cv2.putText(result_img, f"#{idx}", (startX + 3, startY + 18), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 1)
 
-            cv2.rectangle(result_img, (0, 0), (img_w, 80), (0, 0, 0), -1)
+            cv2.rectangle(result_img, (0, 0), (img_w, 100), (0, 0, 0), -1)
             cv2.putText(result_img, f"Bayi: {secilen_bayi}", (15, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2, cv2.LINE_AA)
-            cv2.putText(result_img, f"Tespit Edilen Eksik/Fark Adeti: {eksik_sayisi}", (15, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 255) if eksik_sayisi > 0 else (0, 255, 0), 2, cv2.LINE_AA)
+            cv2.putText(result_img, f"Eksik Alan: {eksik_sayisi} | Raf Uygunluk: %{hesaplanan_yuzde:.1f}", (15, 70), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 255) if eksik_sayisi > 0 else (0, 255, 0), 2, cv2.LINE_AA)
 
             st.session_state.result_img = result_img
             st.session_state.eksik_sayisi = eksik_sayisi
+            st.session_state.raf_yuzdesi = hesaplanan_yuzde
             st.session_state.analiz_yapildi = True
 
     if st.session_state.analiz_yapildi and st.session_state.result_img is not None:
-        st.subheader("Tespit Edilen Eksikler ve Farklar")
+        st.subheader("Tespit Edilen Eksikler ve Raf Doğruluk Raporu")
+        
+        col_m1, col_m2 = st.columns(2)
+        with col_m1:
+            st.metric(label="📊 Hesaplanan Raf Doğruluk Oranı", value=f"%{st.session_state.raf_yuzdesi:.1f}")
+        with col_m2:
+            st.metric(label="⚠️ Tespit Edilen Eksik/Boşluk Alan", value=f"{st.session_state.eksik_sayisi} Adet")
         
         sonuc_gorsel_genisligi = st.slider("🔍 Sonuç Görseli Boyutunu Ayarla (Piksel)", 300, 2000, 800, step=100, key="dinamik_boyut")
         
@@ -305,9 +329,9 @@ if ref_img is not None and curr_file is not None and curr_img is not None:
             )
 
         if st.session_state.eksik_sayisi > 0:
-            st.error(f"{secilen_bayi} denetimi tamamlandı: Toplam {st.session_state.eksik_sayisi} adet eksik/fark alanı tespit edildi.")
+            st.error(f"{secilen_bayi} denetimi tamamlandı: Toplam {st.session_state.eksik_sayisi} eksik alan bulundu. Girilen kapasiteye göre raf uygunluk seviyesi %{st.session_state.raf_yuzdesi:.1f}.")
         else:
-            st.success(f"{secilen_bayi} denetimi tamamlandı: İki görsel arasında belirgin bir fark bulunamadı.")
+            st.success(f"{secilen_bayi} denetimi tamamlandı: Raf düzeni kusursuz (%100).")
 else:
     st.info("ℹ️ Analiz yapabilmek için lütfen yukarıdan bayinizi seçin ve sağdaki alandan **Sahadan Gelen Fotoğrafı** yükleyin.")
 

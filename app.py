@@ -91,51 +91,7 @@ min_area_val = st.sidebar.slider("Minimum Eksik Boyutu (Hassasiyet)", 50, 2000, 
 # Yandex Disk 'BAYİ' Klasörünün Public Linki
 YANDEX_ROOT_PUBLIC_KEY = "https://disk.yandex.com.tr/d/JXJNYBDAk6fePw"
 
-# Excel dosyasından bayileri okuma
-excel_dosya_adi = "bayiler.xlsx"
-bayi_listesi = []
-
-if os.path.exists(excel_dosya_adi):
-    try:
-        df_bayiler = pd.read_excel(excel_dosya_adi, sheet_name="DATA")
-        if "UNVAN" in df_bayiler.columns:
-            bayi_listesi = df_bayiler["UNVAN"].dropna().astype(str).tolist()
-        else:
-            bayi_listesi = df_bayiler.iloc[:, 0].dropna().astype(str).tolist()
-    except Exception as e:
-        st.error(f"Excel okunurken hata oluştu (openpyxl kurulu olduğundan emin olun): {e}")
-
-if not bayi_listesi:
-    bayi_listesi = ["Excel dosyasından unvanlar okunamadı"]
-
-# ANA EKRAN - BAŞLIK VE SAĞ ÜST ÇIKIŞ BUTONU
-col_baslik, col_cikis = st.columns([5, 1])
-
-with col_baslik:
-    st.title("SİGARA STANDI AKILLI DENETİM SİSTEMİ")
-    st.markdown("<p style='color: gray; font-size: 14px; margin-top: -15px;'>Developed by Hakan</p>", unsafe_allow_html=True)
-
-with col_cikis:
-    st.write("") 
-    if st.button("🚪 Çıkış Yap", type="secondary"):
-        st.session_state.authenticated = False
-        st.rerun()
-
-st.markdown("---")
-
-st.subheader("1. Denetlenecek Bayiyi Seçin")
-secilen_bayi = st.selectbox("Bayi Seçimi", bayi_listesi, label_visibility="collapsed")
-st.markdown(f"**Seçilen Bayi:** `{secilen_bayi}`")
-
-# Yandex Cache Temizleme Butonu
-if st.button("🔄 Yandex Bağlantısını ve Önbelleği Yenile"):
-    yandex_bayi_gorseli_getir_cached.clear()
-    st.success("Önbellek temizlendi, veriler yeniden çekiliyor...")
-    st.rerun()
-
-st.markdown("---")
-
-# Yandex Disk'ten difflib ile eşleşen ve timeout korumalı fonksiyon
+# --- ÖNCE FONKSİYON TANIMLANIYOR (NameError Çözümü) ---
 @st.cache_data(ttl=600, show_spinner=False)
 def yandex_bayi_gorseli_getir_cached(public_key, bayi_adi):
     try:
@@ -189,6 +145,51 @@ def yandex_bayi_gorseli_getir_cached(public_key, bayi_adi):
         return None, "Yandex sunucusuna bağlanırken zaman aşımı (timeout) oluştu."
     except Exception as e:
         return None, f"Yandex bağlantı hatası: {e}"
+# -----------------------------------------------------
+
+# Excel dosyasından bayileri okuma
+excel_dosya_adi = "bayiler.xlsx"
+bayi_listesi = []
+
+if os.path.exists(excel_dosya_adi):
+    try:
+        df_bayiler = pd.read_excel(excel_dosya_adi, sheet_name="DATA")
+        if "UNVAN" in df_bayiler.columns:
+            bayi_listesi = df_bayiler["UNVAN"].dropna().astype(str).tolist()
+        else:
+            bayi_listesi = df_bayiler.iloc[:, 0].dropna().astype(str).tolist()
+    except Exception as e:
+        st.error(f"Excel okunurken hata oluştu (openpyxl kurulu olduğundan emin olun): {e}")
+
+if not bayi_listesi:
+    bayi_listesi = ["Excel dosyasından unvanlar okunamadı"]
+
+# ANA EKRAN - BAŞLIK VE SAĞ ÜST ÇIKIŞ BUTONU
+col_baslik, col_cikis = st.columns([5, 1])
+
+with col_baslik:
+    st.title("SİGARA STANDI AKILLI DENETİM SİSTEMİ")
+    st.markdown("<p style='color: gray; font-size: 14px; margin-top: -15px;'>Developed by Hakan</p>", unsafe_allow_html=True)
+
+with col_cikis:
+    st.write("") 
+    if st.button("🚪 Çıkış Yap", type="secondary"):
+        st.session_state.authenticated = False
+        st.rerun()
+
+st.markdown("---")
+
+st.subheader("1. Denetlenecek Bayiyi Seçin")
+secilen_bayi = st.selectbox("Bayi Seçimi", bayi_listesi, label_visibility="collapsed")
+st.markdown(f"**Seçilen Bayi:** `{secilen_bayi}`")
+
+# Yandex Cache Temizleme Butonu (Artık fonksiyon yukarıda tanımlı olduğu için hata vermez)
+if st.button("🔄 Yandex Bağlantısını ve Önbelleği Yenile"):
+    yandex_bayi_gorseli_getir_cached.clear()
+    st.success("Önbellek temizlendi, veriler yeniden çekiliyor...")
+    st.rerun()
+
+st.markdown("---")
 
 # Referans görseli Yandex Disk'ten çekme
 ref_img = None

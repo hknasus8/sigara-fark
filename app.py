@@ -141,7 +141,7 @@ if ref_img is not None and curr_file is not None and curr_img is not None:
         st.subheader("Referans Görsel")
         st.image(ref_img, channels="BGR", use_container_width=True)
     with col2:
-        st.subheader("Mevcut Görsel")
+        st.subheader("Sahadan Gelen")  # <--- Burası değiştirildi
         st.image(curr_img, channels="BGR", use_container_width=True)
 
     if st.button("Farkı Analiz Et ve Eksikleri Bul", type="primary"):

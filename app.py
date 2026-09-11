@@ -33,7 +33,8 @@ st.sidebar.markdown("---")
 
 # Kenar çubuğu ayarları
 st.sidebar.header("Denetim ve Bayi Seçimi")
-min_area_val = st.sidebar.slider("Minimum Eksik Boyutu (Gürültü Filtresi)", 50, 2000, 100, step=50)
+# Hassasiyeti artırmak için minimum boyutu daha düşük başlatıyoruz
+min_area_val = st.sidebar.slider("Minimum Eksik Boyutu (Hassasiyet)", 20, 1000, 50, step=10)
 
 # Yandex Disk 'BAYİ' Klasörünün Public Linki
 YANDEX_ROOT_PUBLIC_KEY = "https://disk.yandex.com.tr/d/JXJNYBDAk6fePw"
@@ -141,9 +142,9 @@ st.markdown("---")
 
 if ref_img is not None and curr_file is not None and curr_img is not None:
     if st.button("Farkı Analiz Et ve Eksikleri Bul", type="primary"):
-        with st.spinner("Görseller işleniyor ve farklar taranıyor..."):
+        with st.spinner("Gelişmiş aydınlatma ve fark analizi yapılıyor..."):
             
-            # Boyutları milimetrik olarak eşitleme
+            # Boyutları eşitleme
             if ref_img.shape[:2] != curr_img.shape[:2]:
                 curr_img = cv2.resize(curr_img, (ref_img.shape[1], ref_img.shape[0]))
 
@@ -151,22 +152,27 @@ if ref_img is not None and curr_file is not None and curr_img is not None:
             gray_ref = cv2.cvtColor(ref_img, cv2.COLOR_BGR2GRAY)
             gray_curr = cv2.cvtColor(curr_img, cv2.COLOR_BGR2GRAY)
 
-            # Işık dalgalanmalarını önlemek için hafif bulanıklaştırma (Blur)
-            gray_ref = cv2.GaussianBlur(gray_ref, (5, 5), 0)
-            gray_curr = cv2.GaussianBlur(gray_curr, (5, 5), 0)
+            # Işık ve gölge farklarını eşitlemek için CLAHE (Adaptive Histogram Equalization)
+            clahe = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8, 8))
+            gray_ref = clahe.apply(gray_ref)
+            gray_curr = clahe.apply(gray_curr)
 
-            # Mutlak fark (Absolute Difference)
+            # Hafif bulanıklaştırma
+            gray_ref = cv2.GaussianBlur(gray_ref, (3, 3), 0)
+            gray_curr = cv2.GaussianBlur(gray_curr, (3, 3), 0)
+
+            # Mutlak fark
             diff = cv2.absdiff(gray_ref, gray_curr)
 
-            # Otsu otomatik eşikleme ile en ideal fark sınırını otomatik bulma
-            _, thresh = cv2.threshold(diff, 0, 255, cv2.THRESH_BINARY | cv2.THRESH_OTSU)
+            # Eşikleme (Thresholding)
+            _, thresh = cv2.threshold(diff, 25, 255, cv2.THRESH_BINARY)
 
-            # Morfolojik işlemlerle kopuk pikselleri ve boşlukları birleştirme
-            kernel = np.ones((5, 5), np.uint8)
+            # Boşlukları ve eksik alanları birleştirme
+            kernel = np.ones((3, 3), np.uint8)
             dilate = cv2.dilate(thresh, kernel, iterations=2)
             morph = cv2.morphologyEx(dilate, cv2.MORPH_CLOSE, kernel)
 
-            # Kontur (hat) tespiti
+            # Kontur tespiti
             contours, _ = cv2.findContours(morph.copy(), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
             boxes = []
@@ -176,11 +182,9 @@ if ref_img is not None and curr_file is not None and curr_img is not None:
                 area = cv2.contourArea(contour)
                 if area > min_area_val:
                     x, y, w, h = cv2.boundingRect(contour)
-                    # Stand içi bölge filtresi (Çerçeve dışındaki dış etkenleri eleme)
-                    if (img_w * 0.02 < x < img_w * 0.98) and (img_h * 0.05 < y < img_h * 0.98):
-                        boxes.append([x, y, x + w, y + h])
+                    boxes.append([x, y, x + w, y + h])
 
-            # Non-Maximum Suppression (Üst üste binen kutuları tekilleştirme algoritması)
+            # Non-Maximum Suppression (Kutuları gruplama)
             def non_max_suppression(boxes, overlapThresh=0.2):
                 if len(boxes) == 0:
                     return []

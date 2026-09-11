@@ -33,7 +33,6 @@ st.sidebar.markdown("---")
 
 # Kenar çubuğu ayarları
 st.sidebar.header("Denetim ve Bayi Seçimi")
-# Hassasiyeti artırmak için minimum boyutu daha düşük başlatıyoruz
 min_area_val = st.sidebar.slider("Minimum Eksik Boyutu (Hassasiyet)", 20, 1000, 50, step=10)
 
 # Yandex Disk 'BAYİ' Klasörünün Public Linki

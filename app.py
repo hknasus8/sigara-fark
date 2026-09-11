@@ -44,7 +44,6 @@ if "authenticated" not in st.session_state:
     st.session_state.authenticated = False
 
 if not st.session_state.authenticated:
-    # Şifre ekranında (giriş yapmadan önce) logonun doğrudan ekranda görünmesi
     logo_yolu = "logo.jpg"
     if os.path.exists(logo_yolu):
         st.image(logo_yolu, width=180)
@@ -91,9 +90,19 @@ if os.path.exists(excel_dosya_adi):
 if not bayi_listesi:
     bayi_listesi = ["Excel dosyasından unvanlar okunamadı"]
 
-# ANA EKRAN - MOBİL UYUMLU BAYİ SEÇİMİ
-st.title("SİGARA STANDI AKILLI DENETİM SİSTEMİ")
-st.markdown("<p style='color: gray; font-size: 14px;'>Developed by Hakan</p>", unsafe_allow_html=True)
+# ANA EKRAN - BAŞLIK VE SAĞ ÜST ÇIKIŞ BUTONU
+col_baslik, col_cikis = st.columns([5, 1])
+
+with col_baslik:
+    st.title("SİGARA STANDI AKILLI DENETİM SİSTEMİ")
+    st.markdown("<p style='color: gray; font-size: 14px; margin-top: -15px;'>Developed by Hakan</p>", unsafe_allow_html=True)
+
+with col_cikis:
+    st.write("") # Dikey hizalama için boşluk
+    if st.button("🚪 Çıkış Yap", type="secondary"):
+        st.session_state.authenticated = False
+        st.rerun()
+
 st.markdown("---")
 
 st.subheader("1. Denetlenecek Bayiyi Seçin")

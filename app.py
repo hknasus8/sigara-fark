@@ -51,7 +51,13 @@ def resmi_boyutlandir(img, max_genislik=1000):
         return cv2.resize(img, (max_genislik, yeni_yukseklik), interpolation=cv2.INTER_AREA)
     return img
 
-# --- ŞİFRE KONTROLÜ VE EKRAN MANTIĞI ---
+# --- GÜVENLİ ŞİFRE KONTROLÜ (FALLBACK YOK) ---
+if "app_password" not in st.secrets:
+    st.error("⚠️ Kritik Güvenlik Uyarısı: 'app_password' Streamlit secrets içinde tanımlı değil!")
+    st.stop()
+
+app_pass = st.secrets["app_password"]
+
 if "authenticated" not in st.session_state:
     st.session_state.authenticated = False
 
@@ -70,8 +76,6 @@ if not st.session_state.authenticated:
     
     sifre_input = st.text_input("Şifre", type="password")
     if st.button("Giriş Yap", type="primary"):
-        # Güvenli şifre kontrolü (st.secrets kullanımı)
-        app_pass = st.secrets.get("app_password", "qwert123")
         if sifre_input == app_pass:
             st.session_state.authenticated = True
             st.rerun()
@@ -87,7 +91,7 @@ min_area_val = st.sidebar.slider("Minimum Eksik Boyutu (Hassasiyet)", 50, 2000, 
 # Yandex Disk 'BAYİ' Klasörünün Public Linki
 YANDEX_ROOT_PUBLIC_KEY = "https://disk.yandex.com.tr/d/JXJNYBDAk6fePw"
 
-# Excel dosyasından bayileri okuma (openpyxl gereksinimi kontrolü)
+# Excel dosyasından bayileri okuma
 excel_dosya_adi = "bayiler.xlsx"
 bayi_listesi = []
 
@@ -122,9 +126,16 @@ st.markdown("---")
 st.subheader("1. Denetlenecek Bayiyi Seçin")
 secilen_bayi = st.selectbox("Bayi Seçimi", bayi_listesi, label_visibility="collapsed")
 st.markdown(f"**Seçilen Bayi:** `{secilen_bayi}`")
+
+# Yandex Cache Temizleme Butonu
+if st.button("🔄 Yandex Bağlantısını ve Önbelleği Yenile"):
+    yandex_bayi_gorseli_getir_cached.clear()
+    st.success("Önbellek temizlendi, veriler yeniden çekiliyor...")
+    st.rerun()
+
 st.markdown("---")
 
-# Yandex Disk'ten difflib ile en yakın eşleşmeyi bulan ve timeout korumalı fonksiyon
+# Yandex Disk'ten difflib ile eşleşen ve timeout korumalı fonksiyon
 @st.cache_data(ttl=600, show_spinner=False)
 def yandex_bayi_gorseli_getir_cached(public_key, bayi_adi):
     try:
@@ -140,12 +151,11 @@ def yandex_bayi_gorseli_getir_cached(public_key, bayi_adi):
         en_iyi_eslesme_path = None
         en_yuksek_benzerlik = 0.0
         
-        # Kesin substring yerine difflib ile en yakın klasör adını bulma
         for item in items:
             if item.get("type") == "dir":
                 item_adi = item.get("name", "").strip().lower()
                 oran = difflib.SequenceMatcher(None, hedef_aranan, item_adi).ratio()
-                if oran > en_yuksek_benzerlik and oran > 0.4:  # %40 ve üzeri benzerlik eşiği
+                if oran > en_yuksek_benzerlik and oran > 0.4:
                     en_yuksek_benzerlik = oran
                     en_iyi_eslesme_path = item.get("path")
         
@@ -300,7 +310,6 @@ if ref_img is not None and curr_file is not None and curr_img is not None:
             result_img = curr_img.copy()
             eksik_sayisi = len(filtered_boxes)
             
-            # Sıfıra bölünme riski korumasıyla yüzdelik hesaplama
             guvenli_toplam_slot = max(1, ideal_urun_sayisi)
             hesaplanan_yuzde = max(0.0, 100.0 - ((eksik_sayisi / guvenli_toplam_slot) * 100.0))
 

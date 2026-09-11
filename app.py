@@ -23,16 +23,14 @@ hide_st_style = """
 """
 st.markdown(hide_st_style, unsafe_allow_html=True)
 
-# Kenar çubuğuna logo ekleme
+# Kenar çubuğuna logo ekleme (Eğer varsa)
 if os.path.exists("logo.jpg"):
     st.sidebar.image("logo.jpg", width=220)
 elif os.path.exists("logo.png"):
     st.sidebar.image("logo.png", width=220)
 
 st.sidebar.markdown("---")
-
-# Kenar çubuğu ayarları
-st.sidebar.header("Denetim ve Bayi Seçimi")
+st.sidebar.header("Uygulama Ayarları")
 min_area_val = st.sidebar.slider("Minimum Eksik Boyutu (Hassasiyet)", 50, 2000, 200, step=50)
 
 # Yandex Disk 'BAYİ' Klasörünün Public Linki
@@ -50,16 +48,19 @@ if os.path.exists(excel_dosya_adi):
         else:
             bayi_listesi = df_bayiler.iloc[:, 0].dropna().astype(str).tolist()
     except Exception as e:
-        st.sidebar.error(f"Excel okunurken hata oluştu: {e}")
+        st.error(f"Excel okunurken hata oluştu: {e}")
 
 if not bayi_listesi:
     bayi_listesi = ["Excel dosyasından unvanlar okunamadı"]
 
-secilen_bayi = st.sidebar.selectbox("Denetlenecek Bayiyi Seçin", bayi_listesi)
-
-st.title("SİGARA STANDI AKILLI DENETİM SİSTEMİ - Fark Analizi")
-st.markdown(f"**Seçilen Bayi:** {secilen_bayi}")
+# ANA EKRAN - MOBİL UYUMLU BAYİ SEÇİMİ
+st.title("SİGARA STANDI AKILLİ DENETİM SİSTEMİ")
 st.markdown("<p style='color: gray; font-size: 14px;'>Developed by Hakan</p>", unsafe_allow_html=True)
+st.markdown("---")
+
+st.subheader("1. Denetlenecek Bayiyi Seçin")
+secilen_bayi = st.selectbox("Bayi Seçimi", bayi_listesi, label_visibility="collapsed")
+st.markdown(f"**Seçilen Bayi:** `{secilen_bayi}`")
 st.markdown("---")
 
 # Yandex Disk'ten esnek eşleşme ile bayi klasörünü ve görseli bulan fonksiyon
@@ -115,26 +116,26 @@ ref_img = None
 with st.spinner(f"'{secilen_bayi}' için Yandex Disk'te arama yapılıyor..."):
     ref_img = yandex_bayi_gorseli_getir(YANDEX_ROOT_PUBLIC_KEY, secilen_bayi)
 
-# Üst kısım: Referans Görsel (Yandex) ve Sahadan Gelen (Manuel Yükleme) Yan Yana
+# Görseller: Referans Görsel (Yandex) ve Sahadan Gelen (Manuel Yükleme)
 col_up1, col_up2 = st.columns(2)
 
 with col_up1:
-    st.subheader("1. Referans (İdeal) Görsel")
+    st.subheader("2. Referans (İdeal) Görsel")
     if ref_img is not None:
-        st.success(f"✅ '{secilen_bayi}' Yandex Disk'ten Yüklendi")
+        st.success(f"✅ '{secilen_bayi}' Yandex'ten Yüklendi")
         st.image(ref_img, channels="BGR", use_container_width=True)
     else:
-        st.warning(f"⚠️ '{secilen_bayi}' için Yandex Disk'te klasör veya görsel bulunamadı.")
+        st.warning(f"⚠️ '{secilen_bayi}' için Yandex'te görsel bulunamadı.")
 
 with col_up2:
-    st.subheader("2. Kontrol Edilecek (Mevcut) Görsel")
-    curr_file = st.file_uploader("Sahadan gelen fotoğrafı yükleyin", type=["jpg", "jpeg", "png"], key="curr")
+    st.subheader("3. Sahadan Gelen Görsel")
+    curr_file = st.file_uploader("Fotoğraf yükleyin", type=["jpg", "jpeg", "png"], key="curr")
     
     curr_img = None
     if curr_file is not None:
         curr_bytes = np.asarray(bytearray(curr_file.read()), dtype=np.uint8)
         curr_img = cv2.imdecode(curr_bytes, cv2.IMREAD_COLOR)
-        st.success("✅ Sahadan gelen foto yüklendi")
+        st.success("✅ Fotoğraf yüklendi")
         st.image(curr_img, channels="BGR", use_container_width=True)
 
 st.markdown("---")
@@ -143,30 +144,22 @@ if ref_img is not None and curr_file is not None and curr_img is not None:
     if st.button("Farkı Analiz Et ve Eksikleri Bul", type="primary"):
         with st.spinner("Gelişmiş açı ve eksik analizi yapılıyor..."):
             
-            # Boyutları eşitleme
             if ref_img.shape[:2] != curr_img.shape[:2]:
                 curr_img = cv2.resize(curr_img, (ref_img.shape[1], ref_img.shape[0]))
 
-            # Gri tonlama
             gray_ref = cv2.cvtColor(ref_img, cv2.COLOR_BGR2GRAY)
             gray_curr = cv2.cvtColor(curr_img, cv2.COLOR_BGR2GRAY)
 
-            # Açı ve hafif kaymaları tolere etmek için yüksek blur (Gaussian Blur)
             gray_ref = cv2.GaussianBlur(gray_ref, (11, 11), 0)
             gray_curr = cv2.GaussianBlur(gray_curr, (11, 11), 0)
 
-            # Mutlak fark
             diff = cv2.absdiff(gray_ref, gray_curr)
-            
-            # Eşik değerini yükselterek genel ekran değişimlerini eleyip sadece net farkları bırakıyoruz
             _, thresh = cv2.threshold(diff, 50, 255, cv2.THRESH_BINARY)
 
-            # Gürültüleri temizleme ve küçük parça pikselleri ayırma
             kernel = np.ones((7, 7), np.uint8)
             morph = cv2.morphologyEx(thresh, cv2.MORPH_CLOSE, kernel)
             morph = cv2.morphologyEx(morph, cv2.MORPH_OPEN, kernel)
 
-            # Kontur tespiti
             contours, _ = cv2.findContours(morph.copy(), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
             boxes = []
@@ -176,11 +169,9 @@ if ref_img is not None and curr_file is not None and curr_img is not None:
                 area = cv2.contourArea(contour)
                 if area > min_area_val:
                     x, y, w, h = cv2.boundingRect(contour)
-                    # Çerçeve sınırları dışındaki olası dış taşmaları filtreleme
                     if (img_w * 0.02 < x < img_w * 0.98) and (img_h * 0.05 < y < img_h * 0.98):
                         boxes.append([x, y, x + w, y + h])
 
-            # Non-Maximum Suppression (Üst üste binen kutuları tekilleştirme)
             def non_max_suppression(boxes, overlapThresh=0.2):
                 if len(boxes) == 0:
                     return []
@@ -237,6 +228,6 @@ if ref_img is not None and curr_file is not None and curr_img is not None:
         else:
             st.success(f"{secilen_bayi} denetimi tamamlandı: İki görsel arasında belirgin bir fark bulunamadı.")
 else:
-    st.info("ℹ️ Sol tarafta Yandex Disk'ten gelen referans görseli görebilirsiniz. Analiz yapabilmek için lütfen sağ taraftan **Sahadan Gelen Fotoğrafı** yükleyin.")
+    st.info("ℹ️ Analiz yapabilmek için lütfen yukarıdan bayinizi seçin ve sağdaki alandan **Sahadan Gelen Fotoğrafı** yükleyin.")
 
 st.markdown("<br><p style='text-align: center; color: gray;'>Developed by Hakan</p>", unsafe_allow_html=True)

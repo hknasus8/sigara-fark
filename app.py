@@ -43,8 +43,10 @@ if not st.session_state.authenticated:
     st.stop()
 # ---------------------
 
-# Kenar çubuğuna logo ekleme
-if os.path.exists("logo.jpg"):
+# Kenar çubuğuna logo ekleme (Güncellenen dosya adı: logo_yeni.jpg)
+if os.path.exists("logo_yeni.jpg"):
+    st.sidebar.image("logo_yeni.jpg", width=220)
+elif os.path.exists("logo.jpg"):
     st.sidebar.image("logo.jpg", width=220)
 elif os.path.exists("logo.png"):
     st.sidebar.image("logo.png", width=220)
@@ -227,7 +229,7 @@ if ref_img is not None and curr_file is not None and curr_img is not None:
             result_img = curr_img.copy()
             eksik_sayisi = len(filtered_boxes)
             
-            # Kalınlık 3 yerine 6 yapıldı (Daha kalın ve belirgin kırmızı çerçeveler)
+            # Kalınlık 6 olarak ayarlandı
             for idx, (startX, startY, endX, endY) in enumerate(filtered_boxes, 1):
                 cv2.rectangle(result_img, (startX, startY), (endX, endY), (0, 0, 255), 6)
                 cv2.putText(result_img, f"#{idx}", (startX + 5, startY + 25), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)

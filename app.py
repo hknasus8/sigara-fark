@@ -5,6 +5,7 @@ import os
 import pandas as pd
 import requests
 import difflib
+import urllib.parse
 
 st.set_page_config(
     page_title="Sigara Standı Akıllı Denetim Sistemi",
@@ -165,7 +166,7 @@ def yandex_bayi_gorseli_getir_cached(public_key, bayi_adi):
                 item_adi = item.get("name", "")
                 item_norm = normalize_string(item_adi)
                 if hedef_norm in item_norm or item_norm in hedef_norm or item_norm in hedef_norm.replace(" lti", "").replace(" sti", ""):
-                    en_iyi_eslesme_path = item.get("path")
+                    en_iyi_eslesme_path = f"/{item_adi}"
                     break
 
         # 2. Aşama: Root'ta bulunamadıysa, root içindeki alt klasörlerin (şehirlerin) içine girip ara
@@ -173,7 +174,8 @@ def yandex_bayi_gorseli_getir_cached(public_key, bayi_adi):
             for item in items:
                 if item.get("type") == "dir":
                     root_dir_name = item.get("name", "")
-                    sub_api_url = f"https://cloud-api.yandex.net/v1/disk/public/resources?public_key={public_key}&path=/{root_dir_name}&limit=500"
+                    encoded_root = urllib.parse.quote(f"/{root_dir_name}")
+                    sub_api_url = f"https://cloud-api.yandex.net/v1/disk/public/resources?public_key={public_key}&path={encoded_root}&limit=500"
                     sub_resp = requests.get(sub_api_url, headers=headers, timeout=15)
                     if sub_resp.status_code == 200:
                         sub_data = sub_resp.json().get("_embedded")
@@ -183,7 +185,7 @@ def yandex_bayi_gorseli_getir_cached(public_key, bayi_adi):
                                     sub_item_adi = sub_item.get("name", "")
                                     sub_item_norm = normalize_string(sub_item_adi)
                                     if hedef_norm in sub_item_norm or sub_item_norm in hedef_norm or sub_item_norm in hedef_norm.replace(" lti", "").replace(" sti", "") or (len(sub_item_norm) > 3 and sub_item_norm[:5] in hedef_norm[:5]):
-                                        en_iyi_eslesme_path = sub_item.get("path")
+                                        en_iyi_eslesme_path = f"/{root_dir_name}/{sub_item_adi}"
                                         break
                 if en_iyi_eslesme_path:
                     break
@@ -195,7 +197,8 @@ def yandex_bayi_gorseli_getir_cached(public_key, bayi_adi):
                 if item.get("type") == "dir":
                     d_name = item.get("name", "")
                     tum_klasorler.append((d_name, f"/{d_name}"))
-                    sub_api_url = f"https://cloud-api.yandex.net/v1/disk/public/resources?public_key={public_key}&path=/{d_name}&limit=500"
+                    encoded_d = urllib.parse.quote(f"/{d_name}")
+                    sub_api_url = f"https://cloud-api.yandex.net/v1/disk/public/resources?public_key={public_key}&path={encoded_d}&limit=500"
                     sub_resp = requests.get(sub_api_url, headers=headers, timeout=10)
                     if sub_resp.status_code == 200:
                         sub_data = sub_resp.json().get("_embedded")
@@ -203,8 +206,7 @@ def yandex_bayi_gorseli_getir_cached(public_key, bayi_adi):
                             for sub_item in sub_data.get("items", []):
                                 if sub_item.get("type") == "dir":
                                     sd_name = sub_item.get("name", "")
-                                    sd_path = sub_item.get("path")
-                                    tum_klasorler.append((sd_name, sd_path))
+                                    tum_klasorler.append((sd_name, f"/{d_name}/{sd_name}"))
 
             en_iyi_benzerlik = 0.0
             for d_name, d_path in tum_klasorler:
@@ -216,7 +218,8 @@ def yandex_bayi_gorseli_getir_cached(public_key, bayi_adi):
         if not en_iyi_eslesme_path:
             return None, f"Yandex Disk'te '{bayi_adi}' ile eşleşen klasör bulunamadı."
 
-        final_api_url = f"https://cloud-api.yandex.net/v1/disk/public/resources?public_key={public_key}&path={en_iyi_eslesme_path}&limit=200"
+        encoded_final_path = urllib.parse.quote(en_iyi_eslesme_path)
+        final_api_url = f"https://cloud-api.yandex.net/v1/disk/public/resources?public_key={public_key}&path={encoded_final_path}&limit=200"
         final_resp = requests.get(final_api_url, headers=headers, timeout=15)
         if final_resp.status_code != 200:
             return None, f"Klasör içeriği okunamadı (HTTP {final_resp.status_code})."

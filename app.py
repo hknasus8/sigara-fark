@@ -130,15 +130,21 @@ def yandex_tum_klasorleri_getir(public_key):
     items = []
     offset = 0
     limit = 1000
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+    }
     try:
         while True:
-            api_url = f"https://cloud-api.yandex.net:443/v1/disk/public/resources?public_key={public_key}&limit={limit}&offset={offset}"
-            resp = requests.get(api_url, timeout=20)
+            api_url = f"https://cloud-api.yandex.net/v1/disk/public/resources?public_key={public_key}&limit={limit}&offset={offset}"
+            resp = requests.get(api_url, headers=headers, timeout=20)
             if resp.status_code != 200:
-                print(f"Yandex API Hata Kodu: {resp.status_code}")
+                print(f"Yandex API Hata Kodu: {resp.status_code}, Yanıt: {resp.text}")
                 break
             data = resp.json()
-            page_items = data.get("_embedded", {}).get("items", [])
+            embedded = data.get("_embedded")
+            if not embedded:
+                break
+            page_items = embedded.get("items", [])
             items.extend(page_items)
             if len(page_items) < limit:
                 break
@@ -149,6 +155,9 @@ def yandex_tum_klasorleri_getir(public_key):
 
 @st.cache_data(ttl=600, show_spinner=False)
 def yandex_bayi_gorseli_getir_cached(public_key, bayi_adi):
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+    }
     try:
         if not bayi_adi or "okunamadı" in bayi_adi.lower():
             return None, "Geçersiz bayi adı."
@@ -166,12 +175,10 @@ def yandex_bayi_gorseli_getir_cached(public_key, bayi_adi):
                 item_adi = item.get("name", "")
                 item_norm = normalize_string(item_adi)
                 
-                # 1. Birebir tam eşleşme kontrolü
                 if hedef_norm == item_norm:
                     en_iyi_eslesme_path = item.get("path")
                     break
                 
-                # 2. Esnek benzerlik kontrolü (%20 eşik)
                 oran = difflib.SequenceMatcher(None, hedef_norm, item_norm).ratio()
                 if oran > en_yuksek_benzerlik and oran > 0.20:
                     en_yuksek_benzerlik = oran
@@ -180,13 +187,16 @@ def yandex_bayi_gorseli_getir_cached(public_key, bayi_adi):
         if not en_iyi_eslesme_path:
             return None, f"Yandex Disk'te '{bayi_adi}' ismiyle eşleşen klasör bulunamadı."
 
-        # Bulunan klasörün içeriğini çek
-        sub_api_url = f"https://cloud-api.yandex.net:443/v1/disk/public/resources?public_key={public_key}&path={en_iyi_eslesme_path}&limit=200"
-        sub_resp = requests.get(sub_api_url, timeout=15)
+        sub_api_url = f"https://cloud-api.yandex.net/v1/disk/public/resources?public_key={public_key}&path={en_iyi_eslesme_path}&limit=200"
+        sub_resp = requests.get(sub_api_url, headers=headers, timeout=15)
         if sub_resp.status_code != 200:
             return None, "Klasör içeriği okunamadı."
 
-        sub_items = sub_resp.json().get("_embedded", {}).get("items", [])
+        sub_embedded = sub_resp.json().get("_embedded")
+        if not sub_embedded:
+            return None, "Klasör alt dizini boş veya okunamadı."
+            
+        sub_items = sub_embedded.get("items", [])
         
         gorsel_download_url = None
         for sub_item in sub_items:
@@ -197,7 +207,7 @@ def yandex_bayi_gorseli_getir_cached(public_key, bayi_adi):
                     break
 
         if gorsel_download_url:
-            img_resp = requests.get(gorsel_download_url, timeout=15)
+            img_resp = requests.get(gorsel_download_url, headers=headers, timeout=15)
             if img_resp.status_code == 200:
                 image_bytes = np.asarray(bytearray(img_resp.content), dtype=np.uint8)
                 img = cv2.imdecode(image_bytes, cv2.IMREAD_COLOR)

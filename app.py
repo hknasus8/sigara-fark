@@ -160,62 +160,44 @@ def yandex_bayi_gorseli_getir_cached(public_key, bayi_adi):
         hedef_norm = normalize_string(bayi_adi)
         en_iyi_eslesme_path = None
 
-        # Bayi adından olası şehir önekini yakala (Örn: "ANTALYA - NOKTA..." -> "ANTALYA")
-        sehir_adaylari = []
+        # Şehir önekini belirle
+        olasi_sehir = ""
         if "-" in bayi_adi:
             olasi_sehir = bayi_adi.split("-")[0].strip()
-            sehir_adaylari.append(olasi_sehir)
 
-        # 1. Aşama: Şehir klasörlerinin içine doğrudan bakarak hızlı eşleşme ara
+        # Tüm bayi klasörlerini topla
+        tum_bayi_klasorleri = []
         for item in items:
             if item.get("type") == "dir":
                 root_dir_name = item.get("name", "")
-                root_norm = normalize_string(root_dir_name)
-                
-                # Eğer bayi adı bu şehirle başlıyorsa veya şehir klasörü eşleşiyorsa öncelik ver
-                is_matching_city = any(normalize_string(s) in root_norm for s in sehir_adaylari)
-                
                 encoded_root = urllib.parse.quote(f"/{root_dir_name}")
                 sub_api_url = f"https://cloud-api.yandex.net/v1/disk/public/resources?public_key={public_key}&path={encoded_root}&limit=500"
-                sub_resp = requests.get(sub_api_url, headers=headers, timeout=15)
-                
+                sub_resp = requests.get(sub_api_url, headers=headers, timeout=10)
                 if sub_resp.status_code == 200:
                     sub_data = sub_resp.json().get("_embedded")
                     if sub_data:
                         for sub_item in sub_data.get("items", []):
                             if sub_item.get("type") == "dir":
-                                sub_item_adi = sub_item.get("name", "")
-                                sub_item_norm = normalize_string(sub_item_adi)
-                                
-                                # Tam veya yakın metin eşleşmesi
-                                if (hedef_norm in sub_item_norm or sub_item_norm in hedef_norm or 
-                                    sub_item_norm.replace(" lti", "").replace(" sti", "") in hedef_norm.replace(" lti", "").replace(" sti", "")):
-                                    en_iyi_eslesme_path = f"/{root_dir_name}/{sub_item_adi}"
-                                    break
-                if en_iyi_eslesme_path:
-                    break
+                                sd_name = sub_item.get("name", "")
+                                tum_bayi_klasorleri.append((sd_name, f"/{root_dir_name}/{sd_name}", root_dir_name))
 
-        # 2. Aşama: Hala bulunamadıysa tüm şehir klasörlerini tarayıp Fuzzy Matching (Benzerlik) uygula
+        # 1. Aşama: Akıllı Alt Dize / Kelime Eşleşmesi (En Güvenilir)
+        for sd_name, d_path, root_dir in tum_bayi_klasorleri:
+            sd_norm = normalize_string(sd_name)
+            # Eğer bayi adındaki anahtar kelimeler (örn: mustafa ozcan veya ekomini) klasör adında geçiyorsa eşleştir
+            bayi_kelimeleri = [k for k in hedef_norm.split() if len(k) > 2]
+            eslesen_kelime_sayisi = sum(1 for k in bayi_kelimeleri if k in sd_norm)
+            
+            if (hedef_norm in sd_norm or sd_norm in hedef_norm) or (eslesen_kelime_sayisi >= 2):
+                en_iyi_eslesme_path = d_path
+                break
+
+        # 2. Aşama: Hala bulunamadıysa Fuzzy Matching (Benzerlik Oranı Eşiği Düşürüldü: 0.3)
         if not en_iyi_eslesme_path:
-            tum_bayi_klasorleri = []
-            for item in items:
-                if item.get("type") == "dir":
-                    root_dir_name = item.get("name", "")
-                    encoded_root = urllib.parse.quote(f"/{root_dir_name}")
-                    sub_api_url = f"https://cloud-api.yandex.net/v1/disk/public/resources?public_key={public_key}&path={encoded_root}&limit=500"
-                    sub_resp = requests.get(sub_api_url, headers=headers, timeout=10)
-                    if sub_resp.status_code == 200:
-                        sub_data = sub_resp.json().get("_embedded")
-                        if sub_data:
-                            for sub_item in sub_data.get("items", []):
-                                if sub_item.get("type") == "dir":
-                                    sd_name = sub_item.get("name", "")
-                                    tum_bayi_klasorleri.append((sd_name, f"/{root_dir_name}/{sd_name}"))
-
             en_iyi_benzerlik = 0.0
-            for d_name, d_path in tum_bayi_klasorleri:
-                skor = difflib.SequenceMatcher(None, hedef_norm, normalize_string(d_name)).ratio()
-                if skor > en_iyi_benzerlik and skor > 0.4:
+            for sd_name, d_path, root_dir in tum_bayi_klasorleri:
+                skor = difflib.SequenceMatcher(None, hedef_norm, normalize_string(sd_name)).ratio()
+                if skor > en_iyi_benzerlik and skor > 0.3:
                     en_iyi_benzerlik = skor
                     en_iyi_eslesme_path = d_path
 

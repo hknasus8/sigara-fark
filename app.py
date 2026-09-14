@@ -4,7 +4,6 @@ import numpy as np
 import os
 import pandas as pd
 import requests
-import difflib
 
 st.set_page_config(
     page_title="Sigara Standı Akıllı Denetim Sistemi",
@@ -36,37 +35,6 @@ hide_st_style = """
     </style>
 """
 st.markdown(hide_st_style, unsafe_allow_html=True)
-
-def turkce_kucuk(metin):
-    """Türkçe karakterleri doğru şekilde küçük harfe çevirir (İ -> i, I -> ı)."""
-    if not metin:
-        return ""
-    metin = str(metin).strip()
-    harf_harf = []
-    for c in metin:
-        if c == 'İ':
-            harf_harf.append('i')
-        elif c == 'I':
-            harf_harf.append('ı')
-        elif c == 'Ğ':
-            harf_harf.append('ğ')
-        elif c == 'Ü':
-            harf_harf.append('ü')
-        elif c == 'Ş':
-            harf_harf.append('ş')
-        elif c == 'Ö':
-            harf_harf.append('ö')
-        elif c == 'Ç':
-            harf_harf.append('ç')
-        else:
-            harf_harf.append(c.lower())
-    return "".join(harf_harf)
-
-def normalize_string(s):
-    """Türkçe karakterli dizgileri eşleşme için saf ASCII formatına dönüştürür."""
-    s = turkce_kucuk(s)
-    tr_map = str.maketrans("ığüşöç", "igusoc")
-    return s.translate(tr_map)
 
 def resmi_boyutlandir(img, max_genislik=1000):
     if img is None:
@@ -123,101 +91,39 @@ st.sidebar.header("Uygulama Ayarları")
 min_area_val = st.sidebar.slider("Minimum Eksik Boyutu (Hassasiyet)", 50, 2000, 150, step=25)
 fark_esigi = st.sidebar.slider("Piksel Fark Eşiği (Yoğunluk)", 20, 100, 40, step=5)
 
-YANDEX_ROOT_PUBLIC_KEY = "https://disk.yandex.com.tr/d/JXJNYBDAk6fePw"
-
-@st.cache_data(ttl=3600, show_spinner=False)
-def yandex_tum_klasorleri_getir(public_key):
-    items = []
-    offset = 0
-    limit = 1000
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-    }
-    try:
-        while True:
-            api_url = f"https://cloud-api.yandex.net/v1/disk/public/resources?public_key={public_key}&limit={limit}&offset={offset}"
-            resp = requests.get(api_url, headers=headers, timeout=20)
-            if resp.status_code != 200:
-                print(f"Yandex API Hata Kodu: {resp.status_code}, Yanıt: {resp.text}")
-                break
-            data = resp.json()
-            embedded = data.get("_embedded")
-            if not embedded:
-                break
-            page_items = embedded.get("items", [])
-            items.extend(page_items)
-            if len(page_items) < limit:
-                break
-            offset += limit
-    except Exception as e:
-        print(f"Yandex toplu çekim istisnası: {e}")
-    return items
-
 @st.cache_data(ttl=600, show_spinner=False)
-def yandex_bayi_gorseli_getir_cached(public_key, bayi_adi):
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-    }
+def yandex_bayi_gorseli_getir_cached(bayi_adi):
+    """
+    Yandex Disk public link API engeline takılmamak için doğrudan 
+    Yandex'in dosya indirme köprü servisini veya doğrudan bağlantı mekanizmasını kullanır.
+    """
     try:
-        if not bayi_adi or "okunamadı" in bayi_adi.lower():
+        if not bayi_adi:
             return None, "Geçersiz bayi adı."
 
-        items = yandex_tum_klasorleri_getir(public_key)
-        if not items:
-            return None, "Yandex Disk ana dizini okunamadı (API yanıt döndürmedi veya bağlantı kurulamadı)."
-
-        hedef_norm = normalize_string(bayi_adi)
-        en_iyi_eslesme_path = None
-        en_yuksek_benzerlik = 0.0
-
-        for item in items:
-            if item.get("type") == "dir":
-                item_adi = item.get("name", "")
-                item_norm = normalize_string(item_adi)
-                
-                if hedef_norm == item_norm:
-                    en_iyi_eslesme_path = item.get("path")
-                    break
-                
-                oran = difflib.SequenceMatcher(None, hedef_norm, item_norm).ratio()
-                if oran > en_yuksek_benzerlik and oran > 0.20:
-                    en_yuksek_benzerlik = oran
-                    en_iyi_eslesme_path = item.get("path")
-
-        if not en_iyi_eslesme_path:
-            return None, f"Yandex Disk'te '{bayi_adi}' ismiyle eşleşen klasör bulunamadı."
-
-        sub_api_url = f"https://cloud-api.yandex.net/v1/disk/public/resources?public_key={public_key}&path={en_iyi_eslesme_path}&limit=200"
-        sub_resp = requests.get(sub_api_url, headers=headers, timeout=15)
-        if sub_resp.status_code != 200:
-            return None, "Klasör içeriği okunamadı."
-
-        sub_embedded = sub_resp.json().get("_embedded")
-        if not sub_embedded:
-            return None, "Klasör alt dizini boş veya okunamadı."
-            
-        sub_items = sub_embedded.get("items", [])
+        # Yandex Disk REST API üzerinden public dosya indirme bağlantısı alma denemesi
+        # Alternatif olarak doğrudan Yandex Public API mülakat uç noktası:
+        api_url = f"https://cloud-api.yandex.net/v1/disk/public/resources/download?public_key=https://disk.yandex.com.tr/d/JXJNYBDAk6fePw&path=/{bayi_adi}.jpg"
         
-        gorsel_download_url = None
-        for sub_item in sub_items:
-            if sub_item.get("type") == "file":
-                file_name = sub_item.get("name", "").lower()
-                if file_name.endswith((".jpg", ".jpeg", ".png")):
-                    gorsel_download_url = sub_item.get("file")
-                    break
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+        }
+        
+        resp = requests.get(api_url, headers=headers, timeout=10)
+        if resp.status_code == 200:
+            download_url = resp.json().get("href")
+            if download_url:
+                img_resp = requests.get(download_url, timeout=15)
+                if img_resp.status_code == 200:
+                    image_bytes = np.asarray(bytearray(img_resp.content), dtype=np.uint8)
+                    img = cv2.imdecode(image_bytes, cv2.IMREAD_COLOR)
+                    if img is not None:
+                        return resmi_boyutlandir(img), None
 
-        if gorsel_download_url:
-            img_resp = requests.get(gorsel_download_url, headers=headers, timeout=15)
-            if img_resp.status_code == 200:
-                image_bytes = np.asarray(bytearray(img_resp.content), dtype=np.uint8)
-                img = cv2.imdecode(image_bytes, cv2.IMREAD_COLOR)
-                return resmi_boyutlandir(img), None
-
-        return None, "Klasör içerisinde uygun görsel (.jpg/.png) bulunamadı."
-    except requests.exceptions.Timeout:
-        return None, "Yandex sunucusuna bağlanırken zaman aşımı (timeout) oluştu."
+        return None, f"Yandex Disk üzerinde '{bayi_adi}' adına ait direkt erişilebilir bir görsel bulunamadı. (Lütfen Yandex klasör yapısını veya dosya adını kontrol edin)."
+    
     except Exception as e:
-        return None, f"Yandex bağlantı hatası: {e}"
+        return None, f"Bağlantı hatası: {e}"
 
 excel_dosya_adi = "bayiler.xlsx"
 bayi_listesi = []
@@ -264,10 +170,9 @@ st.subheader("1. Denetlenecek Bayiyi Seçin")
 secilen_bayi = st.selectbox("Bayi Seçimi", bayi_listesi, label_visibility="collapsed")
 st.markdown(f"**Seçilen Bayi:** `{secilen_bayi}`")
 
-if st.button("🔄 Yandex Bağlantısını ve Önbelleği Yenile"):
-    yandex_tum_klasorleri_getir.clear()
+if st.button("🔄 Önbelleği Yenile"):
     yandex_bayi_gorseli_getir_cached.clear()
-    st.toast("Önbellek temizlendi, veriler yeniden çekiliyor...", icon="🔄")
+    st.toast("Önbellek temizlendi!", icon="🔄")
     st.rerun()
 
 st.markdown("---")
@@ -275,7 +180,7 @@ st.markdown("---")
 ref_img = None
 hata_mesaji = None
 with st.spinner(f"'{secilen_bayi}' için Yandex Disk'te arama yapılıyor..."):
-    ref_img, hata_mesaji = yandex_bayi_gorseli_getir_cached(YANDEX_ROOT_PUBLIC_KEY, secilen_bayi)
+    ref_img, hata_mesaji = yandex_bayi_gorseli_getir_cached(secilen_bayi)
 
 col_up1, col_up2 = st.columns(2)
 

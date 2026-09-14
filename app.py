@@ -158,42 +158,51 @@ def yandex_bayi_gorseli_getir_cached(public_key, bayi_adi):
             return None, "Yandex Disk ana dizini boş döndü."
 
         hedef_norm = normalize_string(bayi_adi)
-        en_iyi_eslesme_path = None
+        all_dirs = []
 
-        # Tüm bayi klasörlerini topla
-        tum_bayi_klasorleri = []
+        # Yandex API'den gelen orijinal disk path'lerini topla (Hata önleyici kesin çözüm)
         for item in items:
             if item.get("type") == "dir":
-                root_dir_name = item.get("name", "")
-                encoded_root = urllib.parse.quote(f"/{root_dir_name}", safe='/')
-                sub_api_url = f"https://cloud-api.yandex.net/v1/disk/public/resources?public_key={public_key}&path={encoded_root}&limit=500"
-                sub_resp = requests.get(sub_api_url, headers=headers, timeout=10)
-                if sub_resp.status_code == 200:
-                    sub_data = sub_resp.json().get("_embedded")
-                    if sub_data:
-                        for sub_item in sub_data.get("items", []):
-                            if sub_item.get("type") == "dir":
-                                sd_name = sub_item.get("name", "")
-                                tum_bayi_klasorleri.append((sd_name, f"/{root_dir_name}/{sd_name}", root_dir_name))
+                dir_name = item.get("name", "")
+                dir_path = item.get("path")
+                if dir_path:
+                    all_dirs.append((dir_name, dir_path))
+
+                # Alt klasörleri tara
+                if dir_path:
+                    encoded_path = urllib.parse.quote(dir_path, safe='/')
+                    sub_api_url = f"https://cloud-api.yandex.net/v1/disk/public/resources?public_key={public_key}&path={encoded_path}&limit=500"
+                    sub_resp = requests.get(sub_api_url, headers=headers, timeout=10)
+                    if sub_resp.status_code == 200:
+                        sub_data = sub_resp.json().get("_embedded")
+                        if sub_data:
+                            for sub_item in sub_data.get("items", []):
+                                if sub_item.get("type") == "dir":
+                                    sub_name = sub_item.get("name", "")
+                                    sub_path = sub_item.get("path")
+                                    if sub_path:
+                                        all_dirs.append((sub_name, sub_path))
+
+        en_iyi_eslesme_path = None
 
         # 1. Aşama: Akıllı Kelime Eşleşmesi
-        for sd_name, d_path, root_dir in tum_bayi_klasorleri:
-            sd_norm = normalize_string(sd_name)
+        for name, path in all_dirs:
+            norm_name = normalize_string(name)
             bayi_kelimeleri = [k for k in hedef_norm.split() if len(k) > 2]
-            eslesen_kelime_sayisi = sum(1 for k in bayi_kelimeleri if k in sd_norm)
+            eslesen_kelime_sayisi = sum(1 for k in bayi_kelimeleri if k in norm_name)
             
-            if (hedef_norm in sd_norm or sd_norm in hedef_norm) or (eslesen_kelime_sayisi >= 2):
-                en_iyi_eslesme_path = d_path
+            if (hedef_norm in norm_name or norm_name in hedef_norm) or (eslesen_kelime_sayisi >= 2):
+                en_iyi_eslesme_path = path
                 break
 
         # 2. Aşama: Fuzzy Matching (Benzerlik)
         if not en_iyi_eslesme_path:
             en_iyi_benzerlik = 0.0
-            for sd_name, d_path, root_dir in tum_bayi_klasorleri:
-                skor = difflib.SequenceMatcher(None, hedef_norm, normalize_string(sd_name)).ratio()
+            for name, path in all_dirs:
+                skor = difflib.SequenceMatcher(None, hedef_norm, normalize_string(name)).ratio()
                 if skor > en_iyi_benzerlik and skor > 0.3:
                     en_iyi_benzerlik = skor
-                    en_iyi_eslesme_path = d_path
+                    en_iyi_eslesme_path = path
 
         if not en_iyi_eslesme_path:
             return None, f"Yandex Disk'te '{bayi_adi}' ile eşleşen klasör bulunamadı."

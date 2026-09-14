@@ -93,13 +93,15 @@ def yandex_sehirleri_getir(public_key):
         api_url = f"https://cloud-api.yandex.net/v1/disk/public/resources?public_key={public_key}&limit=200"
         resp = requests.get(api_url, headers=headers, timeout=20)
         if resp.status_code != 200:
-            return [], f"HTTP {resp.status_code}"
+            return [], f"HTTP {resp.status_code} - {resp.text[:100]}"
         data = resp.json().get("_embedded", {})
         items = data.get("items", [])
         sehirler = []
         for item in items:
             if item.get("type") == "dir":
-                sehirler.append({"name": item.get("name"), "path": item.get("path")})
+                name = item.get("name")
+                if name:
+                    sehirler.append({"name": name, "path": f"/{name}"})
         return sorted(sehirler, key=lambda x: x["name"]), None
     except Exception as e:
         return [], str(e)
@@ -114,13 +116,15 @@ def yandex_bayileri_getir(public_key, sehir_path):
         api_url = f"https://cloud-api.yandex.net/v1/disk/public/resources?public_key={public_key}&path={encoded_path}&limit=500"
         resp = requests.get(api_url, headers=headers, timeout=20)
         if resp.status_code != 200:
-            return [], f"HTTP {resp.status_code}"
+            return [], f"HTTP {resp.status_code} - {resp.text[:100]}"
         data = resp.json().get("_embedded", {})
         items = data.get("items", [])
         bayiler = []
         for item in items:
             if item.get("type") == "dir":
-                bayiler.append({"name": item.get("name"), "path": item.get("path")})
+                name = item.get("name")
+                if name:
+                    bayiler.append({"name": name, "path": f"{sehir_path}/{name}"})
         return sorted(bayiler, key=lambda x: x["name"]), None
     except Exception as e:
         return [], str(e)

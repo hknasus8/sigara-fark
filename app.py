@@ -131,7 +131,6 @@ def yandex_bayi_gorseli_getir_cached(public_key, bayi_adi):
         if not bayi_adi or "okunamadı" in bayi_adi.lower():
             return None, "Geçersiz bayi adı."
 
-        # Sayfalama (pagination) eklenerek tüm klasörlerin eksiksiz çekilmesi sağlandı
         items = []
         offset = 0
         limit = 1000
@@ -161,12 +160,10 @@ def yandex_bayi_gorseli_getir_cached(public_key, bayi_adi):
                 item_adi = item.get("name", "")
                 item_norm = normalize_string(item_adi)
                 
-                # 1. Birebir tam eşleşme kontrolü
                 if hedef_norm == item_norm:
                     en_iyi_eslesme_path = item.get("path")
                     break
                 
-                # 2. Esnek benzerlik kontrolü (difflib)
                 oran = difflib.SequenceMatcher(None, hedef_norm, item_norm).ratio()
                 if oran > en_yuksek_benzerlik and oran > 0.35:
                     en_yuksek_benzerlik = oran
@@ -175,7 +172,6 @@ def yandex_bayi_gorseli_getir_cached(public_key, bayi_adi):
         if not en_iyi_eslesme_path:
             return None, f"Yandex Disk'te '{bayi_adi}' ismiyle eşleşen klasör bulunamadı."
 
-        # Bulunan klasörün içeriğini çek
         sub_api_url = f"https://cloud-api.yandex.net:443/v1/disk/public/resources?public_key={public_key}&path={en_iyi_eslesme_path}&limit=200"
         sub_resp = requests.get(sub_api_url, timeout=10)
         if sub_resp.status_code != 200:
@@ -209,11 +205,23 @@ bayi_listesi = []
 
 if os.path.exists(excel_dosya_adi):
     try:
-        df_bayiler = pd.read_excel(excel_dosya_adi, sheet_name="DATA")
-        if "UNVAN" in df_bayiler.columns:
-            bayi_listesi = df_bayiler["UNVAN"].dropna().astype(str).str.strip().tolist()
+        xl = pd.ExcelFile(excel_dosya_adi)
+        aktif_sayfa = "DATA" if "DATA" in xl.sheet_names else xl.sheet_names[0]
+        
+        df_bayiler = pd.read_excel(excel_dosya_adi, sheet_name=aktif_sayfa)
+        df_bayiler.columns = df_bayiler.columns.astype(str).str.strip()
+        
+        kolon = None
+        for c in df_bayiler.columns:
+            if c.upper() in ["UNVAN", "ÜNVAN"]:
+                kolon = c
+                break
+                
+        if kolon:
+            bayi_listesi = df_bayiler[kolon].dropna().astype(str).str.strip().unique().tolist()
         else:
-            bayi_listesi = df_bayiler.iloc[:, 0].dropna().astype(str).str.strip().tolist()
+            bayi_listesi = df_bayiler.iloc[:, 0].dropna().astype(str).str.strip().unique().tolist()
+            
     except Exception as e:
         st.error(f"Excel okunurken hata oluştu: {e}")
 

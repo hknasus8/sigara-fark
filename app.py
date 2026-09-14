@@ -125,7 +125,6 @@ fark_esigi = st.sidebar.slider("Piksel Fark Eşiği (Yoğunluk)", 20, 100, 40, s
 
 YANDEX_ROOT_PUBLIC_KEY = "https://disk.yandex.com.tr/d/JXJNYBDAk6fePw"
 
-# 20.000+ bayi için Yandex klasör listesini tek seferde (1 saat) önbelleğe alan optimize yapı
 @st.cache_data(ttl=3600, show_spinner=False)
 def yandex_tum_klasorleri_getir(public_key):
     items = []
@@ -171,9 +170,9 @@ def yandex_bayi_gorseli_getir_cached(public_key, bayi_adi):
                     en_iyi_eslesme_path = item.get("path")
                     break
                 
-                # 2. Esnek benzerlik kontrolü (difflib)
+                # 2. Esnek benzerlik kontrolü (Eşik oranı %20'ye düşürüldü)
                 oran = difflib.SequenceMatcher(None, hedef_norm, item_norm).ratio()
-                if oran > en_yuksek_benzerlik and oran > 0.35:
+                if oran > en_yuksek_benzerlik and oran > 0.20:
                     en_yuksek_benzerlik = oran
                     en_iyi_eslesme_path = item.get("path")
 
@@ -182,7 +181,7 @@ def yandex_bayi_gorseli_getir_cached(public_key, bayi_adi):
 
         # Bulunan klasörün içeriğini çek
         sub_api_url = f"https://cloud-api.yandex.net:443/v1/disk/public/resources?public_key={public_key}&path={en_iyi_eslesme_path}&limit=200"
-        sub_resp = requests.get(sub_api_url, timeout=10)
+        sub_resp = requests.get(sub_api_url, timeout=15)
         if sub_resp.status_code != 200:
             return None, "Klasör içeriği okunamadı."
 

@@ -84,35 +84,16 @@ fark_esigi = st.sidebar.slider("Piksel Fark Eşiği (Yoğunluk)", 20, 100, 40, s
 
 YANDEX_ROOT_PUBLIC_KEY = "https://disk.yandex.com.tr/d/JXJNYBDAk6fePw"
 
-@st.cache_data(ttl=3600, show_spinner=False)
-def yandex_sehirleri_getir(public_key):
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-    }
-    try:
-        # Kök dizin için path=/ parametresi açıkça eklendi
-        api_url = f"https://cloud-api.yandex.net/v1/disk/public/resources?public_key={public_key}&path=%2F&limit=200"
-        resp = requests.get(api_url, headers=headers, timeout=20)
-        if resp.status_code != 200:
-            return [], f"HTTP {resp.status_code} - {resp.text[:100]}"
-        data = resp.json().get("_embedded", {})
-        items = data.get("items", [])
-        sehirler = []
-        for item in items:
-            if item.get("type") == "dir":
-                name = item.get("name")
-                if name:
-                    sehirler.append({"name": name, "path": f"/{name}"})
-        return sorted(sehirler, key=lambda x: x["name"]), None
-    except Exception as e:
-        return [], str(e)
+# Şehir listesi garantili yapı (404 hatasını tamamen önlemek için)
+SABIT_SEHIRLER = ["AFYON", "ALANYA", "ANKARA", "ANTALYA", "KÜTAHYA", "MANAVGAT"]
 
 @st.cache_data(ttl=1800, show_spinner=False)
-def yandex_bayileri_getir(public_key, sehir_path):
+def yandex_bayileri_getir(public_key, sehir_adi):
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
     }
     try:
+        sehir_path = f"/{sehir_adi}"
         encoded_path = urllib.parse.quote(sehir_path, safe='/')
         api_url = f"https://cloud-api.yandex.net/v1/disk/public/resources?public_key={public_key}&path={encoded_path}&limit=500"
         resp = requests.get(api_url, headers=headers, timeout=20)
@@ -181,18 +162,12 @@ with col_cikis:
 st.markdown("---")
 st.subheader("1. Lokasyon ve Bayi Seçimi")
 
-sehirler_listesi, err = yandex_sehirleri_getir(YANDEX_ROOT_PUBLIC_KEY)
-if err or not sehirler_listesi:
-    st.error(f"Yandex Disk şehirler yüklenemedi: {err}")
-    st.stop()
-
 col_s1, col_s2 = st.columns(2)
 
 with col_s1:
-    secilen_sehir_adi = st.selectbox("Şehir Seçin", [s["name"] for s in sehirler_listesi])
-    secilen_sehir_path = next(s["path"] for s in sehirler_listesi if s["name"] == secilen_sehir_adi)
+    secilen_sehir_adi = st.selectbox("Şehir Seçin", SABIT_SEHIRLER)
 
-bayiler_listesi, b_err = yandex_bayileri_getir(YANDEX_ROOT_PUBLIC_KEY, secilen_sehir_path)
+bayiler_listesi, b_err = yandex_bayileri_getir(YANDEX_ROOT_PUBLIC_KEY, secilen_sehir_adi)
 
 with col_s2:
     if b_err:
@@ -205,7 +180,6 @@ with col_s2:
 st.markdown(f"**Seçilen Konum:** `{secilen_sehir_adi} / {secilen_bayi_adi}`")
 
 if st.button("🔄 Önbelleği Yenile"):
-    yandex_sehirleri_getir.clear()
     yandex_bayileri_getir.clear()
     yandex_bayi_gorseli_getir.clear()
     st.toast("Önbellek temizlendi!", icon="🔄")

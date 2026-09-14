@@ -91,68 +91,41 @@ def yandex_agacini_getir(public_key):
     }
     agac = {}
     try:
-        # Önce kök dizini çekmeyi deneyelim
-        api_url = f"https://cloud-api.yandex.net/v1/disk/public/resources?public_key={public_key}&limit=200"
+        # Önce /BAYİ klasörünün içeriğini ana dizin olarak sorgulayalım
+        api_url = f"https://cloud-api.yandex.net/v1/disk/public/resources?public_key={public_key}&path=%2FBAY%C4%B0&limit=200"
         resp = requests.get(api_url, headers=headers, timeout=20)
+        
         items = []
         if resp.status_code == 200:
             items = resp.json().get("_embedded", {}).get("items", [])
         else:
-            # Alternatif olarak /BAYİ dizinini deneyelim
-            alt_url = f"https://cloud-api.yandex.net/v1/disk/public/resources?public_key={public_key}&path=%2FBAY%C4%B0&limit=200"
-            alt_resp = requests.get(alt_url, headers=headers, timeout=20)
-            if alt_resp.status_code == 200:
-                items = alt_resp.json().get("_embedded", {}).get("items", [])
+            # Eğer doğrudan kök dizin / ise
+            root_url = f"https://cloud-api.yandex.net/v1/disk/public/resources?public_key={public_key}&limit=200"
+            root_resp = requests.get(root_url, headers=headers, timeout=20)
+            if root_resp.status_code == 200:
+                root_items = root_resp.json().get("_embedded", {}).get("items", [])
+                for r_item in root_items:
+                    if r_item.get("name", "").upper() == "BAYİ":
+                        items = r_item.get("_embedded", {}).get("items", [])
+                        if not items and r_item.get("path"):
+                            sub_r = requests.get(f"https://cloud-api.yandex.net/v1/disk/public/resources?public_key={public_key}&path={urllib.parse.quote(r_item.get('path'), safe='/')}&limit=200", headers=headers, timeout=15)
+                            if sub_r.status_code == 200:
+                                items = sub_r.json().get("_embedded", {}).get("items", [])
 
-        # Ana listedeki öğeleri tara (Şehirler veya BAYİ klasörü)
-        for item in items:
-            name = item.get("name", "")
-            item_type = item.get("type", "")
-            path = item.get("path", "")
-            
-            if item_type == "dir":
-                if name.upper() == "BAYİ":
-                    # BAYİ klasörünün içindeki şehirleri al
-                    sub_items = item.get("_embedded", {}).get("items", [])
-                    if not sub_items and path:
-                        d_url = f"https://cloud-api.yandex.net/v1/disk/public/resources?public_key={public_key}&path={urllib.parse.quote(path, safe='/')}&limit=200"
-                        d_resp = requests.get(d_url, headers=headers, timeout=15)
-                        if d_resp.status_code == 200:
-                            sub_items = d_resp.json().get("_embedded", {}).get("items", [])
-                    
-                    for sehir_item in sub_items:
-                        if sehir_item.get("type") == "dir":
-                            s_name = sehir_item.get("name", "").upper()
-                            s_path = sehir_item.get("path", "")
-                            bayiler = []
-                            
-                            # Şehrin altındaki bayileri çek
-                            b_sub_items = sehir_item.get("_embedded", {}).get("items", [])
-                            if not b_sub_items and s_path:
-                                b_url = f"https://cloud-api.yandex.net/v1/disk/public/resources?public_key={public_key}&path={urllib.parse.quote(s_path, safe='/')}&limit=500"
-                                b_resp = requests.get(b_url, headers=headers, timeout=15)
-                                if b_resp.status_code == 200:
-                                    b_sub_items = b_resp.json().get("_embedded", {}).get("items", [])
-                            
-                            for bayi_item in b_sub_items:
-                                if bayi_item.get("type") == "dir":
-                                    b_name = bayi_item.get("name")
-                                    b_path = bayi_item.get("path")
-                                    if b_name and b_path:
-                                        bayiler.append({"name": b_name, "path": b_path})
-                            
-                            agac[s_name] = sorted(bayiler, key=lambda x: x["name"])
-                else:
-                    # Doğrudan şehir klasörü ise
-                    s_name = name.upper()
-                    s_path = path
-                    bayiler = []
-                    b_sub_items = item.get("_embedded", {}).get("items", [])
-                    if not b_sub_items and s_path:
-                        b_url = f"https://cloud-api.yandex.net/v1/disk/public/resources?public_key={public_key}&path={urllib.parse.quote(s_path, safe='/')}&limit=500"
-                        b_resp = requests.get(b_url, headers=headers, timeout=15)
-                        if b_resp.status_code == 200:
-                            b_sub_items = b_resp.json().get("_embedded", {}).get("items", [])
+        # Bulunan şehir klasörlerini dönelim (AFYON, ANKARA vb.)
+        for sehir_item in items:
+            if sehir_item.get("type") == "dir":
+                s_name = sehir_item.get("name", "").upper()
+                s_path = sehir_item.get("path", "")
+                bayiler = []
+
+                # Şehrin altındaki bayileri çekelim
+                if s_path:
+                    b_url = f"https://cloud-api.yandex.net/v1/disk/public/resources?public_key={public_key}&path={urllib.parse.quote(s_path, safe='/')}&limit=500"
+                    b_resp = requests.get(b_url, headers=headers, timeout=15)
+                    b_sub_items = []
+                    if b_resp.status_code == 200:
+                        b_sub_items = b_resp.json().get("_embedded", {}).get("items", [])
                     
                     for bayi_item in b_sub_items:
                         if bayi_item.get("type") == "dir":
@@ -160,9 +133,9 @@ def yandex_agacini_getir(public_key):
                             b_path = bayi_item.get("path")
                             if b_name and b_path:
                                 bayiler.append({"name": b_name, "path": b_path})
-                                
-                    agac[s_name] = sorted(bayiler, key=lambda x: x["name"])
-                    
+                
+                agac[s_name] = sorted(bayiler, key=lambda x: x["name"])
+
         return agac, None
     except Exception as e:
         return {}, str(e)
@@ -218,19 +191,13 @@ with col_cikis:
 st.markdown("---")
 st.subheader("1. Lokasyon ve Bayi Seçimi")
 
-# Tüm Yandex ağacını tek seferde (ve önbelleğe alarak) çekiyoruz ki şehirler ve bayiler eksiksiz gelsin
 yandex_verisi, hata_aciklama = yandex_agacini_getir(YANDEX_ROOT_PUBLIC_KEY)
 
 if not yandex_verisi:
-    # API erişemezse veya boş dönerse sistemin kilitlenmemesi için varsayılan emniyet yapısı
     yandex_verisi = {
         "AFYON": [],
         "ALANYA": [],
-        "ANKARA": [
-            {"name": "HÜMA MARMARA", "path": "/BAYİ/ANKARA/HÜMA MARMARA"},
-            {"name": "HÜSNÜ ÇETİN", "path": "/BAYİ/ANKARA/HÜSNÜ ÇETİN"},
-            {"name": "KARACA MARKET", "path": "/BAYİ/ANKARA/KARACA MARKET"}
-        ],
+        "ANKARA": [],
         "ANTALYA": [],
         "KÜTAHYA": [],
         "MANAVGAT": []
@@ -243,7 +210,6 @@ col_s1, col_s2 = st.columns(2)
 with col_s1:
     secilen_sehir_adi = st.selectbox("Şehir Seçin", sabit_sehirler)
 
-# Seçilen şehrin bayilerini ağaç yapısından alıyoruz
 bayiler_listesi = yandex_verisi.get(secilen_sehir_adi, [])
 
 with col_s2:

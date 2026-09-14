@@ -90,6 +90,7 @@ def yandex_sehirleri_getir(public_key):
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
     }
     try:
+        # Kök dizin için path parametresi gönderilmiyor, API doğrudan ana dizini döndürür
         api_url = f"https://cloud-api.yandex.net/v1/disk/public/resources?public_key={public_key}&limit=200"
         resp = requests.get(api_url, headers=headers, timeout=20)
         if resp.status_code != 200:

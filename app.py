@@ -2,9 +2,7 @@ import streamlit as st
 import cv2
 import numpy as np
 import os
-import pandas as pd
 import requests
-import difflib
 import urllib.parse
 
 st.set_page_config(
@@ -37,35 +35,6 @@ hide_st_style = """
     </style>
 """
 st.markdown(hide_st_style, unsafe_allow_html=True)
-
-def turkce_kucuk(metin):
-    if not metin:
-        return ""
-    metin = str(metin).strip()
-    harf_harf = []
-    for c in metin:
-        if c == 'İ':
-            harf_harf.append('i')
-        elif c == 'I':
-            harf_harf.append('ı')
-        elif c == 'Ğ':
-            harf_harf.append('ğ')
-        elif c == 'Ü':
-            harf_harf.append('ü')
-        elif c == 'Ş':
-            harf_harf.append('ş')
-        elif c == 'Ö':
-            harf_harf.append('ö')
-        elif c == 'Ç':
-            harf_harf.append('ç')
-        else:
-            harf_harf.append(c.lower())
-    return "".join(harf_harf)
-
-def normalize_string(s):
-    s = turkce_kucuk(s)
-    tr_map = str.maketrans("ığüşöç", "igusoc")
-    return s.translate(tr_map)
 
 def resmi_boyutlandir(img, max_genislik=1000):
     if img is None:
@@ -116,109 +85,63 @@ fark_esigi = st.sidebar.slider("Piksel Fark Eşiği (Yoğunluk)", 20, 100, 40, s
 YANDEX_ROOT_PUBLIC_KEY = "https://disk.yandex.com.tr/d/JXJNYBDAk6fePw"
 
 @st.cache_data(ttl=3600, show_spinner=False)
-def yandex_tum_klasorleri_getir(public_key):
-    items = []
-    offset = 0
-    limit = 1000
+def yandex_sehirleri_getir(public_key):
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
     }
     try:
-        while True:
-            api_url = f"https://cloud-api.yandex.net/v1/disk/public/resources?public_key={public_key}&limit={limit}&offset={offset}"
-            resp = requests.get(api_url, headers=headers, timeout=20)
-            if resp.status_code != 200:
-                return None, f"HTTP {resp.status_code} - {resp.text[:200]}"
-            data = resp.json()
-            embedded = data.get("_embedded")
-            if not embedded:
-                break
-            page_items = embedded.get("items", [])
-            items.extend(page_items)
-            if len(page_items) < limit:
-                break
-            offset += limit
-    except Exception as e:
-        return None, str(e)
-    return items, None
-
-@st.cache_data(ttl=600, show_spinner=False)
-def yandex_bayi_gorseli_getir_cached(public_key, bayi_adi):
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-    }
-    try:
-        if not bayi_adi:
-            return None, "Geçersiz bayi adı."
-
-        items, err = yandex_tum_klasorleri_getir(public_key)
-        if err:
-            return None, f"Yandex API Hatası: {err}"
-        if not items:
-            return None, "Yandex Disk ana dizini boş döndü."
-
-        hedef_norm = normalize_string(bayi_adi)
-        all_dirs = []
-
-        # Yandex API'den gelen orijinal disk path'lerini topla (Hata önleyici kesin çözüm)
+        api_url = f"https://cloud-api.yandex.net/v1/disk/public/resources?public_key={public_key}&limit=200"
+        resp = requests.get(api_url, headers=headers, timeout=20)
+        if resp.status_code != 200:
+            return [], f"HTTP {resp.status_code}"
+        data = resp.json().get("_embedded", {})
+        items = data.get("items", [])
+        sehirler = []
         for item in items:
             if item.get("type") == "dir":
-                dir_name = item.get("name", "")
-                dir_path = item.get("path")
-                if dir_path:
-                    all_dirs.append((dir_name, dir_path))
+                sehirler.append({"name": item.get("name"), "path": item.get("path")})
+        return sorted(sehirler, key=lambda x: x["name"]), None
+    except Exception as e:
+        return [], str(e)
 
-                # Alt klasörleri tara
-                if dir_path:
-                    encoded_path = urllib.parse.quote(dir_path, safe='/')
-                    sub_api_url = f"https://cloud-api.yandex.net/v1/disk/public/resources?public_key={public_key}&path={encoded_path}&limit=500"
-                    sub_resp = requests.get(sub_api_url, headers=headers, timeout=10)
-                    if sub_resp.status_code == 200:
-                        sub_data = sub_resp.json().get("_embedded")
-                        if sub_data:
-                            for sub_item in sub_data.get("items", []):
-                                if sub_item.get("type") == "dir":
-                                    sub_name = sub_item.get("name", "")
-                                    sub_path = sub_item.get("path")
-                                    if sub_path:
-                                        all_dirs.append((sub_name, sub_path))
+@st.cache_data(ttl=1800, show_spinner=False)
+def yandex_bayileri_getir(public_key, sehir_path):
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+    }
+    try:
+        encoded_path = urllib.parse.quote(sehir_path, safe='/')
+        api_url = f"https://cloud-api.yandex.net/v1/disk/public/resources?public_key={public_key}&path={encoded_path}&limit=500"
+        resp = requests.get(api_url, headers=headers, timeout=20)
+        if resp.status_code != 200:
+            return [], f"HTTP {resp.status_code}"
+        data = resp.json().get("_embedded", {})
+        items = data.get("items", [])
+        bayiler = []
+        for item in items:
+            if item.get("type") == "dir":
+                bayiler.append({"name": item.get("name"), "path": item.get("path")})
+        return sorted(bayiler, key=lambda x: x["name"]), None
+    except Exception as e:
+        return [], str(e)
 
-        en_iyi_eslesme_path = None
+@st.cache_data(ttl=600, show_spinner=False)
+def yandex_bayi_gorseli_getir(public_key, bayi_path):
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+    }
+    try:
+        encoded_path = urllib.parse.quote(bayi_path, safe='/')
+        api_url = f"https://cloud-api.yandex.net/v1/disk/public/resources?public_key={public_key}&path={encoded_path}&limit=200"
+        resp = requests.get(api_url, headers=headers, timeout=15)
+        if resp.status_code != 200:
+            return None, f"Klasör içeriği okunamadı (HTTP {resp.status_code})."
 
-        # 1. Aşama: Akıllı Kelime Eşleşmesi
-        for name, path in all_dirs:
-            norm_name = normalize_string(name)
-            bayi_kelimeleri = [k for k in hedef_norm.split() if len(k) > 2]
-            eslesen_kelime_sayisi = sum(1 for k in bayi_kelimeleri if k in norm_name)
-            
-            if (hedef_norm in norm_name or norm_name in hedef_norm) or (eslesen_kelime_sayisi >= 2):
-                en_iyi_eslesme_path = path
-                break
-
-        # 2. Aşama: Fuzzy Matching (Benzerlik)
-        if not en_iyi_eslesme_path:
-            en_iyi_benzerlik = 0.0
-            for name, path in all_dirs:
-                skor = difflib.SequenceMatcher(None, hedef_norm, normalize_string(name)).ratio()
-                if skor > en_iyi_benzerlik and skor > 0.3:
-                    en_iyi_benzerlik = skor
-                    en_iyi_eslesme_path = path
-
-        if not en_iyi_eslesme_path:
-            return None, f"Yandex Disk'te '{bayi_adi}' ile eşleşen klasör bulunamadı."
-
-        encoded_final_path = urllib.parse.quote(en_iyi_eslesme_path, safe='/')
-        final_api_url = f"https://cloud-api.yandex.net/v1/disk/public/resources?public_key={public_key}&path={encoded_final_path}&limit=200"
-        final_resp = requests.get(final_api_url, headers=headers, timeout=15)
-        if final_resp.status_code != 200:
-            return None, f"Klasör içeriği okunamadı (HTTP {final_resp.status_code})."
-
-        final_embedded = final_resp.json().get("_embedded")
+        final_embedded = resp.json().get("_embedded")
         if not final_embedded:
-            return None, f"Bulunan klasör boş."
+            return None, "Seçilen bayi klasörü boş."
             
         sub_items = final_embedded.get("items", [])
-        
         gorsel_download_url = None
         for sub_item in sub_items:
             if sub_item.get("type") == "file":
@@ -235,26 +158,9 @@ def yandex_bayi_gorseli_getir_cached(public_key, bayi_adi):
                 if img is not None:
                     return resmi_boyutlandir(img), None
 
-        return None, f"Klasör bulundu ancak içinde .jpg/.png görsel yok."
+        return None, "Klasör bulundu ancak içinde .jpg/.png görsel yok."
     except Exception as e:
         return None, f"Bağlantı hatası: {e}"
-
-excel_dosya_adi = "bayiler.xlsx"
-bayi_listesi = []
-
-if os.path.exists(excel_dosya_adi):
-    try:
-        xl = pd.ExcelFile(excel_dosya_adi)
-        aktif_sayfa = "DATA" if "DATA" in xl.sheet_names else xl.sheet_names[0]
-        df_bayiler = pd.read_excel(excel_dosya_adi, sheet_name=aktif_sayfa)
-        df_bayiler.columns = df_bayiler.columns.astype(str).str.strip()
-        kolon = next((c for c in df_bayiler.columns if c.upper() in ["UNVAN", "ÜNVAN"]), df_bayiler.columns[0])
-        bayi_listesi = df_bayiler[kolon].dropna().astype(str).str.strip().unique().tolist()
-    except Exception as e:
-        st.error(f"Excel okunurken hata oluştu: {e}")
-
-if not bayi_listesi:
-    bayi_listesi = ["Excel dosyasından unvanlar okunamadı"]
 
 col_baslik, col_cikis = st.columns([5, 1])
 with col_baslik:
@@ -268,13 +174,35 @@ with col_cikis:
         st.rerun()
 
 st.markdown("---")
-st.subheader("1. Denetlenecek Bayiyi Seçin")
-secilen_bayi = st.selectbox("Bayi Seçimi", bayi_listesi, label_visibility="collapsed")
-st.markdown(f"**Seçilen Bayi:** `{secilen_bayi}`")
+st.subheader("1. Lokasyon ve Bayi Seçimi")
+
+sehirler_listesi, err = yandex_sehirleri_getir(YANDEX_ROOT_PUBLIC_KEY)
+if err or not sehirler_listesi:
+    st.error(f"Yandex Disk şehirler yüklenemedi: {err}")
+    st.stop()
+
+col_s1, col_s2 = st.columns(2)
+
+with col_s1:
+    secilen_sehir_adi = st.selectbox("Şehir Seçin", [s["name"] for s in sehirler_listesi])
+    secilen_sehir_path = next(s["path"] for s in sehirler_listesi if s["name"] == secilen_sehir_adi)
+
+bayiler_listesi, b_err = yandex_bayileri_getir(YANDEX_ROOT_PUBLIC_KEY, secilen_sehir_path)
+
+with col_s2:
+    if b_err:
+        st.error(f"Bayiler yüklenemedi: {b_err}")
+        bayiler_listesi = []
+    
+    secilen_bayi_adi = st.selectbox("Bayi Seçin", [b["name"] for b in bayiler_listesi] if bayiler_listesi else ["Bayi Bulunamadı"])
+    secilen_bayi_path = next((b["path"] for b in bayiler_listesi if b["name"] == secilen_bayi_adi), "")
+
+st.markdown(f"**Seçilen Konum:** `{secilen_sehir_adi} / {secilen_bayi_adi}`")
 
 if st.button("🔄 Önbelleği Yenile"):
-    yandex_tum_klasorleri_getir.clear()
-    yandex_bayi_gorseli_getir_cached.clear()
+    yandex_sehirleri_getir.clear()
+    yandex_bayileri_getir.clear()
+    yandex_bayi_gorseli_getir.clear()
     st.toast("Önbellek temizlendi!", icon="🔄")
     st.rerun()
 
@@ -282,17 +210,18 @@ st.markdown("---")
 
 ref_img = None
 hata_mesaji = None
-with st.spinner(f"'{secilen_bayi}' için Yandex Disk'te arama yapılıyor..."):
-    ref_img, hata_mesaji = yandex_bayi_gorseli_getir_cached(YANDEX_ROOT_PUBLIC_KEY, secilen_bayi)
+if secilen_bayi_path:
+    with st.spinner(f"'{secilen_bayi_adi}' için Yandex Disk'ten görsel yükleniyor..."):
+        ref_img, hata_mesaji = yandex_bayi_gorseli_getir(YANDEX_ROOT_PUBLIC_KEY, secilen_bayi_path)
 
 col_up1, col_up2 = st.columns(2)
 with col_up1:
     st.subheader("2. Referans (İdeal) Görsel")
     if ref_img is not None:
-        st.success(f"✅ '{secilen_bayi}' Yandex'ten Yüklendi")
+        st.success(f"✅ '{secilen_bayi_adi}' Yandex'ten Yüklendi")
         st.image(ref_img, channels="BGR", use_container_width=True)
     else:
-        st.warning(f"⚠️ '{secilen_bayi}' için görsel yüklenemedi. Nedeni: {hata_mesaji}")
+        st.warning(f"⚠️ Görsel yüklenemedi. Nedeni: {hata_mesaji}")
 
 with col_up2:
     st.subheader("3. Sahadan Gelen Görsel")
@@ -374,7 +303,7 @@ if ref_img is not None and curr_file is not None and curr_img is not None:
                 cv2.putText(result_img, f"#{idx}", (startX + 3, startY + 18), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 1)
 
             cv2.rectangle(result_img, (0, 0), (img_w, 100), (0, 0, 0), -1)
-            cv2.putText(result_img, f"Bayi: {secilen_bayi}", (15, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
+            cv2.putText(result_img, f"Bayi: {secilen_bayi_adi}", (15, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
             cv2.putText(result_img, f"Eksik Alan: {eksik_sayisi} | Raf Uygunluk: %{hesaplanan_yuzde:.1f}", (15, 70), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 255) if eksik_sayisi > 0 else (0, 255, 0), 2)
 
             st.session_state.result_img = result_img
@@ -396,10 +325,10 @@ if ref_img is not None and curr_file is not None and curr_img is not None:
             st.download_button(
                 label="📥 Sonuç Fotoğrafını İndir",
                 data=encoded_image.tobytes(),
-                file_name=f"{secilen_bayi.replace(' ', '_')}_analiz_sonucu.jpg",
+                file_name=f"{secilen_bayi_adi.replace(' ', '_')}_analiz_sonucu.jpg",
                 mime="image/jpeg"
             )
 else:
-    st.info("ℹ️ Analiz yapabilmek için lütfen yukarıdan bayinizi seçin ve sağdaki alandan **Sahadan Gelen Fotoğrafı** yükleyin.")
+    st.info("ℹ️ Analiz yapabilmek için lütfen yukarıdan şehir ve bayinizi seçin, ardından sağdaki alandan **Sahadan Gelen Fotoğrafı** yükleyin.")
 
 st.markdown("<br><p style='text-align: center; color: gray;'>Developed by Hakan</p>", unsafe_allow_html=True)

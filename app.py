@@ -157,43 +157,75 @@ def yandex_bayi_gorseli_getir_cached(public_key, bayi_adi):
             return None, "Yandex Disk ana dizini boş döndü."
 
         hedef_norm = normalize_string(bayi_adi)
+        en_iyi_eslesme_path = None
         
-        # 1. Aşama: Tam veya kısmi eşleşen klasör adını bul
-        en_iyi_eslesme_adi = None
+        # 1. Aşama: Doğrudan root seviyesinde ara
         for item in items:
             if item.get("type") == "dir":
                 item_adi = item.get("name", "")
                 item_norm = normalize_string(item_adi)
-                
                 if hedef_norm in item_norm or item_norm in hedef_norm or item_norm in hedef_norm.replace(" lti", "").replace(" sti", ""):
-                    en_iyi_eslesme_adi = item_adi
+                    en_iyi_eslesme_path = item.get("path")
                     break
 
-        # Eğer hala bulunamadıysa en çok benzeyen ilk klasörü seçmeyi dene
-        if not en_iyi_eslesme_adi:
+        # 2. Aşama: Root'ta bulunamadıysa, root içindeki alt klasörlerin (şehirlerin) içine girip ara
+        if not en_iyi_eslesme_path:
             for item in items:
                 if item.get("type") == "dir":
-                    item_adi = item.get("name", "")
-                    item_norm = normalize_string(item_adi)
-                    
-                    if len(item_norm) > 3 and item_norm[:5] in hedef_norm[:5]:
-                        en_iyi_eslesme_adi = item_adi
-                        break
+                    root_dir_name = item.get("name", "")
+                    sub_api_url = f"https://cloud-api.yandex.net/v1/disk/public/resources?public_key={public_key}&path=/{root_dir_name}&limit=500"
+                    sub_resp = requests.get(sub_api_url, headers=headers, timeout=15)
+                    if sub_resp.status_code == 200:
+                        sub_data = sub_resp.json().get("_embedded")
+                        if sub_data:
+                            for sub_item in sub_data.get("items", []):
+                                if sub_item.get("type") == "dir":
+                                    sub_item_adi = sub_item.get("name", "")
+                                    sub_item_norm = normalize_string(sub_item_adi)
+                                    if hedef_norm in sub_item_norm or sub_item_norm in hedef_norm or sub_item_norm in hedef_norm.replace(" lti", "").replace(" sti", "") or (len(sub_item_norm) > 3 and sub_item_norm[:5] in hedef_norm[:5]):
+                                        en_iyi_eslesme_path = sub_item.get("path")
+                                        break
+                if en_iyi_eslesme_path:
+                    break
 
-        if not en_iyi_eslesme_adi:
+        # 3. Aşama: Hala bulunamadıysa Fuzzy Matching (Metinsel Benzerlik) ile en yakın klasörü bul
+        if not en_iyi_eslesme_path:
+            tum_klasorler = []
+            for item in items:
+                if item.get("type") == "dir":
+                    d_name = item.get("name", "")
+                    tum_klasorler.append((d_name, f"/{d_name}"))
+                    sub_api_url = f"https://cloud-api.yandex.net/v1/disk/public/resources?public_key={public_key}&path=/{d_name}&limit=500"
+                    sub_resp = requests.get(sub_api_url, headers=headers, timeout=10)
+                    if sub_resp.status_code == 200:
+                        sub_data = sub_resp.json().get("_embedded")
+                        if sub_data:
+                            for sub_item in sub_data.get("items", []):
+                                if sub_item.get("type") == "dir":
+                                    sd_name = sub_item.get("name", "")
+                                    sd_path = sub_item.get("path")
+                                    tum_klasorler.append((sd_name, sd_path))
+
+            en_iyi_benzerlik = 0.0
+            for d_name, d_path in tum_klasorler:
+                skor = difflib.SequenceMatcher(None, hedef_norm, normalize_string(d_name)).ratio()
+                if skor > en_iyi_benzerlik and skor > 0.4:
+                    en_iyi_benzerlik = skor
+                    en_iyi_eslesme_path = d_path
+
+        if not en_iyi_eslesme_path:
             return None, f"Yandex Disk'te '{bayi_adi}' ile eşleşen klasör bulunamadı."
 
-        # DiskNotFoundError hatasını engellemek için path parametresini /KlasorAdi formatında veriyoruz
-        sub_api_url = f"https://cloud-api.yandex.net/v1/disk/public/resources?public_key={public_key}&path=/{en_iyi_eslesme_adi}&limit=200"
-        sub_resp = requests.get(sub_api_url, headers=headers, timeout=15)
-        if sub_resp.status_code != 200:
-            return None, f"Alt klasör okunamadı (HTTP {sub_resp.status_code})."
+        final_api_url = f"https://cloud-api.yandex.net/v1/disk/public/resources?public_key={public_key}&path={en_iyi_eslesme_path}&limit=200"
+        final_resp = requests.get(final_api_url, headers=headers, timeout=15)
+        if final_resp.status_code != 200:
+            return None, f"Klasör içeriği okunamadı (HTTP {final_resp.status_code})."
 
-        sub_embedded = sub_resp.json().get("_embedded")
-        if not sub_embedded:
+        final_embedded = final_resp.json().get("_embedded")
+        if not final_embedded:
             return None, f"Bulunan klasör boş."
             
-        sub_items = sub_embedded.get("items", [])
+        sub_items = final_embedded.get("items", [])
         
         gorsel_download_url = None
         for sub_item in sub_items:

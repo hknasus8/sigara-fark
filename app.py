@@ -37,6 +37,37 @@ hide_st_style = """
 """
 st.markdown(hide_st_style, unsafe_allow_html=True)
 
+def turkce_kucuk(metin):
+    """Türkçe karakterleri doğru şekilde küçük harfe çevirir (İ -> i, I -> ı)."""
+    if not metin:
+        return ""
+    metin = str(metin).strip()
+    harf_harf = []
+    for c in metin:
+        if c == 'İ':
+            harf_harf.append('i')
+        elif c == 'I':
+            harf_harf.append('ı')
+        elif c == 'Ğ':
+            harf_harf.append('ğ')
+        elif c == 'Ü':
+            harf_harf.append('ü')
+        elif c == 'Ş':
+            harf_harf.append('ş')
+        elif c == 'Ö':
+            harf_harf.append('ö')
+        elif c == 'Ç':
+            harf_harf.append('ç')
+        else:
+            harf_harf.append(c.lower())
+    return "".join(harf_harf)
+
+def normalize_string(s):
+    """Türkçe karakterli dizgileri eşleşme için saf ASCII formatına dönüştürür."""
+    s = turkce_kucuk(s)
+    tr_map = str.maketrans("ığüşöç", "igusoc")
+    return s.translate(tr_map)
+
 def resmi_boyutlandir(img, max_genislik=1000):
     if img is None:
         return None
@@ -97,34 +128,59 @@ YANDEX_ROOT_PUBLIC_KEY = "https://disk.yandex.com.tr/d/JXJNYBDAk6fePw"
 @st.cache_data(ttl=600, show_spinner=False)
 def yandex_bayi_gorseli_getir_cached(public_key, bayi_adi):
     try:
-        api_url = f"https://cloud-api.yandex.net:443/v1/disk/public/resources?public_key={public_key}&limit=2000"
-        resp = requests.get(api_url, timeout=10)
-        if resp.status_code != 200:
-            return None, f"Yandex API Hatası: HTTP {resp.status_code}"
-        
-        data = resp.json()
-        items = data.get("_embedded", {}).get("items", [])
-        
-        hedef_aranan = bayi_adi.strip().lower()
+        if not bayi_adi or "okunamadı" in bayi_adi.lower():
+            return None, "Geçersiz bayi adı."
+
+        # Sayfalama (pagination) eklenerek tüm klasörlerin eksiksiz çekilmesi sağlandı
+        items = []
+        offset = 0
+        limit = 1000
+
+        while True:
+            api_url = f"https://cloud-api.yandex.net:443/v1/disk/public/resources?public_key={public_key}&limit={limit}&offset={offset}"
+            resp = requests.get(api_url, timeout=10)
+            if resp.status_code != 200:
+                if offset == 0:
+                    return None, f"Yandex API Hatası: HTTP {resp.status_code}"
+                break
+            
+            data = resp.json()
+            page_items = data.get("_embedded", {}).get("items", [])
+            items.extend(page_items)
+            
+            if len(page_items) < limit:
+                break
+            offset += limit
+
+        hedef_norm = normalize_string(bayi_adi)
         en_iyi_eslesme_path = None
         en_yuksek_benzerlik = 0.0
-        
+
         for item in items:
             if item.get("type") == "dir":
-                item_adi = item.get("name", "").strip().lower()
-                oran = difflib.SequenceMatcher(None, hedef_aranan, item_adi).ratio()
-                if oran > en_yuksek_benzerlik and oran > 0.4:
+                item_adi = item.get("name", "")
+                item_norm = normalize_string(item_adi)
+                
+                # 1. Birebir tam eşleşme kontrolü
+                if hedef_norm == item_norm:
+                    en_iyi_eslesme_path = item.get("path")
+                    break
+                
+                # 2. Esnek benzerlik kontrolü (difflib)
+                oran = difflib.SequenceMatcher(None, hedef_norm, item_norm).ratio()
+                if oran > en_yuksek_benzerlik and oran > 0.35:
                     en_yuksek_benzerlik = oran
                     en_iyi_eslesme_path = item.get("path")
-        
+
         if not en_iyi_eslesme_path:
-            return None, "Yandex'te eşleşen klasör bulunamadı."
-            
-        sub_api_url = f"https://cloud-api.yandex.net:443/v1/disk/public/resources?public_key={public_key}&path={en_iyi_eslesme_path}&limit=100"
+            return None, f"Yandex Disk'te '{bayi_adi}' ismiyle eşleşen klasör bulunamadı."
+
+        # Bulunan klasörün içeriğini çek
+        sub_api_url = f"https://cloud-api.yandex.net:443/v1/disk/public/resources?public_key={public_key}&path={en_iyi_eslesme_path}&limit=200"
         sub_resp = requests.get(sub_api_url, timeout=10)
         if sub_resp.status_code != 200:
             return None, "Klasör içeriği okunamadı."
-            
+
         sub_items = sub_resp.json().get("_embedded", {}).get("items", [])
         
         gorsel_download_url = None
@@ -134,15 +190,15 @@ def yandex_bayi_gorseli_getir_cached(public_key, bayi_adi):
                 if file_name.endswith((".jpg", ".jpeg", ".png")):
                     gorsel_download_url = sub_item.get("file")
                     break
-                    
+
         if gorsel_download_url:
             img_resp = requests.get(gorsel_download_url, timeout=15)
             if img_resp.status_code == 200:
                 image_bytes = np.asarray(bytearray(img_resp.content), dtype=np.uint8)
                 img = cv2.imdecode(image_bytes, cv2.IMREAD_COLOR)
                 return resmi_boyutlandir(img), None
-                
-        return None, "Klasör içerisinde uygun görsel (jpg/png) bulunamadı."
+
+        return None, "Klasör içerisinde uygun görsel (.jpg/.png) bulunamadı."
     except requests.exceptions.Timeout:
         return None, "Yandex sunucusuna bağlanırken zaman aşımı (timeout) oluştu."
     except Exception as e:
@@ -155,9 +211,9 @@ if os.path.exists(excel_dosya_adi):
     try:
         df_bayiler = pd.read_excel(excel_dosya_adi, sheet_name="DATA")
         if "UNVAN" in df_bayiler.columns:
-            bayi_listesi = df_bayiler["UNVAN"].dropna().astype(str).tolist()
+            bayi_listesi = df_bayiler["UNVAN"].dropna().astype(str).str.strip().tolist()
         else:
-            bayi_listesi = df_bayiler.iloc[:, 0].dropna().astype(str).tolist()
+            bayi_listesi = df_bayiler.iloc[:, 0].dropna().astype(str).str.strip().tolist()
     except Exception as e:
         st.error(f"Excel okunurken hata oluştu: {e}")
 
@@ -254,7 +310,6 @@ if ref_img is not None and curr_file is not None and curr_img is not None:
             diff = cv2.absdiff(gray_ref, gray_curr)
             _, thresh = cv2.threshold(diff, fark_esigi, 255, cv2.THRESH_BINARY)
 
-            # Yatayda birleştirme matrisi eklenerek paket içi bölünmelerin tek ürün sayılması sağlandı
             kernel_close = np.ones((5, 15), np.uint8)
             morph = cv2.morphologyEx(thresh, cv2.MORPH_CLOSE, kernel_close)
             
@@ -333,7 +388,7 @@ if ref_img is not None and curr_file is not None and curr_img is not None:
         with col_m2:
             st.metric(label="⚠️ Tespit Edilen Eksik/Boşluk Alan", value=f"{st.session_state.eksik_sayisi} Adet")
         
-        sonuc_gorsel_genisligi = st.slider("🔍 Sonuç Görseli Boyutunu Ayarla (Piksel)", 300, 2000, 800, step=100, key="dinamik_boyut")
+        sonuc_gorsel_genisligi = st.slider("🔍 Sonuc Görseli Boyutunu Ayarla (Piksel)", 300, 2000, 800, step=100, key="dinamik_boyut")
         
         st.image(st.session_state.result_img, channels="BGR", width=sonuc_gorsel_genisligi)
 

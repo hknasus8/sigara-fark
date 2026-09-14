@@ -91,19 +91,14 @@ def yandex_agacini_getir(public_key):
     }
     agac = {}
     try:
-        # Önce /BAYİ klasörünün içeriğini ana dizin olarak sorgulayalım
-        api_url = f"https://cloud-api.yandex.net/v1/disk/public/resources?public_key={public_key}&path=%2FBAY%C4%B0&limit=200"
+        api_url = f"https://cloud-api.yandex.net/v1/disk/public/resources?public_key={public_key}&limit=200"
         resp = requests.get(api_url, headers=headers, timeout=20)
         
         items = []
         if resp.status_code == 200:
-            items = resp.json().get("_embedded", {}).get("items", [])
-        else:
-            # Eğer doğrudan kök dizin / ise
-            root_url = f"https://cloud-api.yandex.net/v1/disk/public/resources?public_key={public_key}&limit=200"
-            root_resp = requests.get(root_url, headers=headers, timeout=20)
-            if root_resp.status_code == 200:
-                root_items = root_resp.json().get("_embedded", {}).get("items", [])
+            data = resp.json()
+            if "_embedded" in data:
+                root_items = data["_embedded"].get("items", [])
                 for r_item in root_items:
                     if r_item.get("name", "").upper() == "BAYİ":
                         items = r_item.get("_embedded", {}).get("items", [])
@@ -111,28 +106,27 @@ def yandex_agacini_getir(public_key):
                             sub_r = requests.get(f"https://cloud-api.yandex.net/v1/disk/public/resources?public_key={public_key}&path={urllib.parse.quote(r_item.get('path'), safe='/')}&limit=200", headers=headers, timeout=15)
                             if sub_r.status_code == 200:
                                 items = sub_r.json().get("_embedded", {}).get("items", [])
+                        break
+                if not items:
+                    items = root_items
 
-        # Bulunan şehir klasörlerini dönelim (AFYON, ANKARA vb.)
         for sehir_item in items:
             if sehir_item.get("type") == "dir":
                 s_name = sehir_item.get("name", "").upper()
                 s_path = sehir_item.get("path", "")
                 bayiler = []
 
-                # Şehrin altındaki bayileri çekelim
                 if s_path:
                     b_url = f"https://cloud-api.yandex.net/v1/disk/public/resources?public_key={public_key}&path={urllib.parse.quote(s_path, safe='/')}&limit=500"
                     b_resp = requests.get(b_url, headers=headers, timeout=15)
-                    b_sub_items = []
                     if b_resp.status_code == 200:
                         b_sub_items = b_resp.json().get("_embedded", {}).get("items", [])
-                    
-                    for bayi_item in b_sub_items:
-                        if bayi_item.get("type") == "dir":
-                            b_name = bayi_item.get("name")
-                            b_path = bayi_item.get("path")
-                            if b_name and b_path:
-                                bayiler.append({"name": b_name, "path": b_path})
+                        for bayi_item in b_sub_items:
+                            if bayi_item.get("type") == "dir":
+                                b_name = bayi_item.get("name")
+                                b_path = bayi_item.get("path")
+                                if b_name and b_path:
+                                    bayiler.append({"name": b_name, "path": b_path})
                 
                 agac[s_name] = sorted(bayiler, key=lambda x: x["name"])
 
@@ -214,7 +208,13 @@ bayiler_listesi = yandex_verisi.get(secilen_sehir_adi, [])
 
 with col_s2:
     secilen_bayi_adi = st.selectbox("Bayi Seçin", [b["name"] for b in bayiler_listesi] if bayiler_listesi else ["Bayi Bulunamadı"])
-    secilen_bayi_path = next((b["path"] for b in bayiler_listesi if b["name"] == secilen_bayi_adi), "")
+    
+    secilen_bayi_path = ""
+    if bayiler_listesi and secilen_bayi_adi != "Bayi Bulunamadı":
+        for b in bayiler_listesi:
+            if b["name"] == secilen_bayi_adi:
+                secilen_bayi_path = b["path"]
+                break
 
 st.markdown(f"**Seçilen Konum:** `{secilen_sehir_adi} / {secilen_bayi_adi}`")
 

@@ -2,7 +2,7 @@ name: Keep Streamlit Alive
 
 on:
   schedule:
-    - cron: "0 */4 * * *"
+    - cron: "0 */2 * * *"  # Her 2 saatte bir
   workflow_dispatch:
 
 jobs:
@@ -14,3 +14,4 @@ jobs:
         with:
           url: 'https://sigarafark.streamlit.app/'
           method: 'GET'
+          timeout: 30000  # Zaman aşımını 30 saniyeye çıkararak uyanma süresine tanınan payı artırın

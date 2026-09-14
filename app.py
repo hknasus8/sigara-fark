@@ -83,8 +83,6 @@ min_area_val = st.sidebar.slider("Minimum Eksik Boyutu (Hassasiyet)", 50, 2000, 
 fark_esigi = st.sidebar.slider("Piksel Fark Eşiği (Yoğunluk)", 20, 100, 40, step=5)
 
 YANDEX_ROOT_PUBLIC_KEY = "https://disk.yandex.com.tr/d/JXJNYBDAk6fePw"
-
-# Şehir listesi garantili yapı (404 hatasını tamamen önlemek için)
 SABIT_SEHIRLER = ["AFYON", "ALANYA", "ANKARA", "ANTALYA", "KÜTAHYA", "MANAVGAT"]
 
 @st.cache_data(ttl=1800, show_spinner=False)
@@ -93,7 +91,8 @@ def yandex_bayileri_getir(public_key, sehir_adi):
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
     }
     try:
-        sehir_path = f"/{sehir_adi}"
+        # Yol BAYİ klasörünün içindeki şehri gösterecek şekilde güncellendi
+        sehir_path = f"/BAYİ/{sehir_adi}"
         encoded_path = urllib.parse.quote(sehir_path, safe='/')
         api_url = f"https://cloud-api.yandex.net/v1/disk/public/resources?public_key={public_key}&path={encoded_path}&limit=500"
         resp = requests.get(api_url, headers=headers, timeout=20)

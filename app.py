@@ -125,31 +125,37 @@ fark_esigi = st.sidebar.slider("Piksel Fark Eşiği (Yoğunluk)", 20, 100, 40, s
 
 YANDEX_ROOT_PUBLIC_KEY = "https://disk.yandex.com.tr/d/JXJNYBDAk6fePw"
 
+# 20.000+ bayi için Yandex klasör listesini tek seferde (1 saat) önbelleğe alan optimize yapı
+@st.cache_data(ttl=3600, show_spinner=False)
+def yandex_tum_klasorleri_getir(public_key):
+    items = []
+    offset = 0
+    limit = 1000
+    try:
+        while True:
+            api_url = f"https://cloud-api.yandex.net:443/v1/disk/public/resources?public_key={public_key}&limit={limit}&offset={offset}"
+            resp = requests.get(api_url, timeout=15)
+            if resp.status_code != 200:
+                break
+            data = resp.json()
+            page_items = data.get("_embedded", {}).get("items", [])
+            items.extend(page_items)
+            if len(page_items) < limit:
+                break
+            offset += limit
+    except Exception:
+        pass
+    return items
+
 @st.cache_data(ttl=600, show_spinner=False)
 def yandex_bayi_gorseli_getir_cached(public_key, bayi_adi):
     try:
         if not bayi_adi or "okunamadı" in bayi_adi.lower():
             return None, "Geçersiz bayi adı."
 
-        items = []
-        offset = 0
-        limit = 1000
-
-        while True:
-            api_url = f"https://cloud-api.yandex.net:443/v1/disk/public/resources?public_key={public_key}&limit={limit}&offset={offset}"
-            resp = requests.get(api_url, timeout=10)
-            if resp.status_code != 200:
-                if offset == 0:
-                    return None, f"Yandex API Hatası: HTTP {resp.status_code}"
-                break
-            
-            data = resp.json()
-            page_items = data.get("_embedded", {}).get("items", [])
-            items.extend(page_items)
-            
-            if len(page_items) < limit:
-                break
-            offset += limit
+        items = yandex_tum_klasorleri_getir(public_key)
+        if not items:
+            return None, "Yandex Disk ana dizini okunamadı."
 
         hedef_norm = normalize_string(bayi_adi)
         en_iyi_eslesme_path = None
@@ -160,10 +166,12 @@ def yandex_bayi_gorseli_getir_cached(public_key, bayi_adi):
                 item_adi = item.get("name", "")
                 item_norm = normalize_string(item_adi)
                 
+                # 1. Birebir tam eşleşme kontrolü
                 if hedef_norm == item_norm:
                     en_iyi_eslesme_path = item.get("path")
                     break
                 
+                # 2. Esnek benzerlik kontrolü (difflib)
                 oran = difflib.SequenceMatcher(None, hedef_norm, item_norm).ratio()
                 if oran > en_yuksek_benzerlik and oran > 0.35:
                     en_yuksek_benzerlik = oran
@@ -172,6 +180,7 @@ def yandex_bayi_gorseli_getir_cached(public_key, bayi_adi):
         if not en_iyi_eslesme_path:
             return None, f"Yandex Disk'te '{bayi_adi}' ismiyle eşleşen klasör bulunamadı."
 
+        # Bulunan klasörün içeriğini çek
         sub_api_url = f"https://cloud-api.yandex.net:443/v1/disk/public/resources?public_key={public_key}&path={en_iyi_eslesme_path}&limit=200"
         sub_resp = requests.get(sub_api_url, timeout=10)
         if sub_resp.status_code != 200:
@@ -221,7 +230,6 @@ if os.path.exists(excel_dosya_adi):
             bayi_listesi = df_bayiler[kolon].dropna().astype(str).str.strip().unique().tolist()
         else:
             bayi_listesi = df_bayiler.iloc[:, 0].dropna().astype(str).str.strip().unique().tolist()
-            
     except Exception as e:
         st.error(f"Excel okunurken hata oluştu: {e}")
 
@@ -247,6 +255,7 @@ secilen_bayi = st.selectbox("Bayi Seçimi", bayi_listesi, label_visibility="coll
 st.markdown(f"**Seçilen Bayi:** `{secilen_bayi}`")
 
 if st.button("🔄 Yandex Bağlantısını ve Önbelleği Yenile"):
+    yandex_tum_klasorleri_getir.clear()
     yandex_bayi_gorseli_getir_cached.clear()
     st.toast("Önbellek temizlendi, veriler yeniden çekiliyor...", icon="🔄")
     st.rerun()

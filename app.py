@@ -160,17 +160,12 @@ def yandex_bayi_gorseli_getir_cached(public_key, bayi_adi):
         hedef_norm = normalize_string(bayi_adi)
         en_iyi_eslesme_path = None
 
-        # Şehir önekini belirle
-        olasi_sehir = ""
-        if "-" in bayi_adi:
-            olasi_sehir = bayi_adi.split("-")[0].strip()
-
         # Tüm bayi klasörlerini topla
         tum_bayi_klasorleri = []
         for item in items:
             if item.get("type") == "dir":
                 root_dir_name = item.get("name", "")
-                encoded_root = urllib.parse.quote(f"/{root_dir_name}")
+                encoded_root = urllib.parse.quote(f"/{root_dir_name}", safe='/')
                 sub_api_url = f"https://cloud-api.yandex.net/v1/disk/public/resources?public_key={public_key}&path={encoded_root}&limit=500"
                 sub_resp = requests.get(sub_api_url, headers=headers, timeout=10)
                 if sub_resp.status_code == 200:
@@ -181,10 +176,9 @@ def yandex_bayi_gorseli_getir_cached(public_key, bayi_adi):
                                 sd_name = sub_item.get("name", "")
                                 tum_bayi_klasorleri.append((sd_name, f"/{root_dir_name}/{sd_name}", root_dir_name))
 
-        # 1. Aşama: Akıllı Alt Dize / Kelime Eşleşmesi (En Güvenilir)
+        # 1. Aşama: Akıllı Kelime Eşleşmesi
         for sd_name, d_path, root_dir in tum_bayi_klasorleri:
             sd_norm = normalize_string(sd_name)
-            # Eğer bayi adındaki anahtar kelimeler (örn: mustafa ozcan veya ekomini) klasör adında geçiyorsa eşleştir
             bayi_kelimeleri = [k for k in hedef_norm.split() if len(k) > 2]
             eslesen_kelime_sayisi = sum(1 for k in bayi_kelimeleri if k in sd_norm)
             
@@ -192,7 +186,7 @@ def yandex_bayi_gorseli_getir_cached(public_key, bayi_adi):
                 en_iyi_eslesme_path = d_path
                 break
 
-        # 2. Aşama: Hala bulunamadıysa Fuzzy Matching (Benzerlik Oranı Eşiği Düşürüldü: 0.3)
+        # 2. Aşama: Fuzzy Matching (Benzerlik)
         if not en_iyi_eslesme_path:
             en_iyi_benzerlik = 0.0
             for sd_name, d_path, root_dir in tum_bayi_klasorleri:
@@ -204,7 +198,7 @@ def yandex_bayi_gorseli_getir_cached(public_key, bayi_adi):
         if not en_iyi_eslesme_path:
             return None, f"Yandex Disk'te '{bayi_adi}' ile eşleşen klasör bulunamadı."
 
-        encoded_final_path = urllib.parse.quote(en_iyi_eslesme_path)
+        encoded_final_path = urllib.parse.quote(en_iyi_eslesme_path, safe='/')
         final_api_url = f"https://cloud-api.yandex.net/v1/disk/public/resources?public_key={public_key}&path={encoded_final_path}&limit=200"
         final_resp = requests.get(final_api_url, headers=headers, timeout=15)
         if final_resp.status_code != 200:

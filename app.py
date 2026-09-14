@@ -157,34 +157,31 @@ def yandex_bayi_gorseli_getir_cached(public_key, bayi_adi):
             return None, "Yandex Disk ana dizini boş döndü."
 
         hedef_norm = normalize_string(bayi_adi)
-        hedef_kelimeler = set(hedef_norm.split())
         
+        # 1. Aşama: Tam veya kısmi eşleşen klasörü bul
         en_iyi_eslesme_path = None
-        en_yuksek_skor = 0
-
         for item in items:
             if item.get("type") == "dir":
                 item_adi = item.get("name", "")
                 item_norm = normalize_string(item_adi)
-                item_kelimeler = set(item_norm.split())
                 
-                ortak = hedef_kelimeler.intersection(item_kelimeler)
-                skor = len(ortak)
-                
-                if hedef_norm in item_norm or item_norm in hedef_norm:
-                    skor += 10
-                
-                if skor > en_yuksek_skor:
-                    en_yuksek_skor = skor
+                if hedef_norm in item_norm or item_norm in hedef_norm or item_norm in hedef_norm.replace(" lti", "").replace(" sti", ""):
                     en_iyi_eslesme_path = item.get("path")
-                
-                oran = difflib.SequenceMatcher(None, hedef_norm, item_norm).ratio()
-                if oran > 0.65 and skor == 0 and en_yuksek_skor == 0:
-                    en_yuksek_skor = 1
-                    en_iyi_eslesme_path = item.get("path")
+                    break
 
-        if not en_iyi_eslesme_path or en_yuksek_skor == 0:
-            return None, f"Yandex Disk'te '{bayi_adi}' ile eşleşen bir klasör bulunamadı."
+        # Eğer hala bulunamadıysa en çok benzeyen ilk klasörü seçmeyi dene
+        if not en_iyi_eslesme_path:
+            for item in items:
+                if item.get("type") == "dir":
+                    item_adi = item.get("name", "")
+                    item_norm = normalize_string(item_adi)
+                    
+                    if len(item_norm) > 3 and item_norm[:5] in hedef_norm[:5]:
+                        en_iyi_eslesme_path = item.get("path")
+                        break
+
+        if not en_iyi_eslesme_path:
+            return None, f"Yandex Disk'te '{bayi_adi}' ile eşleşen klasör bulunamadı."
 
         sub_api_url = f"https://cloud-api.yandex.net/v1/disk/public/resources?public_key={public_key}&path={en_iyi_eslesme_path}&limit=200"
         sub_resp = requests.get(sub_api_url, headers=headers, timeout=15)
@@ -193,7 +190,7 @@ def yandex_bayi_gorseli_getir_cached(public_key, bayi_adi):
 
         sub_embedded = sub_resp.json().get("_embedded")
         if not sub_embedded:
-            return None, f"'{en_iyi_eslesme_path}' klasörü boş."
+            return None, f"Bulunan klasör boş."
             
         sub_items = sub_embedded.get("items", [])
         
@@ -213,7 +210,7 @@ def yandex_bayi_gorseli_getir_cached(public_key, bayi_adi):
                 if img is not None:
                     return resmi_boyutlandir(img), None
 
-        return None, f"Eşleşen klasör bulundu ancak içinde uygun görsel (.jpg/.png) bulunamadı."
+        return None, f"Klasör bulundu ancak içinde .jpg/.png görsel yok."
     except Exception as e:
         return None, f"Bağlantı hatası: {e}"
 

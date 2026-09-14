@@ -133,8 +133,9 @@ def yandex_tum_klasorleri_getir(public_key):
     try:
         while True:
             api_url = f"https://cloud-api.yandex.net:443/v1/disk/public/resources?public_key={public_key}&limit={limit}&offset={offset}"
-            resp = requests.get(api_url, timeout=15)
+            resp = requests.get(api_url, timeout=20)
             if resp.status_code != 200:
+                print(f"Yandex API Hata Kodu: {resp.status_code}")
                 break
             data = resp.json()
             page_items = data.get("_embedded", {}).get("items", [])
@@ -142,8 +143,8 @@ def yandex_tum_klasorleri_getir(public_key):
             if len(page_items) < limit:
                 break
             offset += limit
-    except Exception:
-        pass
+    except Exception as e:
+        print(f"Yandex toplu çekim istisnası: {e}")
     return items
 
 @st.cache_data(ttl=600, show_spinner=False)
@@ -154,7 +155,7 @@ def yandex_bayi_gorseli_getir_cached(public_key, bayi_adi):
 
         items = yandex_tum_klasorleri_getir(public_key)
         if not items:
-            return None, "Yandex Disk ana dizini okunamadı."
+            return None, "Yandex Disk ana dizini okunamadı (API yanıt döndürmedi veya bağlantı kurulamadı)."
 
         hedef_norm = normalize_string(bayi_adi)
         en_iyi_eslesme_path = None
@@ -170,7 +171,7 @@ def yandex_bayi_gorseli_getir_cached(public_key, bayi_adi):
                     en_iyi_eslesme_path = item.get("path")
                     break
                 
-                # 2. Esnek benzerlik kontrolü (Eşik oranı %20'ye düşürüldü)
+                # 2. Esnek benzerlik kontrolü (%20 eşik)
                 oran = difflib.SequenceMatcher(None, hedef_norm, item_norm).ratio()
                 if oran > en_yuksek_benzerlik and oran > 0.20:
                     en_yuksek_benzerlik = oran

@@ -158,32 +158,33 @@ def yandex_bayi_gorseli_getir_cached(public_key, bayi_adi):
 
         hedef_norm = normalize_string(bayi_adi)
         
-        # 1. Aşama: Tam veya kısmi eşleşen klasörü bul
-        en_iyi_eslesme_path = None
+        # 1. Aşama: Tam veya kısmi eşleşen klasör adını bul
+        en_iyi_eslesme_adi = None
         for item in items:
             if item.get("type") == "dir":
                 item_adi = item.get("name", "")
                 item_norm = normalize_string(item_adi)
                 
                 if hedef_norm in item_norm or item_norm in hedef_norm or item_norm in hedef_norm.replace(" lti", "").replace(" sti", ""):
-                    en_iyi_eslesme_path = item.get("path")
+                    en_iyi_eslesme_adi = item_adi
                     break
 
         # Eğer hala bulunamadıysa en çok benzeyen ilk klasörü seçmeyi dene
-        if not en_iyi_eslesme_path:
+        if not en_iyi_eslesme_adi:
             for item in items:
                 if item.get("type") == "dir":
                     item_adi = item.get("name", "")
                     item_norm = normalize_string(item_adi)
                     
                     if len(item_norm) > 3 and item_norm[:5] in hedef_norm[:5]:
-                        en_iyi_eslesme_path = item.get("path")
+                        en_iyi_eslesme_adi = item_adi
                         break
 
-        if not en_iyi_eslesme_path:
+        if not en_iyi_eslesme_adi:
             return None, f"Yandex Disk'te '{bayi_adi}' ile eşleşen klasör bulunamadı."
 
-        sub_api_url = f"https://cloud-api.yandex.net/v1/disk/public/resources?public_key={public_key}&path={en_iyi_eslesme_path}&limit=200"
+        # DiskNotFoundError hatasını engellemek için path parametresini /KlasorAdi formatında veriyoruz
+        sub_api_url = f"https://cloud-api.yandex.net/v1/disk/public/resources?public_key={public_key}&path=/{en_iyi_eslesme_adi}&limit=200"
         sub_resp = requests.get(sub_api_url, headers=headers, timeout=15)
         if sub_resp.status_code != 200:
             return None, f"Alt klasör okunamadı (HTTP {sub_resp.status_code})."

@@ -91,42 +91,31 @@ def yandex_bayileri_getir(public_key, sehir_adi):
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
     }
     try:
-        # Kök dizinden tüm yapıyı tek seferde çekip 404 hatalarını engelliyoruz
-        api_url = f"https://cloud-api.yandex.net/v1/disk/public/resources?public_key={public_key}&limit=1000"
+        # Doğrudan şehir klasörüne istek atıyoruz
+        sehir_path = f"/{sehir_adi}"
+        encoded_path = urllib.parse.quote(sehir_path, safe='/')
+        api_url = f"https://cloud-api.yandex.net/v1/disk/public/resources?public_key={public_key}&path={encoded_path}&limit=500"
         resp = requests.get(api_url, headers=headers, timeout=20)
+        
+        # Eğer ilk deneme başarısız olursa küçük harf veya alternatif yolları dene
         if resp.status_code != 200:
-            return [], f"HTTP {resp.status_code} - {resp.text[:100]}"
-            
+            sehir_path = f"/{sehir_adi.capitalize()}"
+            encoded_path = urllib.parse.quote(sehir_path, safe='/')
+            api_url = f"https://cloud-api.yandex.net/v1/disk/public/resources?public_key={public_key}&path={encoded_path}&limit=500"
+            resp = requests.get(api_url, headers=headers, timeout=20)
+
+        if resp.status_code != 200:
+            return [], f"HTTP {resp.status_code} - Kaynak bulunamadı"
+
         data = resp.json().get("_embedded", {})
         items = data.get("items", [])
-        
-        # BAYİ ana klasörünü bulalım
-        bayi_klasoru_items = []
-        for item in items:
-            name = item.get("name", "")
-            if name.upper() == "BAYİ" and item.get("type") == "dir":
-                bayi_klasoru_items = item.get("_embedded", {}).get("items", [])
-                break
-        
-        # Eğer BAYİ ana klasörü doğrudan alt öğelerde yoksa kökteki öğeleri baz alalım
-        if not bayi_klasoru_items:
-            bayi_klasoru_items = items
-
-        # Seçilen şehre ait klasörü arayalım
-        sehir_items = []
-        for item in bayi_klasoru_items:
-            if item.get("name", "").upper() == sehir_adi.upper() and item.get("type") == "dir":
-                sehir_items = item.get("_embedded", {}).get("items", [])
-                break
-
         bayiler = []
-        for bayi in sehir_items:
-            if bayi.get("type") == "dir":
-                b_name = bayi.get("name")
-                b_path = bayi.get("path")
-                if b_name and b_path:
-                    bayiler.append({"name": b_name, "path": b_path})
-                    
+        for item in items:
+            if item.get("type") == "dir":
+                name = item.get("name")
+                path = item.get("path")
+                if name and path:
+                    bayiler.append({"name": name, "path": path})
         return sorted(bayiler, key=lambda x: x["name"]), None
     except Exception as e:
         return [], str(e)

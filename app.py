@@ -82,7 +82,8 @@ st.sidebar.header("Uygulama Ayarları")
 min_area_val = st.sidebar.slider("Minimum Eksik Boyutu (Hassasiyet)", 50, 2000, 150, step=25)
 fark_esigi = st.sidebar.slider("Piksel Fark Eşiği (Yoğunluk)", 20, 100, 40, step=5)
 
-YANDEX_ROOT_PUBLIC_KEY = "https://disk.yandex.com.tr/d/JXJNYBDAk6fePw"
+# Yeni paylaştığınız Yandex Disk public link anahtarı buraya eklendi
+YANDEX_ROOT_PUBLIC_KEY = "https://disk.yandex.com.tr/d/ikCHPwREiCVv_g"
 
 @st.cache_data(ttl=600, show_spinner=False)
 def yandex_sehir_bayilerini_getir(public_key, sehir_adi):
@@ -91,7 +92,6 @@ def yandex_sehir_bayilerini_getir(public_key, sehir_adi):
     }
     bayiler = []
     try:
-        # Kök dizini çekerek Yandex'in atadığı gerçek path'leri alıyoruz
         root_url = f"https://cloud-api.yandex.net/v1/disk/public/resources?public_key={public_key}&limit=200"
         resp = requests.get(root_url, headers=headers, timeout=15)
         if resp.status_code != 200:
@@ -100,13 +100,11 @@ def yandex_sehir_bayilerini_getir(public_key, sehir_adi):
         root_items = resp.json().get("_embedded", {}).get("items", [])
         sehir_item_found = None
         
-        # 1. Doğrudan kökte şehir var mı?
         for item in root_items:
             if item.get("type") == "dir" and item.get("name", "").upper() == sehir_adi.upper():
                 sehir_item_found = item
                 break
         
-        # 2. Kökte yoksa "BAYİ" veya benzeri ana klasörün içine bakalım
         if not sehir_item_found:
             for item in root_items:
                 if item.get("type") == "dir" and item.get("name", "").upper() in ["BAYİ", "BAYI"]:
@@ -124,7 +122,6 @@ def yandex_sehir_bayilerini_getir(public_key, sehir_adi):
         if not sehir_item_found:
             return [], f"'{sehir_adi}' klasörü diskte bulunamadı."
 
-        # Şehrin içindeki bayileri listele
         sehir_path = sehir_item_found.get("path")
         bayi_list_url = f"https://cloud-api.yandex.net/v1/disk/public/resources?public_key={public_key}&path={urllib.parse.quote(sehir_path, safe='/')}&limit=500"
         bayi_resp = requests.get(bayi_list_url, headers=headers, timeout=15)

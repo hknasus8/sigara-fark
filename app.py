@@ -91,43 +91,54 @@ def yandex_bayileri_getir(public_key, sehir_adi):
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
     }
     try:
-        # Önce doğrudan public anahtarın kök içeriğini çekiyoruz
-        api_url = f"https://cloud-api.yandex.net/v1/disk/public/resources?public_key={public_key}&limit=200"
+        items = []
+        # 1. Deneme: path=/ (Kök dizin)
+        api_url = f"https://cloud-api.yandex.net/v1/disk/public/resources?public_key={public_key}&path=%2F&limit=200"
         resp = requests.get(api_url, headers=headers, timeout=20)
-        if resp.status_code != 200:
-            return [], f"HTTP {resp.status_code} - Kök dizin okunamadı"
-
-        data = resp.json().get("_embedded", {})
-        items = data.get("items", [])
         
+        if resp.status_code == 200:
+            items = resp.json().get("_embedded", {}).get("items", [])
+        else:
+            # 2. Deneme: path=/BAYİ
+            api_url2 = f"https://cloud-api.yandex.net/v1/disk/public/resources?public_key={public_key}&path=%2FBAY%C4%B0&limit=200"
+            resp2 = requests.get(api_url2, headers=headers, timeout=20)
+            if resp2.status_code == 200:
+                items = resp2.json().get("_embedded", {}).get("items", [])
+
         sehir_items = []
-        # Kök dizinde "BAYİ" klasörü varsa onun içine bakıyoruz
         for item in items:
             name = item.get("name", "")
-            if name.upper() == "BAYİ" and item.get("type") == "dir":
+            if name.upper() == sehir_adi.upper() and item.get("type") == "dir":
+                sehir_items = item.get("_embedded", {}).get("items", [])
+                if not sehir_items and item.get("path"):
+                    p = item.get("path")
+                    detay_url = f"https://cloud-api.yandex.net/v1/disk/public/resources?public_key={public_key}&path={urllib.parse.quote(p, safe='/')}&limit=500"
+                    detay_resp = requests.get(detay_url, headers=headers, timeout=15)
+                    if detay_resp.status_code == 200:
+                        sehir_items = detay_resp.json().get("_embedded", {}).get("items", [])
+                break
+            elif name.upper() == "BAYİ" and item.get("type") == "dir":
                 sub_items = item.get("_embedded", {}).get("items", [])
                 for sub in sub_items:
                     if sub.get("name", "").upper() == sehir_adi.upper() and sub.get("type") == "dir":
                         sehir_items = sub.get("_embedded", {}).get("items", [])
+                        if not sehir_items and sub.get("path"):
+                            p = sub.get("path")
+                            detay_url = f"https://cloud-api.yandex.net/v1/disk/public/resources?public_key={public_key}&path={urllib.parse.quote(p, safe='/')}&limit=500"
+                            detay_resp = requests.get(detay_url, headers=headers, timeout=15)
+                            if detay_resp.status_code == 200:
+                                sehir_items = detay_resp.json().get("_embedded", {}).get("items", [])
                         break
                 break
-        
-        # Eğer kökte BAYİ yerine doğrudan şehir klasörleri listelenmişse
-        if not sehir_items:
-            for item in items:
-                if item.get("name", "").upper() == sehir_adi.upper() and item.get("type") == "dir":
-                    sehir_items = item.get("_embedded", {}).get("items", [])
-                    break
 
-        # Eğer hala alt öğeler gömülü gelmediyse, doğrudan şehir yoluna istek atalım
         if not sehir_items:
-            for yol_denemesi in [f"/BAYİ/{sehir_adi}", f"/{sehir_adi}"]:
-                enc_yol = urllib.parse.quote(yol_denemesi, safe='/')
-                detay_url = f"https://cloud-api.yandex.net/v1/disk/public/resources?public_key={public_key}&path={enc_yol}&limit=500"
-                detay_resp = requests.get(detay_url, headers=headers, timeout=15)
-                if detay_resp.status_code == 200:
-                    sehir_items = detay_resp.json().get("_embedded", {}).get("items", [])
-                    break
+            for deneme_yol in [f"/{sehir_adi}", f"/BAYİ/{sehir_adi}"]:
+                url = f"https://cloud-api.yandex.net/v1/disk/public/resources?public_key={public_key}&path={urllib.parse.quote(deneme_yol, safe='/')}&limit=500"
+                r = requests.get(url, headers=headers, timeout=15)
+                if r.status_code == 200:
+                    sehir_items = r.json().get("_embedded", {}).get("items", [])
+                    if sehir_items:
+                        break
 
         bayiler = []
         for bayi in sehir_items:

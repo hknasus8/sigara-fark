@@ -97,6 +97,14 @@ if not st.session_state.authenticated:
 
     st.title("🔐 Sigara Standı Akıllı Denetim Sistemi - Giriş")
     st.markdown("<p style='color: gray; font-size: 14px; margin-top: -15px;'>Developed by Hakan</p>", unsafe_allow_html=True)
+    
+    sifre_input = st.text_input("Şifre", type="password")
+    if st.button("Giriş Yap", type="primary"):
+        if sifre_input == app_pass:
+            st.session_state.authenticated = True
+            st.rerun()
+        else:
+            st.error("❌ Hatalı şifre!")
     st.stop()
 
 st.sidebar.markdown("---")
@@ -149,25 +157,34 @@ def yandex_bayi_gorseli_getir_cached(public_key, bayi_adi):
             return None, "Yandex Disk ana dizini boş döndü."
 
         hedef_norm = normalize_string(bayi_adi)
+        hedef_kelimeler = set(hedef_norm.split())
+        
         en_iyi_eslesme_path = None
-        en_yuksek_benzerlik = 0.0
+        en_yuksek_skor = 0
 
         for item in items:
             if item.get("type") == "dir":
                 item_adi = item.get("name", "")
                 item_norm = normalize_string(item_adi)
+                item_kelimeler = set(item_norm.split())
                 
-                if hedef_norm == item_norm:
+                ortak = hedef_kelimeler.intersection(item_kelimeler)
+                skor = len(ortak)
+                
+                if hedef_norm in item_norm or item_norm in hedef_norm:
+                    skor += 10
+                
+                if skor > en_yuksek_skor:
+                    en_yuksek_skor = skor
                     en_iyi_eslesme_path = item.get("path")
-                    break
                 
                 oran = difflib.SequenceMatcher(None, hedef_norm, item_norm).ratio()
-                if oran > en_yuksek_benzerlik and oran > 0.20:
-                    en_yuksek_benzerlik = oran
+                if oran > 0.65 and skor == 0 and en_yuksek_skor == 0:
+                    en_yuksek_skor = 1
                     en_iyi_eslesme_path = item.get("path")
 
-        if not en_iyi_eslesme_path:
-            return None, f"Yandex Disk'te '{bayi_adi}' ismiyle eşleşen klasör bulunamadı."
+        if not en_iyi_eslesme_path or en_yuksek_skor == 0:
+            return None, f"Yandex Disk'te '{bayi_adi}' ile eşleşen bir klasör bulunamadı."
 
         sub_api_url = f"https://cloud-api.yandex.net/v1/disk/public/resources?public_key={public_key}&path={en_iyi_eslesme_path}&limit=200"
         sub_resp = requests.get(sub_api_url, headers=headers, timeout=15)
@@ -176,7 +193,7 @@ def yandex_bayi_gorseli_getir_cached(public_key, bayi_adi):
 
         sub_embedded = sub_resp.json().get("_embedded")
         if not sub_embedded:
-            return None, "Alt klasör içeriği boş."
+            return None, f"'{en_iyi_eslesme_path}' klasörü boş."
             
         sub_items = sub_embedded.get("items", [])
         
@@ -196,7 +213,7 @@ def yandex_bayi_gorseli_getir_cached(public_key, bayi_adi):
                 if img is not None:
                     return resmi_boyutlandir(img), None
 
-        return None, "Klasör içerisinde uygun görsel (.jpg/.png) bulunamadı."
+        return None, f"Eşleşen klasör bulundu ancak içinde uygun görsel (.jpg/.png) bulunamadı."
     except Exception as e:
         return None, f"Bağlantı hatası: {e}"
 
@@ -253,7 +270,7 @@ with col_up1:
         st.success(f"✅ '{secilen_bayi}' Yandex'ten Yüklendi")
         st.image(ref_img, channels="BGR", use_container_width=True)
     else:
-        st.warning(f"⚠️ '{secilen_bayi}' için görsel yüklenemedi. Detay: {hata_mesaji}")
+        st.warning(f"⚠️ '{secilen_bayi}' için görsel yüklenemedi. Nedeni: {hata_mesaji}")
 
 with col_up2:
     st.subheader("3. Sahadan Gelen Görsel")
@@ -267,7 +284,7 @@ with col_up2:
         st.image(curr_img, channels="BGR", use_container_width=True)
 
 st.markdown("---")
-st.subheader("4. Stand Kapasite Ayari")
+st.subheader("4. Stand Kapasite Ayarı")
 ideal_urun_sayisi = st.number_input("Standda Bulunması Gereken Toplam Ürün (Slot) Sayısı", min_value=1, value=50, step=1)
 st.markdown("---")
 
@@ -282,7 +299,7 @@ if "analiz_yapildi" not in st.session_state:
 
 if ref_img is not None and curr_file is not None and curr_img is not None:
     if st.button("Hassas Farkı Analiz Et", type="primary"):
-        with st.spinner("Analiz ediliyor..."):
+        with st.spinner("Gelişmiş hibrit matris ve piksel analizi yapılıyor..."):
             if ref_img.shape[:2] != curr_img.shape[:2]:
                 curr_img = cv2.resize(curr_img, (ref_img.shape[1], ref_img.shape[0]), interpolation=cv2.INTER_AREA)
 
@@ -304,7 +321,7 @@ if ref_img is not None and curr_file is not None and curr_img is not None:
                     if (img_w * 0.01 < x < img_w * 0.99) and (img_h * 0.02 < y < img_h * 0.98):
                         boxes.append([x, y, x + w, y + h])
 
-            def nms(boxes):
+            def non_max_suppression(boxes, overlapThresh=0.15):
                 if not boxes: return []
                 boxes = np.array(boxes)
                 pick = []
@@ -322,36 +339,45 @@ if ref_img is not None and curr_file is not None and curr_img is not None:
                     w = np.maximum(0, xx2 - xx1 + 1)
                     h = np.maximum(0, yy2 - yy1 + 1)
                     overlap = (w * h) / area[idxs[:last]]
-                    idxs = np.delete(idxs, np.concatenate(([last], np.where(overlap > 0.15)[0])))
+                    idxs = np.delete(idxs, np.concatenate(([last], np.where(overlap > overlapThresh)[0])))
                 return boxes[pick].astype("int")
 
-            filtered = nms(boxes)
+            filtered_boxes = non_max_suppression(boxes)
             result_img = curr_img.copy()
-            eksik_sayisi = len(filtered)
-            yuzde = max(0.0, 100.0 - ((eksik_sayisi / max(1, ideal_urun_sayisi)) * 100.0))
+            eksik_sayisi = len(filtered_boxes)
+            hesaplanan_yuzde = max(0.0, 100.0 - ((eksik_sayisi / max(1, ideal_urun_sayisi)) * 100.0))
 
-            for idx, (sx, sy, ex, ey) in enumerate(filtered, 1):
-                cv2.rectangle(result_img, (sx, sy), (ex, ey), (0, 0, 255), 2)
-                cv2.putText(result_img, f"#{idx}", (sx + 3, sy + 18), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 1)
+            for idx, (startX, startY, endX, endY) in enumerate(filtered_boxes, 1):
+                cv2.rectangle(result_img, (startX, startY), (endX, endY), (0, 0, 255), 2)
+                cv2.putText(result_img, f"#{idx}", (startX + 3, startY + 18), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 1)
 
             cv2.rectangle(result_img, (0, 0), (img_w, 100), (0, 0, 0), -1)
             cv2.putText(result_img, f"Bayi: {secilen_bayi}", (15, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
-            cv2.putText(result_img, f"Eksik Alan: {eksik_sayisi} | Raf Uygunluk: %{yuzde:.1f}", (15, 70), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 255) if eksik_sayisi > 0 else (0, 255, 0), 2)
+            cv2.putText(result_img, f"Eksik Alan: {eksik_sayisi} | Raf Uygunluk: %{hesaplanan_yuzde:.1f}", (15, 70), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 255) if eksik_sayisi > 0 else (0, 255, 0), 2)
 
             st.session_state.result_img = result_img
             st.session_state.eksik_sayisi = eksik_sayisi
-            st.session_state.raf_yuzdesi = yuzde
+            st.session_state.raf_yuzdesi = hesaplanan_yuzde
             st.session_state.analiz_yapildi = True
 
     if st.session_state.analiz_yapildi and st.session_state.result_img is not None:
         st.subheader("Tespit Edilen Eksikler ve Detaylı Rapor")
         col_m1, col_m2 = st.columns(2)
-        col_m1.metric("📊 Raf Doğruluk Oranı", f"%{st.session_state.raf_yuzdesi:.1f}")
-        col_m2.metric("⚠️ Eksik Alan", f"{st.session_state.eksik_sayisi} Adet")
+        col_m1.metric("📊 Hesaplanan Raf Doğruluk Oranı", f"%{st.session_state.raf_yuzdesi:.1f}")
+        col_m2.metric("⚠️ Tespit Edilen Eksik/Boşluk Alan", f"{st.session_state.eksik_sayisi} Adet")
         
-        w_slider = st.slider("🔍 Görsel Boyutu", 300, 2000, 800, step=100)
-        st.image(st.session_state.result_img, channels="BGR", width=w_slider)
-        
-        success, encoded = cv2.imencode(".jpg", st.session_state.result_img)
+        sonuc_gorsel_genisligi = st.slider("🔍 Sonuç Görseli Boyutunu Ayarla (Piksel)", 300, 2000, 800, step=100)
+        st.image(st.session_state.result_img, channels="BGR", width=sonuc_gorsel_genisligi)
+
+        success, encoded_image = cv2.imencode(".jpg", st.session_state.result_img)
         if success:
-            st.download_button("📥 Sonuç Fotoğrafını İndir", encoded.tobytes(), file_name="analiz_sonucu.jpg", mime="image/jpeg")
+            st.download_button(
+                label="📥 Sonuç Fotoğrafını İndir",
+                data=encoded_image.tobytes(),
+                file_name=f"{secilen_bayi.replace(' ', '_')}_analiz_sonucu.jpg",
+                mime="image/jpeg"
+            )
+else:
+    st.info("ℹ️ Analiz yapabilmek için lütfen yukarıdan bayinizi seçin ve sağdaki alandan **Sahadan Gelen Fotoğrafı** yükleyin.")
+
+st.markdown("<br><p style='text-align: center; color: gray;'>Developed by Hakan</p>", unsafe_allow_html=True)

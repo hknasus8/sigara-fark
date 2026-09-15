@@ -6,27 +6,11 @@ import requests
 import urllib.parse
 import pytesseract
 
-# Tesseract yolunu sistem yapılandırmasına göre ayarlıyoruz
-# (Streamlit Cloud üzerinde genellikle doğrudan 'tesseract' olarak bulunur)
-# pytesseract.pytesseract.tesseract_cmd = r'/usr/bin/tesseract' 
-
 st.set_page_config(
     page_title="Sigara Standı Akıllı Denetim Sistemi",
     page_icon="🚬",
     layout="wide",
     initial_sidebar_state="expanded"
-)
-
-st.components.v1.html(
-    """
-    <script>
-        const doc = window.parent.document;
-        doc.documentElement.lang = 'tr';
-        doc.documentElement.setAttribute('translate', 'no');
-    </script>
-    """,
-    height=0,
-    width=0
 )
 
 hide_st_style = """
@@ -205,12 +189,10 @@ def yandex_bayi_gorseli_getir(public_key, bayi_path):
     except Exception as e:
         return None, f"Hata: {e}"
 
-# Ürün ve Etiket Eşleşmesi için OCR Kontrol Fonksiyonu
 def metin_ve_etiket_kontrolu(img):
     try:
         gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
         gray = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY | cv2.THRESH_OTSU)[1]
-        
         tes_veri = pytesseract.image_to_string(gray, lang='tur', config='--psm 11')
         okunan_metinler = [line.strip().upper() for line in tes_veri.split('\n') if line.strip()]
         return okunan_metinler
@@ -376,7 +358,6 @@ if secilen_sehir_adi and secilen_bayi_adi and ref_img is not None and 'curr_file
             eksik_sayisi = len(filtered_boxes)
             hesaplanan_yuzde = max(0.0, 100.0 - ((eksik_sayisi / max(1, ideal_urun_sayisi)) * 100.0))
 
-            # OCR ile sahada okunan metinleri buluyoruz
             okunan_metinler = metin_ve_etiket_kontrolu(curr_img)
             etiket_uyusmazligi = False
             if beklenen_urun_adi:

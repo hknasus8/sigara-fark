@@ -201,7 +201,7 @@ with col_cikis:
         st.rerun()
 
 st.markdown("---")
-st.subheader("1. Lokasyon and Bayi Seçimi")
+st.subheader("1. Lokasyon ve Bayi Seçimi")
 
 dinamik_sehirler, sehir_hata = yandex_sehirleri_getir(YANDEX_ROOT_PUBLIC_KEY)
 col_s1, col_s2 = st.columns(2)
@@ -226,7 +226,7 @@ with col_s2:
                 "Bayi Seçin", 
                 options=[b["name"] for b in bayiler_listesi],
                 index=None,
-                placeholder="Lütfen en az bir bayi seçin..."
+                placeholder="Lütfen bir bayi seçin..."
             )
         else:
             secilen_bayi_adi = st.selectbox("Bayi Seçin", ["Bayi Bulunamadı"], index=None)
@@ -296,78 +296,38 @@ if "analiz_yapildi" not in st.session_state:
 
 if secilen_sehir_adi and secilen_bayi_adi and ref_img is not None and 'curr_file' in locals() and curr_file is not None and 'curr_img' in locals() and curr_img is not None:
     if st.button("Hassas Görsel ve Etiket (OCR) Analizini Başlat", type="primary"):
-        with st.spinner("Görsel kıyaslama, stand tipi doğrulama ve yapay zeka etiket (OCR) okuması yapılıyor..."):
+        with st.spinner("Stand tipi ve tabela yapısı doğrulanıyor..."):
             if ref_img.shape[:2] != curr_img.shape[:2]:
                 curr_img = cv2.resize(curr_img, (ref_img.shape[1], ref_img.shape[0]), interpolation=cv2.INTER_AREA)
 
-            # --- YENİ EKLENEN ÖZELLİK: STAND TİPİ UYUŞMAZLIK KONTROLÜ ---
-            # Stand tiplerini ayırt etmek için benzersiz üst düzey anahtar kelimeleri veya şablon etiketleri (OCR ile) tarıyoruz.
+            # --- STAND TİPİ VE TABELA (NQKTA TOBACCO) UYUŞMAZLIK KONTROLÜ ---
             ref_ocr_full = reader.readtext(ref_img)
             curr_ocr_full = reader.readtext(curr_img)
 
-            # Stand tiplerini temsil edebilecek olası belirteçleri (örneğin tip kodları, büyük başlıklar, model isimleri vb.) filtreleyelim
-            # Uzunluk kuralı veya belirli standart kelimeler anahtar tip kabul edilebilir.
-            ref_keywords = {r[1].strip().lower() for r in ref_ocr_full if len(r[1].strip()) >= 3}
-            curr_keywords = {c[1].strip().lower() for c in curr_ocr_full if len(c[1].strip()) >= 3}
+            # Referans görseldeki ve sahadaki metinleri ayıkla
+            ref_metinler = [r[1].strip().lower() for r in ref_ocr_full if len(r[1].strip()) >= 3]
+            curr_metinler = [c[1].strip().lower() for c in curr_ocr_full if len(c[1].strip()) >= 3]
 
-            # Kesişim kümesine bakarak ortak kelime/stand tipi ibaresi arıyoruz
-            # Eğer referans ve sahadaki metinler arasında minimum düzeyde bile tip uyuşması yoksa (veya özel tip kodları çelişiyorsa) uyarı verelim.
-            # Burada ortak kelime oranını veya kritik anahtar kelime eşleşmesini ölçüyoruz.
-            ortak_kelimeler = ref_keywords.intersection(curr_keywords)
-            
-            # Eğer çok farklı standlar yüklenmişse ortak kelime havuzu çok düşük kalacaktır. 
-            # Güvenli bir eşik koyalım (Örn: Hiçbir ortak anlamlı kelime/etiket grubu yoksa stand tipleri farklı demektir)
-            # Not: Görseller tamamen farklı açılardan çekildiyse OCR kelimeleri değişebilir, bu yüzden esnek bir mantık kurduk:
-            stand_tipi_uyusuyor_mu = True
-            
-            # Alternatif mantık: Eğer referansta geçen ana "stand tip kodları" (örn: 'A1', 'B2', 'KARTON', 'DUPLEX', 'slim' vb. gibi ayırt edici ifadeler) sahada hiç geçmiyorsa veya tamamen zıt tip ibareleri varsa:
-            # Örnek olması açısından ortak kelime sayısı çok düşükse veya temel tip ayrıştırıcılar uyuşmuyorsa uyarı üretebiliriz.
-            # Şimdilik güvenli bir mantık olarak metin havuzlarının benzerlik oranını kontrol ediyoruz:
-            if len(ref_keywords) > 0 and len(curr_keywords) > 0:
-                benzerlik_orani = len(ortak_kelimeler) / max(len(ref_keywords), 1)
-                # Eğer ortak kelime oranı çok düşükse (örneğin %5'ten azsa veya hiç benzerlik yoksa) tip uyuşmazlığı var sayabiliriz.
-                # Ancak kullanıcı deneyimini bozmamak adına bunu esnek tutup, tamamen farklı tip olduğunu anlamak için 
-                # OCR metinlerinde hiç ortak tip ibaresi kalmadığı senaryoyu baz alalım:
-                pass
+            stand_tipi_uyusuyor = True
+            if ref_metinler:
+                # Referans üzerindeki belirgin yazıların (örn: nokta, tobacco vb.) sahada geçip geçmediğini denetle
+                ortak_metin_var = any(any(rm in cm or cm in rm for cm in curr_metinler) for rm in ref_metinler)
+                
+                # Yapısal benzerlik skoru (Template Matching)
+                gray_ref_Full = cv2.cvtColor(ref_img, cv2.COLOR_BGR2GRAY)
+                gray_curr_Full = cv2.cvtColor(curr_img, cv2.COLOR_BGR2GRAY)
+                res_match = cv2.matchTemplate(gray_curr_Full, gray_ref_Full, cv2.TM_CCOEFF_NORMED)
+                _, max_val, _, _ = cv2.minMaxLoc(res_match)
 
-            # Daha net bir "Stand Tipi" kontrolü için kullanıcıların stand isimlerinde/logolarında geçebilecek anahtar kelime farkını denetleyelim:
-            # Kesin sonuç için: Eğer iki görselin histogram (renk/yapısal) benzerliği veya OCR imza uyuşmazlığı kritik eşiğin altındaysa:
-            gray_ref_Full = cv2.cvtColor(ref_img, cv2.COLOR_BGR2GRAY)
-            gray_curr_Full = cv2.cvtColor(curr_img, cv2.COLOR_BGR2GRAY)
-            
-            # Yapısal Benzerlik (Template/Structural comparison)
-            res_match = cv2.matchTemplate(gray_curr_Full, gray_ref_Full, cv2.TM_CCOEFF_NORMED)
-            _, max_val, _, _ = cv2.minMaxLoc(res_match)
-            
-            # Eğer yapısal benzerlik çok düşükse (örneğin farklı stand tipleri yüklendiyse bu oran yerlerde sürünecektir)
-            # Standart bir eşik belirleyelim (Örn: 0.15 altı farklı stand tipi anlamına gelebilir)
-            # Not: Farklı açılardan çekildiği için düşük çıkabilir, bu yüzden eşeği hassas tutuyoruz.
-            # İstediğiniz gibi doğrudan bir "Stand Tipi Uyuşmuyor" kontrol bloğu oluşturalım:
-            
-            # Örnek Kontrol: Sahadan gelen görselin boyutsal/yapısal veya OCR karakteristikleri referansla uyuşmuyorsa:
-            # Kullanıcının tam istediği uyarıyı tetikleyelim:
-            # (Burada örnek bir senaryo olarak OCR kelime kümesi uyuşmazlığını veya yapısal uyumsuzluğu baz alıyoruz)
-            
-            # Güvenli bir kontrol: Eğer sahada yüklenen görselin OCR metinleri ile referans metinleri tamamen zıt dünyalardaysa veya tip uyuşmuyorsa:
-            # Kullanıcının kolayca test edebilmesi için yapısal ve metinsel bir kıyaslama yapıyoruz:
-            
-            # Gelin bunu garantiye almak için basit bir kural kuralım: 
-            # Eğer iki görselin OCR sonuçlarındaki ana karakterler/etiketler taban tabana zıtse veya eşleşme sağlanamıyorsa:
-            # (Kodun akışını bozmadan doğrudan uyarı bayrağı oluşturalım)
-            
-            # Örnek mantık: İki görselin ortalama renk dağılımı veya OCR kelime uyuşmazlığı aşırı yüksekse stand tipi farklıdır.
-            stand_tipi_hatasi = False
-            if len(ref_keywords) > 2 and len(curr_keywords) > 2:
-                # Eğer referanstaki ana kelimelerin hiçbiri sahadakilerle örtüşmüyorsa stand tipi farklı olabilir
-                ortak_oran = len(ortak_kelimeler) / float(len(ref_keywords))
-                if ortak_oran < 0.02 and max_val < 0.10: # Hem metin hem yapı uyuşmuyorsa
-                    stand_tipi_hatasi = True
+                # Eğer ne tabela metni tutuyor ne de yapısal benzerlik eşiği sağlanabiliyorsa stand tipi farklıdır
+                if not ortak_metin_var and max_val < 0.10:
+                    stand_tipi_uyusuyor = False
 
-            if stand_tipi_hatasi:
-                st.error("🚨 **UYARI: Stand Tipi Uyuşmazlığı!** Yüklediğiniz Sahadan Gelen Görsel ile 2. Referans (İdeal) Görselin **Stand Tipi** birbirine uymuyor! Lütfen doğru standa ait bir fotoğraf yükleyin.")
+            if not stand_tipi_uyusuyor:
+                st.error("🚨 **UYARI: Stand Tipi Uyuşmazlığı!** 3. Sahadan Gelen Görsel ile 2. Referans (İdeal) Görselin **Stand Tipi / Tabelası** birbirine uymuyor! Lütfen doğru standa ait bir fotoğraf yükleyin.")
                 st.session_state.analiz_yapildi = False
             else:
-                # --- 1. Aşama: OpenCV Görsel Fark Tespiti (Kırmızı Kutular için) ---
+                # 1. Aşama: OpenCV Görsel Fark Tespiti (Kırmızı Kutular için)
                 gray_ref = cv2.GaussianBlur(cv2.cvtColor(ref_img, cv2.COLOR_BGR2GRAY), (5, 5), 0)
                 gray_curr = cv2.GaussianBlur(cv2.cvtColor(curr_img, cv2.COLOR_BGR2GRAY), (5, 5), 0)
 
@@ -409,7 +369,7 @@ if secilen_sehir_adi and secilen_bayi_adi and ref_img is not None and 'curr_file
 
                 filtered_boxes = non_max_suppression(boxes)
                 
-                # --- 2. Aşama: EasyOCR ile Etiket / Ürün Adı Okuma ve Kıyaslama ---
+                # 2. Aşama: EasyOCR ile Etiket / Ürün Adı Okuma ve Kıyaslama
                 ref_ocr_results = reader.readtext(ref_img)
                 curr_ocr_results = reader.readtext(curr_img)
                 
@@ -418,12 +378,12 @@ if secilen_sehir_adi and secilen_bayi_adi and ref_img is not None and 'curr_file
                 eksik_sayisi = len(filtered_boxes)
                 hesaplanan_yuzde = max(0.0, 100.0 - ((eksik_sayisi / max(1, ideal_urun_sayisi)) * 100.0))
 
-                # 1. Eksik ürün alanlarını KIRMIZI renk ile çiz
+                # Eksik ürün alanlarını KIRMIZI renk ile çiz
                 for idx, (startX, startY, endX, endY) in enumerate(filtered_boxes, 1):
                     cv2.rectangle(result_img, (startX, startY), (endX, endY), (0, 0, 255), 2)
                     cv2.putText(result_img, f"Eksik #{idx}", (startX + 3, startY + 18), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 1)
 
-                # 2. Etiket metin kıyaslaması ve uyuşmayan/okunamayan etiketleri MAVİ renk ile çiz
+                # Etiket metin kıyaslaması ve uyuşmayan/okunamayan etiketleri MAVİ renk ile çiz
                 ref_texts = [r[1].strip().lower() for r in ref_ocr_results if len(r[1].strip()) > 2]
 
                 for (c_box, c_text, c_prob) in curr_ocr_results:

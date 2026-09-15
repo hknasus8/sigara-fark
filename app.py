@@ -4,6 +4,11 @@ import numpy as np
 import os
 import requests
 import urllib.parse
+import pytesseract
+
+# Tesseract yolunu sistem yapılandırmasına göre ayarlıyoruz
+# (Streamlit Cloud üzerinde genellikle doğrudan 'tesseract' olarak bulunur)
+# pytesseract.pytesseract.tesseract_cmd = r'/usr/bin/tesseract' 
 
 st.set_page_config(
     page_title="Sigara Standı Akıllı Denetim Sistemi",
@@ -86,9 +91,7 @@ YANDEX_ROOT_PUBLIC_KEY = "https://disk.yandex.com.tr/d/ikCHPwREiCVv_g"
 
 @st.cache_data(ttl=600, show_spinner=False)
 def yandex_sehirleri_getir(public_key):
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-    }
+    headers = {"User-Agent": "Mozilla/5.0"}
     sehirler = []
     try:
         root_url = f"https://cloud-api.yandex.net/v1/disk/public/resources?public_key={public_key}&limit=200"
@@ -100,7 +103,6 @@ def yandex_sehirleri_getir(public_key):
         for item in root_items:
             if item.get("type") == "dir":
                 b_name = item.get("name")
-                # Eğer ana dizinde 'BAYİ' gibi bir klasör varsa onun içindekileri de şehir kabul edebiliriz
                 if b_name.upper() in ["BAYİ", "BAYI"]:
                     bayi_path = item.get("path")
                     sub_url = f"https://cloud-api.yandex.net/v1/disk/public/resources?public_key={public_key}&path={urllib.parse.quote(bayi_path, safe='/')}&limit=200"
@@ -111,22 +113,19 @@ def yandex_sehirleri_getir(public_key):
                                 sehirler.append(sub_item.get("name"))
                 else:
                     sehirler.append(b_name)
-
         return sorted(list(set(sehirler))), None
     except Exception as e:
         return [], str(e)
 
 @st.cache_data(ttl=600, show_spinner=False)
 def yandex_sehir_bayilerini_getir(public_key, sehir_adi):
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-    }
+    headers = {"User-Agent": "Mozilla/5.0"}
     bayiler = []
     try:
         root_url = f"https://cloud-api.yandex.net/v1/disk/public/resources?public_key={public_key}&limit=200"
         resp = requests.get(root_url, headers=headers, timeout=15)
         if resp.status_code != 200:
-            return [], f"Kök Dizin Okunamadı (HTTP {resp.status_code})"
+            return [], f"Kök Dizin Okunamadı"
 
         root_items = resp.json().get("_embedded", {}).get("items", [])
         sehir_item_found = None
@@ -151,13 +150,13 @@ def yandex_sehir_bayilerini_getir(public_key, sehir_adi):
                         break
 
         if not sehir_item_found:
-            return [], f"'{sehir_adi}' klasörü diskte bulunamadı."
+            return [], f"'{sehir_adi}' klasörü bulunamadı."
 
         sehir_path = sehir_item_found.get("path")
         bayi_list_url = f"https://cloud-api.yandex.net/v1/disk/public/resources?public_key={public_key}&path={urllib.parse.quote(sehir_path, safe='/')}&limit=500"
         bayi_resp = requests.get(bayi_list_url, headers=headers, timeout=15)
         if bayi_resp.status_code != 200:
-            return [], f"Şehir içeriği okunamadı (HTTP {bayi_resp.status_code})"
+            return [], "Şehir içeriği okunamadı"
 
         bayi_items = bayi_resp.json().get("_embedded", {}).get("items", [])
         for b_item in bayi_items:
@@ -173,15 +172,13 @@ def yandex_sehir_bayilerini_getir(public_key, sehir_adi):
 
 @st.cache_data(ttl=600, show_spinner=False)
 def yandex_bayi_gorseli_getir(public_key, bayi_path):
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-    }
+    headers = {"User-Agent": "Mozilla/5.0"}
     try:
         encoded_path = urllib.parse.quote(bayi_path, safe='/')
         api_url = f"https://cloud-api.yandex.net/v1/disk/public/resources?public_key={public_key}&path={encoded_path}&limit=200"
         resp = requests.get(api_url, headers=headers, timeout=15)
         if resp.status_code != 200:
-            return None, f"Klasör içeriği okunamadı (HTTP {resp.status_code})."
+            return None, "Klasör içeriği okunamadı."
 
         final_embedded = resp.json().get("_embedded")
         if not final_embedded:
@@ -204,9 +201,21 @@ def yandex_bayi_gorseli_getir(public_key, bayi_path):
                 if img is not None:
                     return resmi_boyutlandir(img), None
 
-        return None, "Klasör bulundu ancak içinde .jpg/.png görsel yok."
+        return None, "İçerikte uygun görsel bulunamadı."
     except Exception as e:
-        return None, f"Bağlantı hatası: {e}"
+        return None, f"Hata: {e}"
+
+# Ürün ve Etiket Eşleşmesi için OCR Kontrol Fonksiyonu
+def metin_ve_etiket_kontrolu(img):
+    try:
+        gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+        gray = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY | cv2.THRESH_OTSU)[1]
+        
+        tes_veri = pytesseract.image_to_string(gray, lang='tur', config='--psm 11')
+        okunan_metinler = [line.strip().upper() for line in tes_veri.split('\n') if line.strip()]
+        return okunan_metinler
+    except Exception as e:
+        return []
 
 col_baslik, col_cikis = st.columns([5, 1])
 with col_baslik:
@@ -223,7 +232,6 @@ st.markdown("---")
 st.subheader("1. Lokasyon ve Bayi Seçimi")
 
 dinamik_sehirler, sehir_hata = yandex_sehirleri_getir(YANDEX_ROOT_PUBLIC_KEY)
-
 col_s1, col_s2 = st.columns(2)
 
 with col_s1:
@@ -250,8 +258,6 @@ with col_s2:
             )
         else:
             secilen_bayi_adi = st.selectbox("Bayi Seçin", ["Bayi Bulunamadı"], index=None)
-            if bayi_hata:
-                st.caption(f"⚠️ {bayi_hata}")
     else:
         secilen_bayi_adi = st.selectbox("Bayi Seçin", ["Önce Şehir Seçmelisiniz"], index=None, disabled=True)
 
@@ -285,14 +291,11 @@ if secilen_bayi_path:
 col_up1, col_up2 = st.columns(2)
 with col_up1:
     st.subheader("2. Referans (İdeal) Görsel")
-    if secilen_bayi_path:
-        if ref_img is not None:
-            st.success(f"✅ '{secilen_bayi_adi}' Yandex'ten Yüklendi")
-            st.image(ref_img, channels="BGR", use_container_width=True)
-        else:
-            st.warning(f"⚠️ Görsel yüklenemedi. Nedeni: {hata_mesaji}")
+    if secilen_bayi_path and ref_img is not None:
+        st.success(f"✅ Referans Yüklendi")
+        st.image(ref_img, channels="BGR", use_container_width=True)
     else:
-        st.info("ℹ️ Görseli görmek için lütfen şehir ve bayi seçin.")
+        st.info("ℹ️ Şehir ve bayi seçin.")
 
 with col_up2:
     st.subheader("3. Sahadan Gelen Görsel")
@@ -307,11 +310,11 @@ with col_up2:
             st.image(curr_img, channels="BGR", use_container_width=True)
     else:
         st.file_uploader("Fotoğraf yükleyin", type=["jpg", "jpeg", "png"], key="curr_disabled", disabled=True)
-        st.info("ℹ️ Fotoğraf yüklemek için önce bayi seçimi yapmalısınız.")
 
 st.markdown("---")
-st.subheader("4. Stand Kapasite Ayarı")
+st.subheader("4. Stand Kapasite ve Etiket Eşleşme Ayarı")
 ideal_urun_sayisi = st.number_input("Standda Bulunması Gereken Toplam Ürün (Slot) Sayısı", min_value=1, value=50, step=1)
+beklenen_urun_adi = st.text_input("Kontrol Edilecek Ürün/Etiket Adı (Örn: MARLBORO)", value="")
 st.markdown("---")
 
 if "result_img" not in st.session_state:
@@ -323,10 +326,9 @@ if "raf_yuzdesi" not in st.session_state:
 if "analiz_yapildi" not in st.session_state:
     st.session_state.analiz_yapildi = False
 
-# Analiz tetikleyicisi (Sadece her şey tam seçilmişse çalışır)
 if secilen_sehir_adi and secilen_bayi_adi and ref_img is not None and 'curr_file' in locals() and curr_file is not None and 'curr_img' in locals() and curr_img is not None:
-    if st.button("Hassas Farkı Analiz Et", type="primary"):
-        with st.spinner("Gelişmiş hibrit matris ve piksel analizi yapılıyor..."):
+    if st.button("Hassas Fark ve Etiket Kontrolünü Başlat", type="primary"):
+        with st.spinner("Gelişmiş hibrit analiz ve metin (OCR) okuması yapılıyor..."):
             if ref_img.shape[:2] != curr_img.shape[:2]:
                 curr_img = cv2.resize(curr_img, (ref_img.shape[1], ref_img.shape[0]), interpolation=cv2.INTER_AREA)
 
@@ -374,26 +376,41 @@ if secilen_sehir_adi and secilen_bayi_adi and ref_img is not None and 'curr_file
             eksik_sayisi = len(filtered_boxes)
             hesaplanan_yuzde = max(0.0, 100.0 - ((eksik_sayisi / max(1, ideal_urun_sayisi)) * 100.0))
 
+            # OCR ile sahada okunan metinleri buluyoruz
+            okunan_metinler = metin_ve_etiket_kontrolu(curr_img)
+            etiket_uyusmazligi = False
+            if beklenen_urun_adi:
+                bulundu = any(beklenen_urun_adi.upper() in m for m in okunan_metinler)
+                if not bulundu:
+                    etiket_uyusmazligi = True
+
             for idx, (startX, startY, endX, endY) in enumerate(filtered_boxes, 1):
                 cv2.rectangle(result_img, (startX, startY), (endX, endY), (0, 0, 255), 2)
                 cv2.putText(result_img, f"#{idx}", (startX + 3, startY + 18), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 1)
 
             cv2.rectangle(result_img, (0, 0), (img_w, 100), (0, 0, 0), -1)
             cv2.putText(result_img, f"Bayi: {secilen_bayi_adi}", (15, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
-            cv2.putText(result_img, f"Eksik Alan: {eksik_sayisi} | Raf Uygunluk: %{hesaplanan_yuzde:.1f}", (15, 70), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 255) if eksik_sayisi > 0 else (0, 255, 0), 2)
+            cv2.putText(result_img, f"Eksik: {eksik_sayisi} | Uygunluk: %{hesaplanan_yuzde:.1f}", (15, 70), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 255) if eksik_sayisi > 0 else (0, 255, 0), 2)
 
             st.session_state.result_img = result_img
             st.session_state.eksik_sayisi = eksik_sayisi
             st.session_state.raf_yuzdesi = hesaplanan_yuzde
+            st.session_state.etiket_uyusmazligi = etiket_uyusmazligi
             st.session_state.analiz_yapildi = True
 
     if st.session_state.analiz_yapildi and st.session_state.result_img is not None:
-        st.subheader("Tespit Edilen Eksikler ve Detaylı Rapor")
+        st.subheader("Tespit Edilen Eksikler ve Etiket Analiz Raporu")
         col_m1, col_m2 = st.columns(2)
-        col_m1.metric("📊 Hesaplanan Raf Doğruluk Oranı", f"%{st.session_state.raf_yuzdesi:.1f}")
-        col_m2.metric("⚠️ Tespit Edilen Eksik/Boşluk Alan", f"{st.session_state.eksik_sayisi} Adet")
+        col_m1.metric("📊 Raf Doğruluk Oranı", f"%{st.session_state.raf_yuzdesi:.1f}")
+        col_m2.metric("⚠️ Eksik/Boşluk Alan", f"{st.session_state.eksik_sayisi} Adet")
         
-        sonuc_gorsel_genisligi = st.slider("🔍 Sonuç Görseli Boyutunu Ayarla (Piksel)", 300, 2000, 800, step=100)
+        if beklenen_urun_adi:
+            if st.session_state.get("etiket_uyusmazligi", False):
+                st.error(f"🚨 **Etiket/Ürün Uyuşmazlık Uyarısı:** Görselde '{beklenen_urun_adi}' adına ait net bir eşleşme/yazı tespit edilemedi veya yanlış ürün yerleştirilmiş olabilir!")
+            else:
+                st.success(f"✅ **Etiket Doğrulaması Başarılı:** '{beklenen_urun_adi}' ifadesi görselde doğrulandı.")
+
+        sonuc_gorsel_genisligi = st.slider("🔍 Sonuç Görseli Boyutunu Ayarla", 300, 2000, 800, step=100)
         st.image(st.session_state.result_img, channels="BGR", width=sonuc_gorsel_genisligi)
 
         success, encoded_image = cv2.imencode(".jpg", st.session_state.result_img)
@@ -405,6 +422,6 @@ if secilen_sehir_adi and secilen_bayi_adi and ref_img is not None and 'curr_file
                 mime="image/jpeg"
             )
 else:
-    st.info("ℹ️ Analiz yapabilmek için lütfen sırasıyla **Şehir** ve **Bayi** seçin, Yandex'ten referans görselin gelmesini bekleyin ve ardından **Sahadan Gelen Fotoğrafı** yükleyin.")
+    st.info("ℹ️ Analiz için şehir, bayi seçin ve sahadan gelen fotoğrafı yükleyin.")
 
 st.markdown("<br><p style='text-align: center; color: gray;'>Developed by Hakan</p>", unsafe_allow_html=True)

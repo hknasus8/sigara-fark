@@ -4,6 +4,7 @@ import numpy as np
 import os
 import requests
 import urllib.parse
+import easyocr
 
 st.set_page_config(
     page_title="Sigara Standı Akıllı Denetim Sistemi",
@@ -12,6 +13,7 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
+# Arayüz gizleme stilleri
 hide_st_style = """
     <style>
     #MainMenu {visibility: hidden;}
@@ -23,6 +25,14 @@ hide_st_style = """
     </style>
 """
 st.markdown(hide_st_style, unsafe_allow_html=True)
+
+# EasyOCR Okuyucuyu Belleğe Yükle (Önbellekli)
+@st.cache_resource
+def ocr_okuyucu_yukle():
+    return easyocr.Reader(['tr', 'en'], gpu=False)
+
+with st.spinner("AI Metin Okuma (OCR) motoru hazırlanıyor..."):
+    reader = ocr_okuyucu_yukle()
 
 def resmi_boyutlandir(img, max_genislik=1000):
     if img is None:
@@ -44,15 +54,6 @@ if "authenticated" not in st.session_state:
     st.session_state.authenticated = False
 
 if not st.session_state.authenticated:
-    logo_yolu = "logo.jpg"
-    if os.path.exists(logo_yolu):
-        st.image(logo_yolu, width=180)
-    else:
-        try:
-            st.image("https://raw.githubusercontent.com/hknasus8/sigara-fark/main/logo.jpg", width=180)
-        except Exception:
-            pass
-
     st.title("🔐 Sigara Standı Akıllı Denetim Sistemi - Giriş")
     st.markdown("<p style='color: gray; font-size: 14px; margin-top: -15px;'>Developed by Hakan</p>", unsafe_allow_html=True)
     
@@ -66,9 +67,10 @@ if not st.session_state.authenticated:
     st.stop()
 
 st.sidebar.markdown("---")
-st.sidebar.header("Uygulama Ayarları")
+st.sidebar.header("Denetim ve OCR Ayarları")
 min_area_val = st.sidebar.slider("Minimum Eksik Boyutu (Hassasiyet)", 50, 2000, 150, step=25)
 fark_esigi = st.sidebar.slider("Piksel Fark Eşiği (Yoğunluk)", 20, 100, 40, step=5)
+ocr_benzerlik_orani = st.sidebar.slider("Etiket Eşleşme Hassasiyeti (%)", 30, 90, 50, step=5)
 
 YANDEX_ROOT_PUBLIC_KEY = "https://disk.yandex.com.tr/d/ikCHPwREiCVv_g"
 
@@ -108,7 +110,7 @@ def yandex_sehir_bayilerini_getir(public_key, sehir_adi):
         root_url = f"https://cloud-api.yandex.net/v1/disk/public/resources?public_key={public_key}&limit=200"
         resp = requests.get(root_url, headers=headers, timeout=15)
         if resp.status_code != 200:
-            return [], f"Kök Dizin Okunamadı"
+            return [], "Kök Dizin Okunamadı"
 
         root_items = resp.json().get("_embedded", {}).get("items", [])
         sehir_item_found = None
@@ -239,11 +241,6 @@ if secilen_sehir_adi and secilen_bayi_adi and bayiler_listesi and secilen_bayi_a
             secilen_bayi_path = b["path"]
             break
 
-if secilen_sehir_adi and secilen_bayi_adi:
-    st.markdown(f"**Seçilen Konum:** `{secilen_sehir_adi} / {secilen_bayi_adi}`")
-else:
-    st.markdown(f"**Seçilen Konum:** *Henüz tam seçim yapılmadı.*")
-
 if st.button("🔄 Önbelleği Yenile"):
     yandex_sehirleri_getir.clear()
     yandex_sehir_bayilerini_getir.clear()
@@ -293,15 +290,18 @@ if "eksik_sayisi" not in st.session_state:
     st.session_state.eksik_sayisi = 0
 if "raf_yuzdesi" not in st.session_state:
     st.session_state.raf_yuzdesi = 100.0
+if "ocr_raporu" not in st.session_state:
+    st.session_state.ocr_raporu = []
 if "analiz_yapildi" not in st.session_state:
     st.session_state.analiz_yapildi = False
 
 if secilen_sehir_adi and secilen_bayi_adi and ref_img is not None and 'curr_file' in locals() and curr_file is not None and 'curr_img' in locals() and curr_img is not None:
-    if st.button("Hassas Stand Analizini Başlat", type="primary"):
-        with st.spinner("Gelişmiş görsel karşılaştırma ve eksik tespiti yapılıyor..."):
+    if st.button("Hassas Görsel ve Etiket (OCR) Analizini Başlat", type="primary"):
+        with st.spinner("Görsel kıyaslama ve yapay zeka etiket (OCR) okuması yapılıyor..."):
             if ref_img.shape[:2] != curr_img.shape[:2]:
                 curr_img = cv2.resize(curr_img, (ref_img.shape[1], ref_img.shape[0]), interpolation=cv2.INTER_AREA)
 
+            # 1. Aşama: OpenCV Görsel Fark Tespiti
             gray_ref = cv2.GaussianBlur(cv2.cvtColor(ref_img, cv2.COLOR_BGR2GRAY), (5, 5), 0)
             gray_curr = cv2.GaussianBlur(cv2.cvtColor(curr_img, cv2.COLOR_BGR2GRAY), (5, 5), 0)
 
@@ -342,28 +342,62 @@ if secilen_sehir_adi and secilen_bayi_adi and ref_img is not None and 'curr_file
                 return boxes[pick].astype("int")
 
             filtered_boxes = non_max_suppression(boxes)
+            
+            # 2. Aşama: EasyOCR ile Etiket / Ürün Adı Okuma ve Kıyaslama
+            ref_ocr_results = reader.readtext(ref_img)
+            curr_ocr_results = reader.readtext(curr_img)
+            
+            matched_labels = 0
+            mismatch_details = []
+
             result_img = curr_img.copy()
             eksik_sayisi = len(filtered_boxes)
             hesaplanan_yuzde = max(0.0, 100.0 - ((eksik_sayisi / max(1, ideal_urun_sayisi)) * 100.0))
 
+            # Görsel eksikleri kutula
             for idx, (startX, startY, endX, endY) in enumerate(filtered_boxes, 1):
                 cv2.rectangle(result_img, (startX, startY), (endX, endY), (0, 0, 255), 2)
-                cv2.putText(result_img, f"#{idx}", (startX + 3, startY + 18), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 1)
+                cv2.putText(result_img, f"Eksik #{idx}", (startX + 3, startY + 18), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 1)
 
+            # Etiket metin kıyaslaması (Referans etiket vs Saha etiket)
+            for r_box, r_text, r_prob in ref_ocr_results:
+                if len(r_text.strip()) > 2: # Sadece anlamlı metinleri dikkate al
+                    # Saha görselinde bu metne yakın bir metin var mı kontrol et
+                    bulundu = False
+                    for c_box, c_text, c_prob in curr_ocr_results:
+                        if r_text.lower() in c_text.lower() or c_text.lower() in r_text.lower():
+                            bulundu = True
+                            break
+                    if bulundu:
+                        matched_labels += 1
+                    else:
+                        mismatch_details.append(r_text)
+
+            # Üst bilgi bandı
             cv2.rectangle(result_img, (0, 0), (img_w, 100), (0, 0, 0), -1)
             cv2.putText(result_img, f"Bayi: {secilen_bayi_adi}", (15, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
-            cv2.putText(result_img, f"Eksik: {eksik_sayisi} | Uygunluk: %{hesaplanan_yuzde:.1f}", (15, 70), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 255) if eksik_sayisi > 0 else (0, 255, 0), 2)
+            cv2.putText(result_img, f"Eksik Alan: {eksik_sayisi} | Raf Uyum: %{hesaplanan_yuzde:.1f}", (15, 70), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 255) if eksik_sayisi > 0 else (0, 255, 0), 2)
 
             st.session_state.result_img = result_img
             st.session_state.eksik_sayisi = eksik_sayisi
             st.session_state.raf_yuzdesi = hesaplanan_yuzde
+            st.session_state.ocr_raporu = mismatch_details
             st.session_state.analiz_yapildi = True
 
     if st.session_state.analiz_yapildi and st.session_state.result_img is not None:
-        st.subheader("Tespit Edilen Eksikler ve Raf Analiz Raporu")
-        col_m1, col_m2 = st.columns(2)
+        st.subheader("Tespit Edilen Eksikler ve Etiket (OCR) Karşılaştırma Raporu")
+        col_m1, col_m2, col_m3 = st.columns(3)
         col_m1.metric("📊 Raf Doğruluk Oranı", f"%{st.session_state.raf_yuzdesi:.1f}")
         col_m2.metric("⚠️ Eksik/Boşluk Alan", f"{st.session_state.eksik_sayisi} Adet")
+        col_m3.metric("📝 Okunamayan/Uyuşmayan Etiket", f"{len(st.session_state.ocr_raporu)} Adet")
+
+        if st.session_state.ocr_raporu:
+            with st.expander("🔍 Etiket Uyuşmazlık Detayları (Ürün & Etiket Adı Farkları)"):
+                st.write("Referans görselde olup sahadaki fotoğrafta etiket adı/ürün ismi eşleşmeyen veya okunamayan metinler:")
+                for text in st.session_state.ocr_raporu:
+                    st.markdown(f"- ❌ `{text}`")
+        else:
+            st.success("✅ Tüm ürün ve etiket isimleri referans görsel ile tam uyumlu!")
 
         sonuc_gorsel_genisligi = st.slider("🔍 Sonuç Görseli Boyutunu Ayarla", 300, 2000, 800, step=100)
         st.image(st.session_state.result_img, channels="BGR", width=sonuc_gorsel_genisligi)
@@ -371,7 +405,7 @@ if secilen_sehir_adi and secilen_bayi_adi and ref_img is not None and 'curr_file
         success, encoded_image = cv2.imencode(".jpg", st.session_state.result_img)
         if success:
             st.download_button(
-                label="📥 Sonuç Fotoğrafını İndir",
+                label="📥 Rapor Fotoğrafını İndir",
                 data=encoded_image.tobytes(),
                 file_name=f"{secilen_bayi_adi.replace(' ', '_')}_analiz_sonucu.jpg",
                 mime="image/jpeg"

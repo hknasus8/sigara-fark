@@ -4,7 +4,6 @@ import numpy as np
 import os
 import requests
 import urllib.parse
-import pytesseract
 
 st.set_page_config(
     page_title="Sigara Standı Akıllı Denetim Sistemi",
@@ -189,16 +188,6 @@ def yandex_bayi_gorseli_getir(public_key, bayi_path):
     except Exception as e:
         return None, f"Hata: {e}"
 
-def metin_ve_etiket_kontrolu(img):
-    try:
-        gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-        gray = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY | cv2.THRESH_OTSU)[1]
-        tes_veri = pytesseract.image_to_string(gray, lang='tur', config='--psm 11')
-        okunan_metinler = [line.strip().upper() for line in tes_veri.split('\n') if line.strip()]
-        return okunan_metinler
-    except Exception as e:
-        return []
-
 col_baslik, col_cikis = st.columns([5, 1])
 with col_baslik:
     st.title("SİGARA STANDI AKILLI DENETİM SİSTEMİ")
@@ -294,9 +283,8 @@ with col_up2:
         st.file_uploader("Fotoğraf yükleyin", type=["jpg", "jpeg", "png"], key="curr_disabled", disabled=True)
 
 st.markdown("---")
-st.subheader("4. Stand Kapasite ve Etiket Eşleşme Ayarı")
+st.subheader("4. Stand Kapasite Ayarı")
 ideal_urun_sayisi = st.number_input("Standda Bulunması Gereken Toplam Ürün (Slot) Sayısı", min_value=1, value=50, step=1)
-beklenen_urun_adi = st.text_input("Kontrol Edilecek Ürün/Etiket Adı (Örn: MARLBORO)", value="")
 st.markdown("---")
 
 if "result_img" not in st.session_state:
@@ -309,8 +297,8 @@ if "analiz_yapildi" not in st.session_state:
     st.session_state.analiz_yapildi = False
 
 if secilen_sehir_adi and secilen_bayi_adi and ref_img is not None and 'curr_file' in locals() and curr_file is not None and 'curr_img' in locals() and curr_img is not None:
-    if st.button("Hassas Fark ve Etiket Kontrolünü Başlat", type="primary"):
-        with st.spinner("Gelişmiş hibrit analiz ve metin (OCR) okuması yapılıyor..."):
+    if st.button("Hassas Stand Analizini Başlat", type="primary"):
+        with st.spinner("Gelişmiş görsel karşılaştırma ve eksik tespiti yapılıyor..."):
             if ref_img.shape[:2] != curr_img.shape[:2]:
                 curr_img = cv2.resize(curr_img, (ref_img.shape[1], ref_img.shape[0]), interpolation=cv2.INTER_AREA)
 
@@ -358,13 +346,6 @@ if secilen_sehir_adi and secilen_bayi_adi and ref_img is not None and 'curr_file
             eksik_sayisi = len(filtered_boxes)
             hesaplanan_yuzde = max(0.0, 100.0 - ((eksik_sayisi / max(1, ideal_urun_sayisi)) * 100.0))
 
-            okunan_metinler = metin_ve_etiket_kontrolu(curr_img)
-            etiket_uyusmazligi = False
-            if beklenen_urun_adi:
-                bulundu = any(beklenen_urun_adi.upper() in m for m in okunan_metinler)
-                if not bulundu:
-                    etiket_uyusmazligi = True
-
             for idx, (startX, startY, endX, endY) in enumerate(filtered_boxes, 1):
                 cv2.rectangle(result_img, (startX, startY), (endX, endY), (0, 0, 255), 2)
                 cv2.putText(result_img, f"#{idx}", (startX + 3, startY + 18), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 1)
@@ -376,20 +357,13 @@ if secilen_sehir_adi and secilen_bayi_adi and ref_img is not None and 'curr_file
             st.session_state.result_img = result_img
             st.session_state.eksik_sayisi = eksik_sayisi
             st.session_state.raf_yuzdesi = hesaplanan_yuzde
-            st.session_state.etiket_uyusmazligi = etiket_uyusmazligi
             st.session_state.analiz_yapildi = True
 
     if st.session_state.analiz_yapildi and st.session_state.result_img is not None:
-        st.subheader("Tespit Edilen Eksikler ve Etiket Analiz Raporu")
+        st.subheader("Tespit Edilen Eksikler ve Raf Analiz Raporu")
         col_m1, col_m2 = st.columns(2)
         col_m1.metric("📊 Raf Doğruluk Oranı", f"%{st.session_state.raf_yuzdesi:.1f}")
         col_m2.metric("⚠️ Eksik/Boşluk Alan", f"{st.session_state.eksik_sayisi} Adet")
-        
-        if beklenen_urun_adi:
-            if st.session_state.get("etiket_uyusmazligi", False):
-                st.error(f"🚨 **Etiket/Ürün Uyuşmazlık Uyarısı:** Görselde '{beklenen_urun_adi}' adına ait net bir eşleşme/yazı tespit edilemedi veya yanlış ürün yerleştirilmiş olabilir!")
-            else:
-                st.success(f"✅ **Etiket Doğrulaması Başarılı:** '{beklenen_urun_adi}' ifadesi görselde doğrulandı.")
 
         sonuc_gorsel_genisligi = st.slider("🔍 Sonuç Görseli Boyutunu Ayarla", 300, 2000, 800, step=100)
         st.image(st.session_state.result_img, channels="BGR", width=sonuc_gorsel_genisligi)

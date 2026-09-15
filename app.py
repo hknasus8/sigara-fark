@@ -82,8 +82,39 @@ st.sidebar.header("Uygulama Ayarları")
 min_area_val = st.sidebar.slider("Minimum Eksik Boyutu (Hassasiyet)", 50, 2000, 150, step=25)
 fark_esigi = st.sidebar.slider("Piksel Fark Eşiği (Yoğunluk)", 20, 100, 40, step=5)
 
-# Yeni paylaştığınız Yandex Disk public link anahtarı buraya eklendi
 YANDEX_ROOT_PUBLIC_KEY = "https://disk.yandex.com.tr/d/ikCHPwREiCVv_g"
+
+@st.cache_data(ttl=600, show_spinner=False)
+def yandex_sehirleri_getir(public_key):
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+    }
+    sehirler = []
+    try:
+        root_url = f"https://cloud-api.yandex.net/v1/disk/public/resources?public_key={public_key}&limit=200"
+        resp = requests.get(root_url, headers=headers, timeout=15)
+        if resp.status_code != 200:
+            return [], f"Kök Dizin Okunamadı (HTTP {resp.status_code})"
+
+        root_items = resp.json().get("_embedded", {}).get("items", [])
+        for item in root_items:
+            if item.get("type") == "dir":
+                b_name = item.get("name")
+                # Eğer ana dizinde 'BAYİ' gibi bir klasör varsa onun içindekileri de şehir kabul edebiliriz
+                if b_name.upper() in ["BAYİ", "BAYI"]:
+                    bayi_path = item.get("path")
+                    sub_url = f"https://cloud-api.yandex.net/v1/disk/public/resources?public_key={public_key}&path={urllib.parse.quote(bayi_path, safe='/')}&limit=200"
+                    sub_resp = requests.get(sub_url, headers=headers, timeout=15)
+                    if sub_resp.status_code == 200:
+                        for sub_item in sub_resp.json().get("_embedded", {}).get("items", []):
+                            if sub_item.get("type") == "dir":
+                                sehirler.append(sub_item.get("name"))
+                else:
+                    sehirler.append(b_name)
+
+        return sorted(list(set(sehirler))), None
+    except Exception as e:
+        return [], str(e)
 
 @st.cache_data(ttl=600, show_spinner=False)
 def yandex_sehir_bayilerini_getir(public_key, sehir_adi):
@@ -191,33 +222,53 @@ with col_cikis:
 st.markdown("---")
 st.subheader("1. Lokasyon ve Bayi Seçimi")
 
-sabit_sehirler = ["AFYON", "ALANYA", "ANKARA", "ANTALYA", "KÜTAHYA", "MANAVGAT"]
+dinamik_sehirler, sehir_hata = yandex_sehirleri_getir(YANDEX_ROOT_PUBLIC_KEY)
 
 col_s1, col_s2 = st.columns(2)
 
 with col_s1:
-    secilen_sehir_adi = st.selectbox("Şehir Seçin", sabit_sehirler)
+    secilen_sehir_adi = st.selectbox(
+        "Şehir Seçin", 
+        options=dinamik_sehirler if dinamik_sehirler else ["Şehir Bulunamadı"],
+        index=None,
+        placeholder="Lütfen bir şehir seçin..."
+    )
 
-bayiler_listesi, bayi_hata = yandex_sehir_bayilerini_getir(YANDEX_ROOT_PUBLIC_KEY, secilen_sehir_adi)
+bayiler_listesi = []
+bayi_hata = None
+if secilen_sehir_adi:
+    bayiler_listesi, bayi_hata = yandex_sehir_bayilerini_getir(YANDEX_ROOT_PUBLIC_KEY, secilen_sehir_adi)
 
 with col_s2:
-    if bayiler_listesi:
-        secilen_bayi_adi = st.selectbox("Bayi Seçin", [b["name"] for b in bayiler_listesi])
+    if secilen_sehir_adi:
+        if bayiler_listesi:
+            secilen_bayi_adi = st.selectbox(
+                "Bayi Seçin", 
+                options=[b["name"] for b in bayiler_listesi],
+                index=None,
+                placeholder="Lütfen bir bayi seçin..."
+            )
+        else:
+            secilen_bayi_adi = st.selectbox("Bayi Seçin", ["Bayi Bulunamadı"], index=None)
+            if bayi_hata:
+                st.caption(f"⚠️ {bayi_hata}")
     else:
-        secilen_bayi_adi = st.selectbox("Bayi Seçin", ["Bayi Bulunamadı"])
-        if bayi_hata:
-            st.caption(f"⚠️ {bayi_hata}")
+        secilen_bayi_adi = st.selectbox("Bayi Seçin", ["Önce Şehir Seçmelisiniz"], index=None, disabled=True)
 
-    secilen_bayi_path = ""
-    if bayiler_listesi and secilen_bayi_adi != "Bayi Bulunamadı":
-        for b in bayiler_listesi:
-            if b["name"] == secilen_bayi_adi:
-                secilen_bayi_path = b["path"]
-                break
+secilen_bayi_path = ""
+if secilen_sehir_adi and secilen_bayi_adi and bayiler_listesi and secilen_bayi_adi != "Bayi Bulunamadı":
+    for b in bayiler_listesi:
+        if b["name"] == secilen_bayi_adi:
+            secilen_bayi_path = b["path"]
+            break
 
-st.markdown(f"**Seçilen Konum:** `{secilen_sehir_adi} / {secilen_bayi_adi}`")
+if secilen_sehir_adi and secilen_bayi_adi:
+    st.markdown(f"**Seçilen Konum:** `{secilen_sehir_adi} / {secilen_bayi_adi}`")
+else:
+    st.markdown(f"**Seçilen Konum:** *Henüz tam seçim yapılmadı.*")
 
 if st.button("🔄 Önbelleği Yenile"):
+    yandex_sehirleri_getir.clear()
     yandex_sehir_bayilerini_getir.clear()
     yandex_bayi_gorseli_getir.clear()
     st.toast("Önbellek temizlendi!", icon="🔄")
@@ -234,22 +285,29 @@ if secilen_bayi_path:
 col_up1, col_up2 = st.columns(2)
 with col_up1:
     st.subheader("2. Referans (İdeal) Görsel")
-    if ref_img is not None:
-        st.success(f"✅ '{secilen_bayi_adi}' Yandex'ten Yüklendi")
-        st.image(ref_img, channels="BGR", use_container_width=True)
+    if secilen_bayi_path:
+        if ref_img is not None:
+            st.success(f"✅ '{secilen_bayi_adi}' Yandex'ten Yüklendi")
+            st.image(ref_img, channels="BGR", use_container_width=True)
+        else:
+            st.warning(f"⚠️ Görsel yüklenemedi. Nedeni: {hata_mesaji}")
     else:
-        st.warning(f"⚠️ Görsel yüklenemedi. Nedeni: {hata_mesaji}")
+        st.info("ℹ️ Görseli görmek için lütfen şehir ve bayi seçin.")
 
 with col_up2:
     st.subheader("3. Sahadan Gelen Görsel")
-    curr_file = st.file_uploader("Fotoğraf yükleyin", type=["jpg", "jpeg", "png"], key="curr")
-    curr_img = None
-    if curr_file is not None:
-        curr_bytes = np.asarray(bytearray(curr_file.read()), dtype=np.uint8)
-        raw_curr_img = cv2.imdecode(curr_bytes, cv2.IMREAD_COLOR)
-        curr_img = resmi_boyutlandir(raw_curr_img)
-        st.success("✅ Fotoğraf yüklendi")
-        st.image(curr_img, channels="BGR", use_container_width=True)
+    if secilen_bayi_path:
+        curr_file = st.file_uploader("Fotoğraf yükleyin", type=["jpg", "jpeg", "png"], key="curr")
+        curr_img = None
+        if curr_file is not None:
+            curr_bytes = np.asarray(bytearray(curr_file.read()), dtype=np.uint8)
+            raw_curr_img = cv2.imdecode(curr_bytes, cv2.IMREAD_COLOR)
+            curr_img = resmi_boyutlandir(raw_curr_img)
+            st.success("✅ Fotoğraf yüklendi")
+            st.image(curr_img, channels="BGR", use_container_width=True)
+    else:
+        st.file_uploader("Fotoğraf yükleyin", type=["jpg", "jpeg", "png"], key="curr_disabled", disabled=True)
+        st.info("ℹ️ Fotoğraf yüklemek için önce bayi seçimi yapmalısınız.")
 
 st.markdown("---")
 st.subheader("4. Stand Kapasite Ayarı")
@@ -265,7 +323,8 @@ if "raf_yuzdesi" not in st.session_state:
 if "analiz_yapildi" not in st.session_state:
     st.session_state.analiz_yapildi = False
 
-if ref_img is not None and curr_file is not None and curr_img is not None:
+# Analiz tetikleyicisi (Sadece her şey tam seçilmişse çalışır)
+if secilen_sehir_adi and secilen_bayi_adi and ref_img is not None and 'curr_file' in locals() and curr_file is not None and 'curr_img' in locals() and curr_img is not None:
     if st.button("Hassas Farkı Analiz Et", type="primary"):
         with st.spinner("Gelişmiş hibrit matris ve piksel analizi yapılıyor..."):
             if ref_img.shape[:2] != curr_img.shape[:2]:
@@ -346,6 +405,6 @@ if ref_img is not None and curr_file is not None and curr_img is not None:
                 mime="image/jpeg"
             )
 else:
-    st.info("ℹ️ Analiz yapabilmek için lütfen yukarıdan şehir ve bayinizi seçin, ardından sağdaki alandan **Sahadan Gelen Fotoğrafı** yükleyin.")
+    st.info("ℹ️ Analiz yapabilmek için lütfen sırasıyla **Şehir** ve **Bayi** seçin, Yandex'ten referans görselin gelmesini bekleyin ve ardından **Sahadan Gelen Fotoğrafı** yükleyin.")
 
 st.markdown("<br><p style='text-align: center; color: gray;'>Developed by Hakan</p>", unsafe_allow_html=True)

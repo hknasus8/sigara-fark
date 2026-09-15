@@ -5,3 +5,6 @@ pandas
 openpyxl
 requests
 Pillow
+torch
+torchvision
+easyocr

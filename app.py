@@ -70,7 +70,6 @@ st.sidebar.markdown("---")
 st.sidebar.header("Denetim ve OCR Ayarları")
 min_area_val = st.sidebar.slider("Minimum Eksik Boyutu (Hassasiyet)", 50, 2000, 150, step=25)
 fark_esigi = st.sidebar.slider("Piksel Fark Eşiği (Yoğunluk)", 20, 100, 40, step=5)
-ocr_benzerlik_orani = st.sidebar.slider("Etiket Eşleşme Hassasiyeti (%)", 30, 90, 50, step=5)
 
 YANDEX_ROOT_PUBLIC_KEY = "https://disk.yandex.com.tr/d/ikCHPwREiCVv_g"
 
@@ -301,7 +300,7 @@ if secilen_sehir_adi and secilen_bayi_adi and ref_img is not None and 'curr_file
             if ref_img.shape[:2] != curr_img.shape[:2]:
                 curr_img = cv2.resize(curr_img, (ref_img.shape[1], ref_img.shape[0]), interpolation=cv2.INTER_AREA)
 
-            # 1. Aşama: OpenCV Görsel Fark Tespiti
+            # 1. Aşama: OpenCV Görsel Fark Tespiti (Kırmızı Kutular için)
             gray_ref = cv2.GaussianBlur(cv2.cvtColor(ref_img, cv2.COLOR_BGR2GRAY), (5, 5), 0)
             gray_curr = cv2.GaussianBlur(cv2.cvtColor(curr_img, cv2.COLOR_BGR2GRAY), (5, 5), 0)
 
@@ -347,36 +346,40 @@ if secilen_sehir_adi and secilen_bayi_adi and ref_img is not None and 'curr_file
             ref_ocr_results = reader.readtext(ref_img)
             curr_ocr_results = reader.readtext(curr_img)
             
-            matched_labels = 0
             mismatch_details = []
-
             result_img = curr_img.copy()
             eksik_sayisi = len(filtered_boxes)
             hesaplanan_yuzde = max(0.0, 100.0 - ((eksik_sayisi / max(1, ideal_urun_sayisi)) * 100.0))
 
-            # Görsel eksikleri kutula
+            # 1. Eksik ürün alanlarını KIRMIZI renk ile çiz
             for idx, (startX, startY, endX, endY) in enumerate(filtered_boxes, 1):
                 cv2.rectangle(result_img, (startX, startY), (endX, endY), (0, 0, 255), 2)
                 cv2.putText(result_img, f"Eksik #{idx}", (startX + 3, startY + 18), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 1)
 
-            # Etiket metin kıyaslaması (Referans etiket vs Saha etiket)
-            for r_box, r_text, r_prob in ref_ocr_results:
-                if len(r_text.strip()) > 2: # Sadece anlamlı metinleri dikkate al
-                    # Saha görselinde bu metne yakın bir metin var mı kontrol et
-                    bulundu = False
-                    for c_box, c_text, c_prob in curr_ocr_results:
-                        if r_text.lower() in c_text.lower() or c_text.lower() in r_text.lower():
-                            bulundu = True
-                            break
-                    if bulundu:
-                        matched_labels += 1
-                    else:
-                        mismatch_details.append(r_text)
+            # 2. Etiket metin kıyaslaması ve uyuşmayan/okunamayan etiketleri MAVİ renk ile çiz
+            ref_texts = [r[1].strip().lower() for r in ref_ocr_results if len(r[1].strip()) > 2]
+
+            for (c_box, c_text, c_prob) in curr_ocr_results:
+                clean_c_text = c_text.strip().lower()
+                if len(clean_c_text) > 2:
+                    # Sahada okunan bu metin referansta var mı kontrol et
+                    eslesti = any(r_t in clean_c_text or clean_c_text in r_t for r_t in ref_texts)
+                    
+                    if not eslesti:
+                        mismatch_details.append(c_text)
+                        # Mavi Dikdörtgen Çizimi (Koordinatlar EasyOCR formatından alınır: [[x1,y1],[x2,y1],[x2,y2],[x1,y2]])
+                        pts = np.array(c_box, dtype=np.int32)
+                        cv2.polylines(result_img, [pts], isClosed=True, color=(255, 0, 0), thickness=2) # BGR: Mavi (255, 0, 0)
+                        
+                        # Metin üstüne etiket uyarısı ekle
+                        pt_x = int(c_box[0][0])
+                        pt_y = int(c_box[0][1] - 5)
+                        cv2.putText(result_img, "Etiket Uyumsuz", (pt_x, max(15, pt_y)), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 0, 0), 1)
 
             # Üst bilgi bandı
             cv2.rectangle(result_img, (0, 0), (img_w, 100), (0, 0, 0), -1)
             cv2.putText(result_img, f"Bayi: {secilen_bayi_adi}", (15, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
-            cv2.putText(result_img, f"Eksik Alan: {eksik_sayisi} | Raf Uyum: %{hesaplanan_yuzde:.1f}", (15, 70), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 255) if eksik_sayisi > 0 else (0, 255, 0), 2)
+            cv2.putText(result_img, f"Eksik: {eksik_sayisi} | Uyuşmayan Etiket: {len(mismatch_details)}", (15, 70), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 0, 255) if eksik_sayisi > 0 else (0, 255, 0), 2)
 
             st.session_state.result_img = result_img
             st.session_state.eksik_sayisi = eksik_sayisi
@@ -388,14 +391,14 @@ if secilen_sehir_adi and secilen_bayi_adi and ref_img is not None and 'curr_file
         st.subheader("Tespit Edilen Eksikler ve Etiket (OCR) Karşılaştırma Raporu")
         col_m1, col_m2, col_m3 = st.columns(3)
         col_m1.metric("📊 Raf Doğruluk Oranı", f"%{st.session_state.raf_yuzdesi:.1f}")
-        col_m2.metric("⚠️ Eksik/Boşluk Alan", f"{st.session_state.eksik_sayisi} Adet")
-        col_m3.metric("📝 Okunamayan/Uyuşmayan Etiket", f"{len(st.session_state.ocr_raporu)} Adet")
+        col_m2.metric("⚠️ Eksik/Boşluk Alan (Kırmızı)", f"{st.session_state.eksik_sayisi} Adet")
+        col_m3.metric("🔵 Uyuşmayan Etiket (Mavi)", f"{len(st.session_state.ocr_raporu)} Adet")
 
         if st.session_state.ocr_raporu:
-            with st.expander("🔍 Etiket Uyuşmazlık Detayları (Ürün & Etiket Adı Farkları)"):
-                st.write("Referans görselde olup sahadaki fotoğrafta etiket adı/ürün ismi eşleşmeyen veya okunamayan metinler:")
-                for text in st.session_state.ocr_raporu:
-                    st.markdown(f"- ❌ `{text}`")
+            with st.expander("🔍 Etiket Uyuşmazlık Detayları (Mavi Kutularla İşaretlenenler)"):
+                st.write("Sahada okunan ancak referans görsel ile uyuşmayan veya şüpheli etiket yazıları:")
+                for text in set(st.session_state.ocr_raporu):
+                    st.markdown(f"- 🔵 `{text}`")
         else:
             st.success("✅ Tüm ürün ve etiket isimleri referans görsel ile tam uyumlu!")
 

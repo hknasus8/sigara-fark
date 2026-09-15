@@ -4,6 +4,5 @@ numpy
 pandas
 openpyxl
 requests
-easyocr
 pytesseract
 Pillow

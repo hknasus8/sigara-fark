@@ -296,38 +296,67 @@ if "analiz_yapildi" not in st.session_state:
 
 if secilen_sehir_adi and secilen_bayi_adi and ref_img is not None and 'curr_file' in locals() and curr_file is not None and 'curr_img' in locals() and curr_img is not None:
     if st.button("Hassas Görsel ve Etiket (OCR) Analizini Başlat", type="primary"):
-        with st.spinner("Stand tipi ve tabela yapısı doğrulanıyor..."):
-            if ref_img.shape[:2] != curr_img.shape[:2]:
-                curr_img = cv2.resize(curr_img, (ref_img.shape[1], ref_img.shape[0]), interpolation=cv2.INTER_AREA)
+        with st.spinner("Stand arka planı, renk mimarisi ve raf yapısı doğrulanıyor..."):
+            
+            # --- YENİ MİMARİ: GÖRSEL İSKELET, TON VE RENK KONTROLÜ ---
+            img_h, img_w = ref_img.shape[:2]
+            curr_img_resized = cv2.resize(curr_img, (img_w, img_h), interpolation=cv2.INTER_AREA)
 
-            # --- STAND TİPİ VE TABELA (NQKTA TOBACCO) UYUŞMAZLIK KONTROLÜ ---
-            ref_ocr_full = reader.readtext(ref_img)
-            curr_ocr_full = reader.readtext(curr_img)
+            # 1. Renk Dağılımı ve Ton Analizi (Siyah iskelet vs Beyaz/Gri iskelet)
+            hsv_ref = cv2.cvtColor(ref_img, cv2.COLOR_BGR2HSV)
+            hsv_curr = cv2.cvtColor(curr_img_resized, cv2.COLOR_BGR2HSV)
+            
+            hist_ref = cv2.calcHist([hsv_ref], [0, 1], None, [30, 32], [0, 180, 0, 256])
+            cv2.normalize(hist_ref, hist_ref, 0, 1, cv2.NORM_MINMAX)
+            
+            hist_curr = cv2.calcHist([hsv_curr], [0, 1], None, [30, 32], [0, 180, 0, 256])
+            cv2.normalize(hist_curr, hist_curr, 0, 1, cv2.NORM_MINMAX)
+            
+            renk_benzerligi = cv2.compareHist(hist_ref, hist_curr, cv2.HISTCMP_CORREL)
 
-            # Referans görseldeki ve sahadaki metinleri ayıkla
-            ref_metinler = [r[1].strip().lower() for r in ref_ocr_full if len(r[1].strip()) >= 3]
-            curr_metinler = [c[1].strip().lower() for c in curr_ocr_full if len(c[1].strip()) >= 3]
+            # 2. Stand Mimarisi (Arka Plan ve Raflar) - Ürünleri blurla, sadece iskeleti bırak
+            gray_ref_blur = cv2.GaussianBlur(cv2.cvtColor(ref_img, cv2.COLOR_BGR2GRAY), (55, 55), 0)
+            gray_curr_blur = cv2.GaussianBlur(cv2.cvtColor(curr_img_resized, cv2.COLOR_BGR2GRAY), (55, 55), 0)
+            
+            yapi_farki_matrisi = cv2.absdiff(gray_ref_blur, gray_curr_blur)
+            ortalama_yapi_farki = np.mean(yapi_farki_matrisi)
 
             stand_tipi_uyusuyor = True
-            if ref_metinler:
-                # Referans üzerindeki belirgin yazıların (örn: nokta, tobacco vb.) sahada geçip geçmediğini denetle
-                ortak_metin_var = any(any(rm in cm or cm in rm for cm in curr_metinler) for rm in ref_metinler)
-                
-                # Yapısal benzerlik skoru (Template Matching)
-                gray_ref_Full = cv2.cvtColor(ref_img, cv2.COLOR_BGR2GRAY)
-                gray_curr_Full = cv2.cvtColor(curr_img, cv2.COLOR_BGR2GRAY)
-                res_match = cv2.matchTemplate(gray_curr_Full, gray_ref_Full, cv2.TM_CCOEFF_NORMED)
-                _, max_val, _, _ = cv2.minMaxLoc(res_match)
+            hata_mesaji_detayi = ""
 
-                # Eğer ne tabela metni tutuyor ne de yapısal benzerlik eşiği sağlanabiliyorsa stand tipi farklıdır
-                if not ortak_metin_var and max_val < 0.10:
-                    stand_tipi_uyusuyor = False
+            # Karar Verme: Renk profili çok farklıysa veya iskelet parlaklıkları (Siyah vs Beyaz) uymuyorsa hata ver
+            if renk_benzerligi < 0.20:
+                stand_tipi_uyusuyor = False
+                hata_mesaji_detayi = "Genel renk mimarisi (Örn: Siyah iskelet vs. Beyaz iskelet) tamamen farklı."
+            elif ortalama_yapi_farki > 35:
+                stand_tipi_uyusuyor = False
+                hata_mesaji_detayi = "Standın raf sayısı, boşlukları veya arka plan materyali yapısal olarak uyuşmuyor."
+
+            # Yapı ve Renk testini geçenler için son bir OCR güvenlik adımı (Marka kontrolü)
+            if stand_tipi_uyusuyor:
+                ref_ust = ref_img[0:int(img_h * 0.20), :]
+                curr_ust = curr_img_resized[0:int(img_h * 0.20), :]
+                
+                ref_ocr = reader.readtext(ref_ust)
+                curr_ocr = reader.readtext(curr_ust)
+                
+                ref_kelimeler = [r[1].strip().lower() for r in ref_ocr if len(r[1].strip()) >= 4]
+                tabela_kelimeleri = [k for k in ref_kelimeler if k in ["nqkta", "tobacco", "nokta", "market", "tekel"]]
+                
+                if tabela_kelimeleri:
+                    curr_kelimeler = " ".join([c[1].strip().lower() for c in curr_ocr])
+                    eslesme_var = any(tk in curr_kelimeler for tk in tabela_kelimeleri)
+                    if not eslesme_var:
+                        stand_tipi_uyusuyor = False
+                        hata_mesaji_detayi = "Referans standın tabelası sahadaki görselde okunamadı/bulunamadı."
 
             if not stand_tipi_uyusuyor:
-                st.error("🚨 **UYARI: Stand Tipi Uyuşmazlığı!** 3. Sahadan Gelen Görsel ile 2. Referans (İdeal) Görselin **Stand Tipi / Tabelası** birbirine uymuyor! Lütfen doğru standa ait bir fotoğraf yükleyin.")
+                st.error(f"🚨 **UYARI: Stand Tipi ve Yapı Uyuşmazlığı!** \n\n Sahadan Gelen Görsel, Referans Görsel ile yapısal olarak eşleşmiyor. \n\n**Tespit Edilen Sebep:** {hata_mesaji_detayi} \n\n Lütfen doğru standa ait bir fotoğraf yükleyin.")
                 st.session_state.analiz_yapildi = False
             else:
-                # 1. Aşama: OpenCV Görsel Fark Tespiti (Kırmızı Kutular için)
+                # --- Stand Uygunsa 1. Aşama: Kırmızı Kutu Analizi Başlar ---
+                curr_img = curr_img_resized # İşlemlere eşitlenmiş boyuttan devam et
+                
                 gray_ref = cv2.GaussianBlur(cv2.cvtColor(ref_img, cv2.COLOR_BGR2GRAY), (5, 5), 0)
                 gray_curr = cv2.GaussianBlur(cv2.cvtColor(curr_img, cv2.COLOR_BGR2GRAY), (5, 5), 0)
 
@@ -338,7 +367,6 @@ if secilen_sehir_adi and secilen_bayi_adi and ref_img is not None and 'curr_file
 
                 contours, _ = cv2.findContours(morph.copy(), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
                 boxes = []
-                img_h, img_w = curr_img.shape[:2]
                 
                 for c in contours:
                     if cv2.contourArea(c) > min_area_val:
@@ -369,7 +397,7 @@ if secilen_sehir_adi and secilen_bayi_adi and ref_img is not None and 'curr_file
 
                 filtered_boxes = non_max_suppression(boxes)
                 
-                # 2. Aşama: EasyOCR ile Etiket / Ürün Adı Okuma ve Kıyaslama
+                # --- 2. Aşama: EasyOCR ile Etiket / Ürün Adı Okuma ve Kıyaslama ---
                 ref_ocr_results = reader.readtext(ref_img)
                 curr_ocr_results = reader.readtext(curr_img)
                 
@@ -378,12 +406,10 @@ if secilen_sehir_adi and secilen_bayi_adi and ref_img is not None and 'curr_file
                 eksik_sayisi = len(filtered_boxes)
                 hesaplanan_yuzde = max(0.0, 100.0 - ((eksik_sayisi / max(1, ideal_urun_sayisi)) * 100.0))
 
-                # Eksik ürün alanlarını KIRMIZI renk ile çiz
                 for idx, (startX, startY, endX, endY) in enumerate(filtered_boxes, 1):
                     cv2.rectangle(result_img, (startX, startY), (endX, endY), (0, 0, 255), 2)
                     cv2.putText(result_img, f"Eksik #{idx}", (startX + 3, startY + 18), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 1)
 
-                # Etiket metin kıyaslaması ve uyuşmayan/okunamayan etiketleri MAVİ renk ile çiz
                 ref_texts = [r[1].strip().lower() for r in ref_ocr_results if len(r[1].strip()) > 2]
 
                 for (c_box, c_text, c_prob) in curr_ocr_results:
@@ -400,10 +426,9 @@ if secilen_sehir_adi and secilen_bayi_adi and ref_img is not None and 'curr_file
                             pt_y = int(c_box[0][1] - 5)
                             cv2.putText(result_img, "Etiket Uyumsuz", (pt_x, max(15, pt_y)), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 0, 0), 1)
 
-                # Üst bilgi bandı
                 cv2.rectangle(result_img, (0, 0), (img_w, 100), (0, 0, 0), -1)
                 cv2.putText(result_img, f"Bayi: {secilen_bayi_adi}", (15, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
-                cv2.putText(result_img, f"Eksik: {eksik_sayisi} | Uyuşmayan Etiket: {len(mismatch_details)}", (15, 70), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 0, 255) if eksik_sayisi > 0 else (0, 255, 0), 2)
+                cv2.putText(result_img, f"Eksik: {eksik_sayisi} | Uyusmayan Etiket: {len(mismatch_details)}", (15, 70), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 0, 255) if eksik_sayisi > 0 else (0, 255, 0), 2)
 
                 st.session_state.result_img = result_img
                 st.session_state.eksik_sayisi = eksik_sayisi

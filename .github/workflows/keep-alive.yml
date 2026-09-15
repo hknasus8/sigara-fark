@@ -2,16 +2,18 @@ name: Keep Streamlit Alive
 
 on:
   schedule:
-    - cron: "0 */2 * * *"  # Her 2 saatte bir
-  workflow_dispatch:
+    - cron: "0 * * * *"  # Her 1 saatte bir çalıştırarak uykuya geçişi kesin olarak engeller
+  workflow_dispatch: # Manuel test edebilmen için bırakıldı
 
 jobs:
   ping:
     runs-on: ubuntu-latest
     steps:
       - name: Send HTTP request to Streamlit app
-        uses: fjogeleit/http-request-action@v1
-        with:
-          url: 'https://sigarafark.streamlit.app/'
-          method: 'GET'
-          timeout: 30000  # Zaman aşımını 30 saniyeye çıkararak uyanma süresine tanınan payı artırın
+        run: |
+          response=$(curl -s -o /dev/null -w "%{http_code}" https://sigarafark.streamlit.app/)
+          echo "HTTP Response Code: $response"
+          if [ "$response" -ge 400 ]; then
+            echo "Error: Application returned status code $response"
+            exit 1
+          fi

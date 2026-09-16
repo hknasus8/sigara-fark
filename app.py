@@ -335,9 +335,8 @@ if secilen_sehir_adi and secilen_bayi_adi and ref_img is not None and 'curr_file
                 raf_urun_sayilari[raf_idx + 1] = raf_aktif_urun
 
             uyumsuz_sayisi = len(uyumsuz_slotlar)
-            for idx, (startX, startY, endX, endY) in enumerate(uyumsuz_slotlar, 1):
-                cv2.rectangle(result_img, (startX, startY), (endX, endY), (0, 0, 255), 2)
-                cv2.putText(result_img, f"Uyumsuz #{idx}", (startX + 2, startY + 20), cv2.FONT_HERSHEY_SIMPLEX, 0.35, (0, 0, 255), 2)
+            
+            # Kırmızı çerçeve çizme döngüsü tamamen kaldırıldı
 
             for raf_idx in range(7):
                 y_baslangic = int(img_h * raf_oranlari[raf_idx])

@@ -56,9 +56,6 @@ def benzerlik_orani(a, b):
 
 
 def metin_eslesiyor_mu(hedef_metin, referans_metinler, esik=0.72):
-    """
-    Substring kontrolü yerine gerçek benzerlik skoru kullanır.
-    """
     for r_t in referans_metinler:
         skor = benzerlik_orani(hedef_metin, r_t)
         if skor >= esik:
@@ -67,6 +64,54 @@ def metin_eslesiyor_mu(hedef_metin, referans_metinler, esik=0.72):
             if hedef_metin == r_t:
                 return True
     return False
+
+
+def gorselleri_hizala(ref_img, curr_img):
+    """
+    ORB özellikleri ve Homografi kullanarak saha fotoğrafını referans fotoğrafa 
+    kusursuz bir şekilde hizalar (açı ve perspektif farkını yok eder).
+    """
+    try:
+        ref_gray = cv2.cvtColor(ref_img, cv2.COLOR_BGR2GRAY)
+        curr_gray = cv2.cvtColor(curr_img, cv2.COLOR_BGR2GRAY)
+
+        # ORB dedektörü
+        orb = cv2.ORB_create(nfeatures=2000)
+        kp1, des1 = orb.detectAndCompute(ref_gray, None)
+        kp2, des2 = orb.detectAndCompute(curr_gray, None)
+
+        if des1 is None or des2 is None or len(kp1) < 10 or len(kp2) < 10:
+            # Yetersiz nokta varsa standart resize ile devam et
+            h, w = ref_img.shape[:2]
+            return cv2.resize(curr_img, (w, h), interpolation=cv2.INTER_AREA)
+
+        # Eşleştirici (BFMatcher)
+        bf = cv2.BFMatcher(cv2.NORM_HAMMING, crossCheck=True)
+        matches = bf.match(des1, des2)
+        matches = sorted(matches, key=lambda x: x.distance)
+
+        # En iyi eşleşmeleri al
+        good_matches = matches[:int(len(matches) * 0.15)]
+        if len(good_matches) < 4:
+            h, w = ref_img.shape[:2]
+            return cv2.resize(curr_img, (w, h), interpolation=cv2.INTER_AREA)
+
+        src_pts = np.float32([kp1[m.queryIdx].pt for m in good_matches]).reshape(-1, 1, 2)
+        dst_pts = np.float32([kp2[m.trainIdx].pt for m in good_matches]).reshape(-1, 1, 2)
+
+        # Homografi matrisi hesapla
+        matrix, mask = cv2.findHomography(dst_pts, src_pts, cv2.RANSAC, 5.0)
+        
+        if matrix is None:
+            h, w = ref_img.shape[:2]
+            return cv2.resize(curr_img, (w, h), interpolation=cv2.INTER_AREA)
+
+        h, w = ref_img.shape[:2]
+        aligned_img = cv2.warpPerspective(curr_img, matrix, (w, h))
+        return aligned_img
+    except Exception:
+        h, w = ref_img.shape[:2]
+        return cv2.resize(curr_img, (w, h), interpolation=cv2.INTER_AREA)
 
 
 if "app_password" not in st.secrets:
@@ -330,11 +375,12 @@ if "analiz_yapildi" not in st.session_state:
 
 if secilen_sehir_adi and secilen_bayi_adi and ref_img is not None and 'curr_file' in locals() and curr_file is not None and 'curr_img' in locals() and curr_img is not None:
     if st.button("Hassas Görsel ve Etiket (OCR) Analizini Başlat", type="primary"):
-        with st.spinner("Görsel analiz ediliyor ve raflar taranıyor..."):
+        with st.spinner("Görsel perspektif eşleştirmesi yapılıyor ve raflar taranıyor..."):
 
             img_h, img_w = ref_img.shape[:2]
-            curr_img_resized = cv2.resize(curr_img, (img_w, img_h), interpolation=cv2.INTER_AREA)
-            curr_img = curr_img_resized 
+            
+            # --- AKILLI HİZALAMA (Homografi ile Perspektif / Açı Düzeltme) ---
+            curr_img = gorselleri_hizala(ref_img, curr_img)
 
             gray_ref = cv2.cvtColor(ref_img, cv2.COLOR_BGR2GRAY)
             gray_curr = cv2.cvtColor(curr_img, cv2.COLOR_BGR2GRAY)

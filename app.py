@@ -80,8 +80,9 @@ if not st.session_state.authenticated:
 
 st.sidebar.markdown("---")
 st.sidebar.header("Denetim ve OCR Ayarları")
-min_area_val = st.sidebar.slider("Minimum Eksik Boyutu (Hassasiyet)", 100, 3000, 500, step=100)
-fark_esigi = st.sidebar.slider("Piksel Fark Eşiği (Yoğunluk)", 20, 100, 45, step=5)
+# Hassasiyeti çok daha yüksek ve kararlı tutuyoruz (Yanlış alarmları önlemek için minimum alanı büyüttük)
+min_area_val = st.sidebar.slider("Minimum Eksik Boyutu (Hassasiyet)", 500, 5000, 1500, step=100)
+fark_esigi = st.sidebar.slider("Piksel Fark Eşiği (Yoğunluk)", 40, 120, 70, step=5)
 etiket_benzerlik_esigi = st.sidebar.slider(
     "Etiket Eşleşme Hassasiyeti (Benzerlik Eşiği)",
     0.50, 0.95, 0.72, step=0.01
@@ -311,8 +312,8 @@ if "analiz_yapildi" not in st.session_state:
     st.session_state.analiz_yapildi = False
 
 if secilen_sehir_adi and secilen_bayi_adi and ref_img is not None and 'curr_file' in locals() and curr_file is not None and 'curr_img' in locals() and curr_img is not None:
-    if st.button("Akıllı Raf Denetimini Başlat", type="primary"):
-        with st.spinner("İlk 6 raf optimize edilmiş algoritma ile taranıyor..."):
+    if st.button("Stabil Raf Denetimini Başlat", type="primary"):
+        with st.spinner("Görseller hizalanıyor ve kararlı denetim gerçekleştiriliyor..."):
 
             img_h, img_w = ref_img.shape[:2]
             curr_img_resized = cv2.resize(curr_img, (img_w, img_h), interpolation=cv2.INTER_AREA)
@@ -322,7 +323,7 @@ if secilen_sehir_adi and secilen_bayi_adi and ref_img is not None and 'curr_file
             filtered_boxes = []
             mismatch_details = []
 
-            # --- 6 RAF BAZLI OPTİMİZE KONTROL (Çizgileri kaldıran temiz yapı) ---
+            # --- STABİL RAF BAZLI KONTROL (Gereksiz Kutuları Eleme) ---
             raf_yuksekligi = img_h / 6.0
 
             for raf_idx in range(6):
@@ -335,15 +336,15 @@ if secilen_sehir_adi and secilen_bayi_adi and ref_img is not None and 'curr_file
                 gray_ref = cv2.cvtColor(raf_ref, cv2.COLOR_BGR2GRAY)
                 gray_curr = cv2.cvtColor(raf_curr, cv2.COLOR_BGR2GRAY)
 
-                # Hafif blur ile piksel kaymalarını ve parlamaları absorbe et
-                gray_ref = cv2.GaussianBlur(gray_ref, (5, 5), 0)
-                gray_curr = cv2.GaussianBlur(gray_curr, (5, 5), 0)
+                # Hafif bulanıklaştırma ile açısal/parlama farklarını yut
+                gray_ref = cv2.GaussianBlur(gray_ref, (9, 9), 0)
+                gray_curr = cv2.GaussianBlur(gray_curr, (9, 9), 0)
 
                 fark = cv2.absdiff(gray_ref, gray_curr)
                 _, thresh = cv2.threshold(fark, fark_esigi, 255, cv2.THRESH_BINARY)
 
-                # Gürültüyü temizle, sadece anlamlı büyük boşluk/değişim öbeklerini bırak
-                kernel = np.ones((7, 7), np.uint8)
+                # Sadece büyük ve net yapısal kayıp/boşluk alanlarını bağdaştır
+                kernel = np.ones((11, 11), np.uint8)
                 thresh = cv2.morphologyEx(thresh, cv2.MORPH_OPEN, kernel)
                 thresh = cv2.morphologyEx(thresh, cv2.MORPH_CLOSE, kernel)
 
@@ -353,8 +354,8 @@ if secilen_sehir_adi and secilen_bayi_adi and ref_img is not None and 'curr_file
                     if cv2.contourArea(c) > min_area_val:
                         x, y, w, h = cv2.boundingRect(c)
                         global_y = y_baslangic + y
-                        # Çok küçük veya raf dışı kalan gürültüleri ele
-                        if h > (raf_yuksekligi * 0.2): 
+                        # Çok küçük veya alakasız yerleri kesinlikle ele
+                        if h > (raf_yuksekligi * 0.3) and w > 30: 
                             filtered_boxes.append([x, global_y, x + w, global_y + h])
 
             # Etiket (OCR) Karşılaştırma
@@ -378,11 +379,11 @@ if secilen_sehir_adi and secilen_bayi_adi and ref_img is not None and 'curr_file
                         pt_y = int(c_box[0][1] - 5)
                         cv2.putText(result_img, "Etiket Uyumsuz", (pt_x, max(15, pt_y)), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 0, 0), 1)
 
-            # Gerçek eksik/fark alanlarını kırmızı çerçeve ile işaretle
+            # Sadece gerçekten büyük ve kritik eksik alanları kırmızı çerçeve ile işaretle
             eksik_sayisi = len(filtered_boxes)
             for idx, (startX, startY, endX, endY) in enumerate(filtered_boxes, 1):
                 cv2.rectangle(result_img, (startX, startY), (endX, endY), (0, 0, 255), 2)
-                cv2.putText(result_img, f"Fark #{idx}", (startX + 5, startY + 20), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 2)
+                cv2.putText(result_img, f"Kritik Fark #{idx}", (startX + 5, startY + 20), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 2)
 
             # 6. Raftan Sonrası İçin Kırmızı X İşaretleri Ekleme
             kirmizi_x_baslangic_y = int(raf_yuksekligi * 6)
@@ -398,7 +399,7 @@ if secilen_sehir_adi and secilen_bayi_adi and ref_img is not None and 'curr_file
 
             cv2.rectangle(result_img, (0, 0), (img_w, 100), (0, 0, 0), -1)
             cv2.putText(result_img, f"Bayi: {secilen_bayi_adi}", (15, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
-            cv2.putText(result_img, f"Tespit Edilen Fark: {eksik_sayisi} | İlk 6 Raf İncelendi", (15, 70), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 255, 0), 2)
+            cv2.putText(result_img, f"Kritik Fark: {eksik_sayisi} | İlk 6 Raf İncelendi", (15, 70), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 255, 0), 2)
 
             hesaplanan_yuzde = max(0.0, 100.0 - ((eksik_sayisi / max(1, ideal_urun_sayisi)) * 100.0))
 
@@ -409,10 +410,10 @@ if secilen_sehir_adi and secilen_bayi_adi and ref_img is not None and 'curr_file
             st.session_state.analiz_yapildi = True
 
     if st.session_state.analiz_yapildi and st.session_state.result_img is not None:
-        st.subheader("Tespit Edilen Eksikler ve Etiket Karşılaştırma Raporu")
+        st.subheader("Tespit Edilen Kritik Farklar ve Rapor")
         col_m1, col_m2, col_m3 = st.columns(3)
         col_m1.metric("📊 Raf Doğruluk Oranı (İlk 6 Raf)", f"%{st.session_state.raf_yuzdesi:.1f}")
-        col_m2.metric("⚠️ Tespit Edilen Fark (Kırmızı)", f"{st.session_state.eksik_sayisi} Adet")
+        col_m2.metric("⚠️ Kritik Fark (Kırmızı)", f"{st.session_state.eksik_sayisi} Adet")
         col_m3.metric("🔵 Uyuşmayan Etiket (Mavi)", f"{len(st.session_state.ocr_raporu)} Adet")
 
         if st.session_state.ocr_raporu:
@@ -430,7 +431,7 @@ if secilen_sehir_adi and secilen_bayi_adi and ref_img is not None and 'curr_file
             st.download_button(
                 label="📥 Rapor Fotoğrafını İndir",
                 data=encoded_image.tobytes(),
-                file_name=f"{secilen_bayi_adi.replace(' ', '_')}_temiz_analiz_sonucu.jpg",
+                file_name=f"{secilen_bayi_adi.replace(' ', '_')}_stabil_analiz_sonucu.jpg",
                 mime="image/jpeg"
             )
 else:

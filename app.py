@@ -58,16 +58,11 @@ def benzerlik_orani(a, b):
 def metin_eslesiyor_mu(hedef_metin, referans_metinler, esik=0.72):
     """
     Substring kontrolü yerine gerçek benzerlik skoru kullanır.
-    Kısa/ortak kelimelerin yanlışlıkla her şeyle 'eşleşmesini' önler,
-    böylece gerçek uyumsuzluklar artık kaçırılmaz.
     """
     for r_t in referans_metinler:
         skor = benzerlik_orani(hedef_metin, r_t)
         if skor >= esik:
             return True
-        # Kısa metinlerde (ör. 3-5 karakter) tam içerme mantıklı olabilir,
-        # ama sadece metin uzunluğu yeterince yakınsa (kısa kelimenin
-        # uzun bir metnin ortasında kaybolup yanlış eşleşmesini önlemek için)
         if len(hedef_metin) <= 5 and len(r_t) <= 8:
             if hedef_metin == r_t:
                 return True
@@ -103,7 +98,7 @@ fark_esigi = st.sidebar.slider("Piksel/Yapı Fark Eşiği (Yoğunluk)", 10, 100,
 etiket_benzerlik_esigi = st.sidebar.slider(
     "Etiket Eşleşme Hassasiyeti (Benzerlik Eşiği)",
     0.50, 0.95, 0.72, step=0.01,
-    help="Düşük değer = daha toleranslı (az uyumsuzluk yakalar). Yüksek değer = daha katı (küçük farkları bile yakalar)."
+    help="Düşük değer = daha toleranslı. Yüksek değer = daha katı."
 )
 
 YANDEX_ROOT_PUBLIC_KEY = "https://disk.yandex.com.tr/d/ikCHPwREiCVv_g"
@@ -365,54 +360,35 @@ if secilen_sehir_adi and secilen_bayi_adi and ref_img is not None and 'curr_file
 
             if renk_benzerligi < 0.20:
                 stand_tipi_uyusuyor = False
-                hata_mesaji_detayi = "Genel renk mimarisi (Örn: Siyah iskelet vs. Beyaz iskelet) tamamen farklı."
+                hata_mesaji_detayi = "Genel renk mimarisi tamamen farklı."
             elif ortalama_yapi_farki > 35:
                 stand_tipi_uyusuyor = False
-                hata_mesaji_detayi = "Standın raf sayısı, boşlukları veya arka plan materyali yapısal olarak uyuşmuyor."
-
-            # Yapı ve Renk testini geçenler için son bir OCR güvenlik adımı (Marka kontrolü)
-            # Not: burada da fuzzy eşleşme kullanılıyor, aksi halde OCR hatalarında
-            # doğru standı yanlışlıkla reddedebilir.
-            if stand_tipi_uyusuyor:
-                ref_ust = ref_img[0:int(img_h * 0.20), :]
-                curr_ust = curr_img_resized[0:int(img_h * 0.20), :]
-
-                ref_ocr = reader.readtext(ref_ust)
-                curr_ocr = reader.readtext(curr_ust)
-
-                ref_kelimeler = [r[1].strip().lower() for r in ref_ocr if len(r[1].strip()) >= 4]
-                tabela_kelimeleri = [k for k in ref_kelimeler if k in ["nqkta", "tobacco", "nokta", "market", "tekel"]]
-
-                if tabela_kelimeleri:
-                    curr_kelimeler_listesi = [c[1].strip().lower() for c in curr_ocr]
-                    eslesme_var = any(
-                        metin_eslesiyor_mu(ck, tabela_kelimeleri, esik=0.65)
-                        for ck in curr_kelimeler_listesi
-                    )
-                    if not eslesme_var:
-                        stand_tipi_uyusuyor = False
-                        hata_mesaji_detayi = "Referans standın tabelası sahadaki görselde okunamadı/bulunamadı."
+                hata_mesaji_detayi = "Standın raf sayısı veya arka planı uyuşmuyor."
 
             if not stand_tipi_uyusuyor:
-                st.error(f"🚨 **UYARI: Stand Tipi ve Yapı Uyuşmazlığı!** \n\n Sahadan Gelen Görsel, Referans Görsel ile yapısal olarak eşleşmiyor. \n\n**Tespit Edilen Sebep:** {hata_mesaji_detayi} \n\n Lütfen doğru standa ait bir fotoğraf yükleyin.")
+                st.error(f"🚨 **UYARI: Stand Tipi ve Yapı Uyuşmazlığı!** \n\n{hata_mesaji_detayi}")
                 st.session_state.analiz_yapildi = False
             else:
-                # --- Stand Uygunsa 1. Aşama: Eksik/Boşluk Analizi (SSIM tabanlı) ---
-                curr_img = curr_img_resized  # İşlemlere eşitlenmiş boyuttan devam et
+                curr_img = curr_img_resized 
 
                 gray_ref = cv2.cvtColor(ref_img, cv2.COLOR_BGR2GRAY)
                 gray_curr = cv2.cvtColor(curr_img, cv2.COLOR_BGR2GRAY)
 
-                # SSIM (Structural Similarity), basit piksel farkından (absdiff) çok
-                # daha dayanıklıdır: ışık/parlaklık/renk kaymalarına aldanmaz ve
-                # gerçek yapısal (şekil/doku) farklarını daha hassas yakalar.
-                # Bu sayede az kontrastlı gerçek eksiklikler artık kaçırılmaz.
+                # --- 6 RAF KONTROL MANTIĞI ---
+                # Stand dikey olarak 6 eşit rafa bölünür. 
+                # 6. raftan sonraki alanlar kontrol dışı bırakılır ve üzerlerine X atılır.
+                raf_yuksekligi = img_h / 6.0
+
                 benzerlik_skoru, ssim_fark_haritasi = ssim(gray_ref, gray_curr, full=True)
                 ssim_fark_haritasi = (1.0 - ssim_fark_haritasi)
                 ssim_fark_8u = np.clip(ssim_fark_haritasi * 255, 0, 255).astype("uint8")
                 ssim_fark_8u = cv2.GaussianBlur(ssim_fark_8u, (5, 5), 0)
 
                 _, thresh = cv2.threshold(ssim_fark_8u, fark_esigi, 255, cv2.THRESH_BINARY)
+                
+                # 6. raftan sonraki pikselleri sıfırla (yani kontrol etme / eksik sayma)
+                thresh[int(raf_yuksekligi * 6):, :] = 0
+
                 morph = cv2.morphologyEx(thresh, cv2.MORPH_CLOSE, np.ones((7, 15), np.uint8))
                 morph = cv2.morphologyEx(morph, cv2.MORPH_OPEN, np.ones((3, 3), np.uint8))
 
@@ -422,8 +398,10 @@ if secilen_sehir_adi and secilen_bayi_adi and ref_img is not None and 'curr_file
                 for c in contours:
                     if cv2.contourArea(c) > min_area_val:
                         x, y, w, h = cv2.boundingRect(c)
-                        if (img_w * 0.01 < x < img_w * 0.99) and (img_h * 0.02 < y < img_h * 0.98):
-                            boxes.append([x, y, x + w, y + h])
+                        # Sadece ilk 6 raf içindeki kutuları dikkate al
+                        if y + h <= int(raf_yuksekligi * 6):
+                            if (img_w * 0.01 < x < img_w * 0.99) and (img_h * 0.02 < y < img_h * 0.98):
+                                boxes.append([x, y, x + w, y + h])
 
                 def non_max_suppression(boxes, overlapThresh=0.15):
                     if not boxes:
@@ -449,7 +427,7 @@ if secilen_sehir_adi and secilen_bayi_adi and ref_img is not None and 'curr_file
 
                 filtered_boxes = non_max_suppression(boxes)
 
-                # --- 2. Aşama: EasyOCR ile Etiket / Ürün Adı Okuma ve Kıyaslama ---
+                # --- EasyOCR ile Etiket Karşılaştırma ---
                 ref_ocr_results = reader.readtext(ref_img)
                 curr_ocr_results = reader.readtext(curr_img)
 
@@ -462,29 +440,45 @@ if secilen_sehir_adi and secilen_bayi_adi and ref_img is not None and 'curr_file
                     cv2.rectangle(result_img, (startX, startY), (endX, endY), (0, 0, 255), 2)
                     cv2.putText(result_img, f"Eksik #{idx}", (startX + 3, startY + 18), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 1)
 
+                # 6. Raftan Sonrası İçin Kırmızı X İşaretleri Ekleme
+                # Görselin 6. raf sonrasındaki yüksekliğini tarayıp her raf aralığına veya belirli aralıklarla X koyalım
+                kirmizi_x_baslangic_y = int(raf_yuksekligi * 6)
+                if kirmizi_x_baslangic_y < img_h:
+                    # 6. raftan sonraki alanı hafifçe karartıp üzerine uyarı X'leri koyalım
+                    overlay = result_img.copy()
+                    cv2.rectangle(overlay, (0, kirmizi_x_baslangic_y), (img_w, img_h), (0, 0, 50), -1)
+                    cv2.addWeighted(overlay, 0.3, result_img, 0.7, 0, result_img)
+
+                    # Her bir kontrol dışı kalan potansiyel raf seviyesine büyük kırmızı X yerleştir
+                    for y_pos in range(kirmizi_x_baslangic_y + int(raf_yuksekligi/2), img_h, int(raf_yuksekligi)):
+                        # X işareti çizimi (iki çapraz çizgi)
+                        center_x = int(img_w / 2)
+                        cv2.putText(result_img, "X - KONTROL EDILMEDI", (center_x - 150, y_pos), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
+                        cv2.line(result_img, (center_x - 180, y_pos - 20), (center_x - 160, y_pos + 10), (0, 0, 255), 3)
+
                 ref_texts = [r[1].strip().lower() for r in ref_ocr_results if len(r[1].strip()) > 2]
 
-                # Fuzzy (benzerlik oranlı) eşleştirme: substring mantığı yerine
-                # gerçek benzerlik skoru kullanıldığı için, kısa/ortak kelimelerin
-                # yanlışlıkla her şeyle "eşleşip" gerçek uyumsuzlukları
-                # gizlemesi artık engelleniyor.
                 for (c_box, c_text, c_prob) in curr_ocr_results:
                     clean_c_text = c_text.strip().lower()
                     if len(clean_c_text) > 2:
+                        # 6. raf altındaki metinleri OCR taramasına dahil etme
+                        box_y_orta = sum([pt[1] for pt in c_box]) / 4.0
+                        if box_y_orta > (raf_yuksekligi * 6):
+                            continue
+
                         eslesti = metin_eslesiyor_mu(clean_c_text, ref_texts, esik=etiket_benzerlik_esigi)
 
                         if not eslesti:
                             mismatch_details.append(c_text)
                             pts = np.array(c_box, dtype=np.int32)
                             cv2.polylines(result_img, [pts], isClosed=True, color=(255, 0, 0), thickness=2)
-
                             pt_x = int(c_box[0][0])
                             pt_y = int(c_box[0][1] - 5)
                             cv2.putText(result_img, "Etiket Uyumsuz", (pt_x, max(15, pt_y)), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 0, 0), 1)
 
                 cv2.rectangle(result_img, (0, 0), (img_w, 100), (0, 0, 0), -1)
                 cv2.putText(result_img, f"Bayi: {secilen_bayi_adi}", (15, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
-                cv2.putText(result_img, f"Eksik: {eksik_sayisi} | Uyusmayan Etiket: {len(mismatch_details)}", (15, 70), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 0, 255) if eksik_sayisi > 0 else (0, 255, 0), 2)
+                cv2.putText(result_img, f"Eksik: {eksik_sayisi} | 6 Raf Kontrol Edildi", (15, 70), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 255, 0), 2)
 
                 st.session_state.result_img = result_img
                 st.session_state.eksik_sayisi = eksik_sayisi
@@ -495,17 +489,16 @@ if secilen_sehir_adi and secilen_bayi_adi and ref_img is not None and 'curr_file
     if st.session_state.analiz_yapildi and st.session_state.result_img is not None:
         st.subheader("Tespit Edilen Eksikler ve Etiket (OCR) Karşılaştırma Raporu")
         col_m1, col_m2, col_m3 = st.columns(3)
-        col_m1.metric("📊 Raf Doğruluk Oranı", f"%{st.session_state.raf_yuzdesi:.1f}")
+        col_m1.metric("📊 Raf Doğruluk Oranı (İlk 6 Raf)", f"%{st.session_state.raf_yuzdesi:.1f}")
         col_m2.metric("⚠️ Eksik/Boşluk Alan (Kırmızı)", f"{st.session_state.eksik_sayisi} Adet")
         col_m3.metric("🔵 Uyuşmayan Etiket (Mavi)", f"{len(st.session_state.ocr_raporu)} Adet")
 
         if st.session_state.ocr_raporu:
-            with st.expander("🔍 Etiket Uyuşmazlık Detayları (Mavi Kutularla İşaretlenenler)"):
-                st.write("Sahada okunan ancak referans görsel ile uyuşmayan veya şüpheli etiket yazıları:")
+            with st.expander("🔍 Etiket Uyuşmazlık Detayları"):
                 for text in set(st.session_state.ocr_raporu):
                     st.markdown(f"- 🔵 `{text}`")
         else:
-            st.success("✅ Tüm ürün ve etiket isimleri referans görsel ile tam uyumlu!")
+            st.success("✅ İlk 6 raftaki tüm ürün ve etiket isimleri referans görsel ile tam uyumlu!")
 
         sonuc_gorsel_genisligi = st.slider("🔍 Sonuç Görseli Boyutunu Ayarla", 300, 2000, 800, step=100)
         st.image(st.session_state.result_img, channels="BGR", width=sonuc_gorsel_genisligi)

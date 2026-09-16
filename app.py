@@ -285,7 +285,7 @@ if "analiz_yapildi" not in st.session_state:
 
 if secilen_sehir_adi and secilen_bayi_adi and ref_img is not None and 'curr_file' in locals() and curr_file is not None and 'curr_img' in locals() and curr_img is not None:
     if st.button("🚀 Renk Histogramı ile Planogram Denetle", type="primary"):
-        with st.spinner("Renk histogramı ve ton analizi yapılıyor..."):
+        with st.spinner("Renk histogramı ve raf bazlı sayım yapılıyor..."):
 
             img_h, img_w = ref_img.shape[:2]
             curr_resized = cv2.resize(curr_img, (img_w, img_h), interpolation=cv2.INTER_AREA)
@@ -293,14 +293,16 @@ if secilen_sehir_adi and secilen_bayi_adi and ref_img is not None and 'curr_file
 
             uyumsuz_slotlar = []
             aksiyon_maddeleri = []
+            raf_urun_sayilari = {}
 
             raf_yuksekligi = img_h / 6.0
             slot_genisligi = img_w / float(kolon_sayisi)
 
-            # SLOT BAZLI RENK HISTOGRAMI KARŞILAŞTIRMASI
+            # SLOT BAZLI RENK HISTOGRAMI VE RAF SAYIMI
             for raf_idx in range(6):
                 y_baslangic = int(raf_idx * raf_yuksekligi)
                 y_bitis = int((raf_idx + 1) * raf_yuksekligi)
+                raf_aktif_urun = 0
 
                 for col_idx in range(kolon_sayisi):
                     x_baslangic = int(col_idx * slot_genisligi)
@@ -314,32 +316,43 @@ if secilen_sehir_adi and secilen_bayi_adi and ref_img is not None and 'curr_file
                     if ref_slot.size == 0 or curr_slot.size == 0:
                         continue
 
-                    # HSV renk uzayına çevir (Işık değişimlerinden daha az etkilenir)
+                    # Ürün var sayımı (Boş alan değilse urun sayılır)
+                    raf_aktif_urun += 1
+
                     ref_hsv = cv2.cvtColor(ref_slot, cv2.COLOR_BGR2HSV)
                     curr_hsv = cv2.cvtColor(curr_slot, cv2.COLOR_BGR2HSV)
 
-                    # Renk histogramı hesapla (H ve S kanalları)
                     hist_ref = cv2.calcHist([ref_hsv], [0, 1], None, [30, 32], [0, 180, 0, 256])
                     cv2.normalize(hist_ref, hist_ref, alpha=0, beta=1, norm_type=cv2.NORM_MINMAX)
 
                     hist_curr = cv2.calcHist([curr_hsv], [0, 1], None, [30, 32], [0, 180, 0, 256])
                     cv2.normalize(hist_curr, hist_curr, alpha=0, beta=1, norm_type=cv2.NORM_MINMAX)
 
-                    # Histogram korelasyonunu hesapla (1.0 = Tamamen aynı renk dağılımı)
                     similarity = cv2.compareHist(hist_ref, hist_curr, cv2.HISTCMP_CORREL)
-
-                    # Eğer korelasyon belirlenen eşiğin altındaysa, renk dağılımı uyuşmuyor demektir
-                    # similarity max 1.0dir. Fark = 1.0 - similarity
                     fark_orani = 1.0 - max(0.0, similarity)
 
                     if fark_orani > renk_fark_esigi:
                         uyumsuz_slotlar.append([x_baslangic, y_baslangic, x_bitis, y_bitis])
                         aksiyon_maddeleri.append(f"{raf_idx + 1}. Raf, {col_idx + 1}. Slot noktasında renk/ürün uyumsuzluğu tespit edildi.")
 
+                raf_urun_sayilari[raf_idx + 1] = raf_aktif_urun
+
+            # Uyumsuz slotları işaretle
             uyumsuz_sayisi = len(uyumsuz_slotlar)
             for idx, (startX, startY, endX, endY) in enumerate(uyumsuz_slotlar, 1):
                 cv2.rectangle(result_img, (startX, startY), (endX, endY), (0, 0, 255), 2)
                 cv2.putText(result_img, f"Uyumsuz #{idx}", (startX + 2, startY + 20), cv2.FONT_HERSHEY_SIMPLEX, 0.35, (0, 0, 255), 2)
+
+            # HER RAFIN SOL YANINA ÜRÜN SAYISINI YAZDIR
+            for raf_idx in range(6):
+                y_baslangic = int(raf_idx * raf_yuksekligi)
+                y_merkez = y_baslangic + int(raf_yuksekligi / 2)
+                urun_adedi = raf_urun_sayilari.get(raf_idx + 1, 0)
+                
+                # Sol kenara arka plan kutusu ve metin
+                text_str = f"Raf {raf_idx+1}: {urun_adedi} Adet"
+                cv2.rectangle(result_img, (5, y_merkez - 15), (170, y_merkez + 15), (0, 0, 0), -1)
+                cv2.putText(result_img, text_str, (10, y_merkez + 5), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 2)
 
             kirmizi_x_baslangic_y = int(raf_yuksekligi * 6)
             if kirmizi_x_baslangic_y < img_h:

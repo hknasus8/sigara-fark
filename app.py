@@ -5,6 +5,8 @@ import os
 import requests
 import urllib.parse
 import easyocr
+from difflib import SequenceMatcher
+from skimage.metrics import structural_similarity as ssim
 
 st.set_page_config(
     page_title="Sigara Standı Akıllı Denetim Sistemi",
@@ -26,13 +28,16 @@ hide_st_style = """
 """
 st.markdown(hide_st_style, unsafe_allow_html=True)
 
+
 # EasyOCR Okuyucuyu Belleğe Yükle (Önbellekli)
 @st.cache_resource
 def ocr_okuyucu_yukle():
     return easyocr.Reader(['tr', 'en'], gpu=False)
 
+
 with st.spinner("AI Metin Okuma (OCR) motoru hazırlanıyor..."):
     reader = ocr_okuyucu_yukle()
+
 
 def resmi_boyutlandir(img, max_genislik=1000):
     if img is None:
@@ -43,6 +48,31 @@ def resmi_boyutlandir(img, max_genislik=1000):
         yeni_yukseklik = int(h * oran)
         return cv2.resize(img, (max_genislik, yeni_yukseklik), interpolation=cv2.INTER_AREA)
     return img
+
+
+def benzerlik_orani(a, b):
+    """İki metin arasındaki benzerlik oranını (0-1) döndürür."""
+    return SequenceMatcher(None, a, b).ratio()
+
+
+def metin_eslesiyor_mu(hedef_metin, referans_metinler, esik=0.72):
+    """
+    Substring kontrolü yerine gerçek benzerlik skoru kullanır.
+    Kısa/ortak kelimelerin yanlışlıkla her şeyle 'eşleşmesini' önler,
+    böylece gerçek uyumsuzluklar artık kaçırılmaz.
+    """
+    for r_t in referans_metinler:
+        skor = benzerlik_orani(hedef_metin, r_t)
+        if skor >= esik:
+            return True
+        # Kısa metinlerde (ör. 3-5 karakter) tam içerme mantıklı olabilir,
+        # ama sadece metin uzunluğu yeterince yakınsa (kısa kelimenin
+        # uzun bir metnin ortasında kaybolup yanlış eşleşmesini önlemek için)
+        if len(hedef_metin) <= 5 and len(r_t) <= 8:
+            if hedef_metin == r_t:
+                return True
+    return False
+
 
 if "app_password" not in st.secrets:
     st.error("⚠️ Kritik Güvenlik Uyarısı: 'app_password' Streamlit secrets içinde tanımlı değil!")
@@ -56,7 +86,7 @@ if "authenticated" not in st.session_state:
 if not st.session_state.authenticated:
     st.title("🔐 Sigara Standı Akıllı Denetim Sistemi - Giriş")
     st.markdown("<p style='color: gray; font-size: 14px; margin-top: -15px;'>Developed by Hakan</p>", unsafe_allow_html=True)
-    
+
     sifre_input = st.text_input("Şifre", type="password")
     if st.button("Giriş Yap", type="primary"):
         if sifre_input == app_pass:
@@ -68,10 +98,16 @@ if not st.session_state.authenticated:
 
 st.sidebar.markdown("---")
 st.sidebar.header("Denetim ve OCR Ayarları")
-min_area_val = st.sidebar.slider("Minimum Eksik Boyutu (Hassasiyet)", 50, 2000, 150, step=25)
-fark_esigi = st.sidebar.slider("Piksel Fark Eşiği (Yoğunluk)", 20, 100, 40, step=5)
+min_area_val = st.sidebar.slider("Minimum Eksik Boyutu (Hassasiyet)", 30, 2000, 90, step=10)
+fark_esigi = st.sidebar.slider("Piksel/Yapı Fark Eşiği (Yoğunluk)", 10, 100, 25, step=5)
+etiket_benzerlik_esigi = st.sidebar.slider(
+    "Etiket Eşleşme Hassasiyeti (Benzerlik Eşiği)",
+    0.50, 0.95, 0.72, step=0.01,
+    help="Düşük değer = daha toleranslı (az uyumsuzluk yakalar). Yüksek değer = daha katı (küçük farkları bile yakalar)."
+)
 
 YANDEX_ROOT_PUBLIC_KEY = "https://disk.yandex.com.tr/d/ikCHPwREiCVv_g"
+
 
 @st.cache_data(ttl=600, show_spinner=False)
 def yandex_sehirleri_getir(public_key):
@@ -101,6 +137,7 @@ def yandex_sehirleri_getir(public_key):
     except Exception as e:
         return [], str(e)
 
+
 @st.cache_data(ttl=600, show_spinner=False)
 def yandex_sehir_bayilerini_getir(public_key, sehir_adi):
     headers = {"User-Agent": "Mozilla/5.0"}
@@ -113,12 +150,12 @@ def yandex_sehir_bayilerini_getir(public_key, sehir_adi):
 
         root_items = resp.json().get("_embedded", {}).get("items", [])
         sehir_item_found = None
-        
+
         for item in root_items:
             if item.get("type") == "dir" and item.get("name", "").upper() == sehir_adi.upper():
                 sehir_item_found = item
                 break
-        
+
         if not sehir_item_found:
             for item in root_items:
                 if item.get("type") == "dir" and item.get("name", "").upper() in ["BAYİ", "BAYI"]:
@@ -154,6 +191,7 @@ def yandex_sehir_bayilerini_getir(public_key, sehir_adi):
     except Exception as e:
         return [], str(e)
 
+
 @st.cache_data(ttl=600, show_spinner=False)
 def yandex_bayi_gorseli_getir(public_key, bayi_path):
     headers = {"User-Agent": "Mozilla/5.0"}
@@ -167,7 +205,7 @@ def yandex_bayi_gorseli_getir(public_key, bayi_path):
         final_embedded = resp.json().get("_embedded")
         if not final_embedded:
             return None, "Seçilen bayi klasörü boş."
-            
+
         sub_items = final_embedded.get("items", [])
         gorsel_download_url = None
         for sub_item in sub_items:
@@ -189,13 +227,14 @@ def yandex_bayi_gorseli_getir(public_key, bayi_path):
     except Exception as e:
         return None, f"Hata: {e}"
 
+
 col_baslik, col_cikis = st.columns([5, 1])
 with col_baslik:
     st.title("SİGARA STANDI AKILLI DENETİM SİSTEMİ")
     st.markdown("<p style='color: gray; font-size: 14px; margin-top: -15px;'>Developed by Hakan</p>", unsafe_allow_html=True)
 
 with col_cikis:
-    st.write("") 
+    st.write("")
     if st.button("🚪 Çıkış Yap", type="secondary"):
         st.session_state.authenticated = False
         st.rerun()
@@ -208,7 +247,7 @@ col_s1, col_s2 = st.columns(2)
 
 with col_s1:
     secilen_sehir_adi = st.selectbox(
-        "Şehir Seçin", 
+        "Şehir Seçin",
         options=dinamik_sehirler if dinamik_sehirler else ["Şehir Bulunamadı"],
         index=None,
         placeholder="Lütfen bir şehir seçin..."
@@ -223,7 +262,7 @@ with col_s2:
     if secilen_sehir_adi:
         if bayiler_listesi:
             secilen_bayi_adi = st.selectbox(
-                "Bayi Seçin", 
+                "Bayi Seçin",
                 options=[b["name"] for b in bayiler_listesi],
                 index=None,
                 placeholder="Lütfen bir bayi seçin..."
@@ -297,34 +336,33 @@ if "analiz_yapildi" not in st.session_state:
 if secilen_sehir_adi and secilen_bayi_adi and ref_img is not None and 'curr_file' in locals() and curr_file is not None and 'curr_img' in locals() and curr_img is not None:
     if st.button("Hassas Görsel ve Etiket (OCR) Analizini Başlat", type="primary"):
         with st.spinner("Stand arka planı, renk mimarisi ve raf yapısı doğrulanıyor..."):
-            
-            # --- YENİ MİMARİ: GÖRSEL İSKELET, TON VE RENK KONTROLÜ ---
+
+            # --- GÖRSEL İSKELET, TON VE RENK KONTROLÜ ---
             img_h, img_w = ref_img.shape[:2]
             curr_img_resized = cv2.resize(curr_img, (img_w, img_h), interpolation=cv2.INTER_AREA)
 
-            # 1. Renk Dağılımı ve Ton Analizi (Siyah iskelet vs Beyaz/Gri iskelet)
+            # 1. Renk Dağılımı ve Ton Analizi
             hsv_ref = cv2.cvtColor(ref_img, cv2.COLOR_BGR2HSV)
             hsv_curr = cv2.cvtColor(curr_img_resized, cv2.COLOR_BGR2HSV)
-            
+
             hist_ref = cv2.calcHist([hsv_ref], [0, 1], None, [30, 32], [0, 180, 0, 256])
             cv2.normalize(hist_ref, hist_ref, 0, 1, cv2.NORM_MINMAX)
-            
+
             hist_curr = cv2.calcHist([hsv_curr], [0, 1], None, [30, 32], [0, 180, 0, 256])
             cv2.normalize(hist_curr, hist_curr, 0, 1, cv2.NORM_MINMAX)
-            
+
             renk_benzerligi = cv2.compareHist(hist_ref, hist_curr, cv2.HISTCMP_CORREL)
 
-            # 2. Stand Mimarisi (Arka Plan ve Raflar) - Ürünleri blurla, sadece iskeleti bırak
+            # 2. Stand Mimarisi (Arka Plan ve Raflar)
             gray_ref_blur = cv2.GaussianBlur(cv2.cvtColor(ref_img, cv2.COLOR_BGR2GRAY), (55, 55), 0)
             gray_curr_blur = cv2.GaussianBlur(cv2.cvtColor(curr_img_resized, cv2.COLOR_BGR2GRAY), (55, 55), 0)
-            
+
             yapi_farki_matrisi = cv2.absdiff(gray_ref_blur, gray_curr_blur)
             ortalama_yapi_farki = np.mean(yapi_farki_matrisi)
 
             stand_tipi_uyusuyor = True
             hata_mesaji_detayi = ""
 
-            # Karar Verme: Renk profili çok farklıysa veya iskelet parlaklıkları (Siyah vs Beyaz) uymuyorsa hata ver
             if renk_benzerligi < 0.20:
                 stand_tipi_uyusuyor = False
                 hata_mesaji_detayi = "Genel renk mimarisi (Örn: Siyah iskelet vs. Beyaz iskelet) tamamen farklı."
@@ -333,19 +371,24 @@ if secilen_sehir_adi and secilen_bayi_adi and ref_img is not None and 'curr_file
                 hata_mesaji_detayi = "Standın raf sayısı, boşlukları veya arka plan materyali yapısal olarak uyuşmuyor."
 
             # Yapı ve Renk testini geçenler için son bir OCR güvenlik adımı (Marka kontrolü)
+            # Not: burada da fuzzy eşleşme kullanılıyor, aksi halde OCR hatalarında
+            # doğru standı yanlışlıkla reddedebilir.
             if stand_tipi_uyusuyor:
                 ref_ust = ref_img[0:int(img_h * 0.20), :]
                 curr_ust = curr_img_resized[0:int(img_h * 0.20), :]
-                
+
                 ref_ocr = reader.readtext(ref_ust)
                 curr_ocr = reader.readtext(curr_ust)
-                
+
                 ref_kelimeler = [r[1].strip().lower() for r in ref_ocr if len(r[1].strip()) >= 4]
                 tabela_kelimeleri = [k for k in ref_kelimeler if k in ["nqkta", "tobacco", "nokta", "market", "tekel"]]
-                
+
                 if tabela_kelimeleri:
-                    curr_kelimeler = " ".join([c[1].strip().lower() for c in curr_ocr])
-                    eslesme_var = any(tk in curr_kelimeler for tk in tabela_kelimeleri)
+                    curr_kelimeler_listesi = [c[1].strip().lower() for c in curr_ocr]
+                    eslesme_var = any(
+                        metin_eslesiyor_mu(ck, tabela_kelimeleri, esik=0.65)
+                        for ck in curr_kelimeler_listesi
+                    )
                     if not eslesme_var:
                         stand_tipi_uyusuyor = False
                         hata_mesaji_detayi = "Referans standın tabelası sahadaki görselde okunamadı/bulunamadı."
@@ -354,20 +397,28 @@ if secilen_sehir_adi and secilen_bayi_adi and ref_img is not None and 'curr_file
                 st.error(f"🚨 **UYARI: Stand Tipi ve Yapı Uyuşmazlığı!** \n\n Sahadan Gelen Görsel, Referans Görsel ile yapısal olarak eşleşmiyor. \n\n**Tespit Edilen Sebep:** {hata_mesaji_detayi} \n\n Lütfen doğru standa ait bir fotoğraf yükleyin.")
                 st.session_state.analiz_yapildi = False
             else:
-                # --- Stand Uygunsa 1. Aşama: Kırmızı Kutu Analizi Başlar ---
-                curr_img = curr_img_resized # İşlemlere eşitlenmiş boyuttan devam et
-                
-                gray_ref = cv2.GaussianBlur(cv2.cvtColor(ref_img, cv2.COLOR_BGR2GRAY), (5, 5), 0)
-                gray_curr = cv2.GaussianBlur(cv2.cvtColor(curr_img, cv2.COLOR_BGR2GRAY), (5, 5), 0)
+                # --- Stand Uygunsa 1. Aşama: Eksik/Boşluk Analizi (SSIM tabanlı) ---
+                curr_img = curr_img_resized  # İşlemlere eşitlenmiş boyuttan devam et
 
-                diff = cv2.absdiff(gray_ref, gray_curr)
-                _, thresh = cv2.threshold(diff, fark_esigi, 255, cv2.THRESH_BINARY)
-                morph = cv2.morphologyEx(thresh, cv2.MORPH_CLOSE, np.ones((5, 15), np.uint8))
+                gray_ref = cv2.cvtColor(ref_img, cv2.COLOR_BGR2GRAY)
+                gray_curr = cv2.cvtColor(curr_img, cv2.COLOR_BGR2GRAY)
+
+                # SSIM (Structural Similarity), basit piksel farkından (absdiff) çok
+                # daha dayanıklıdır: ışık/parlaklık/renk kaymalarına aldanmaz ve
+                # gerçek yapısal (şekil/doku) farklarını daha hassas yakalar.
+                # Bu sayede az kontrastlı gerçek eksiklikler artık kaçırılmaz.
+                benzerlik_skoru, ssim_fark_haritasi = ssim(gray_ref, gray_curr, full=True)
+                ssim_fark_haritasi = (1.0 - ssim_fark_haritasi)
+                ssim_fark_8u = np.clip(ssim_fark_haritasi * 255, 0, 255).astype("uint8")
+                ssim_fark_8u = cv2.GaussianBlur(ssim_fark_8u, (5, 5), 0)
+
+                _, thresh = cv2.threshold(ssim_fark_8u, fark_esigi, 255, cv2.THRESH_BINARY)
+                morph = cv2.morphologyEx(thresh, cv2.MORPH_CLOSE, np.ones((7, 15), np.uint8))
                 morph = cv2.morphologyEx(morph, cv2.MORPH_OPEN, np.ones((3, 3), np.uint8))
 
                 contours, _ = cv2.findContours(morph.copy(), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
                 boxes = []
-                
+
                 for c in contours:
                     if cv2.contourArea(c) > min_area_val:
                         x, y, w, h = cv2.boundingRect(c)
@@ -375,10 +426,11 @@ if secilen_sehir_adi and secilen_bayi_adi and ref_img is not None and 'curr_file
                             boxes.append([x, y, x + w, y + h])
 
                 def non_max_suppression(boxes, overlapThresh=0.15):
-                    if not boxes: return []
+                    if not boxes:
+                        return []
                     boxes = np.array(boxes)
                     pick = []
-                    x1, y1, x2, y2 = boxes[:,0], boxes[:,1], boxes[:,2], boxes[:,3]
+                    x1, y1, x2, y2 = boxes[:, 0], boxes[:, 1], boxes[:, 2], boxes[:, 3]
                     area = (x2 - x1 + 1) * (y2 - y1 + 1)
                     idxs = np.argsort(y2)
                     while len(idxs) > 0:
@@ -396,11 +448,11 @@ if secilen_sehir_adi and secilen_bayi_adi and ref_img is not None and 'curr_file
                     return boxes[pick].astype("int")
 
                 filtered_boxes = non_max_suppression(boxes)
-                
+
                 # --- 2. Aşama: EasyOCR ile Etiket / Ürün Adı Okuma ve Kıyaslama ---
                 ref_ocr_results = reader.readtext(ref_img)
                 curr_ocr_results = reader.readtext(curr_img)
-                
+
                 mismatch_details = []
                 result_img = curr_img.copy()
                 eksik_sayisi = len(filtered_boxes)
@@ -412,16 +464,20 @@ if secilen_sehir_adi and secilen_bayi_adi and ref_img is not None and 'curr_file
 
                 ref_texts = [r[1].strip().lower() for r in ref_ocr_results if len(r[1].strip()) > 2]
 
+                # Fuzzy (benzerlik oranlı) eşleştirme: substring mantığı yerine
+                # gerçek benzerlik skoru kullanıldığı için, kısa/ortak kelimelerin
+                # yanlışlıkla her şeyle "eşleşip" gerçek uyumsuzlukları
+                # gizlemesi artık engelleniyor.
                 for (c_box, c_text, c_prob) in curr_ocr_results:
                     clean_c_text = c_text.strip().lower()
                     if len(clean_c_text) > 2:
-                        eslesti = any(r_t in clean_c_text or clean_c_text in r_t for r_t in ref_texts)
-                        
+                        eslesti = metin_eslesiyor_mu(clean_c_text, ref_texts, esik=etiket_benzerlik_esigi)
+
                         if not eslesti:
                             mismatch_details.append(c_text)
                             pts = np.array(c_box, dtype=np.int32)
                             cv2.polylines(result_img, [pts], isClosed=True, color=(255, 0, 0), thickness=2)
-                            
+
                             pt_x = int(c_box[0][0])
                             pt_y = int(c_box[0][1] - 5)
                             cv2.putText(result_img, "Etiket Uyumsuz", (pt_x, max(15, pt_y)), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 0, 0), 1)

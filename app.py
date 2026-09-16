@@ -279,8 +279,6 @@ if "uyumsuz_sayisi" not in st.session_state:
     st.session_state.uyumsuz_sayisi = 0
 if "raf_yuzdesi" not in st.session_state:
     st.session_state.raf_yuzdesi = 100.0
-if "aksiyon_maddeleri" not in st.session_state:
-    st.session_state.aksiyon_maddeleri = []
 if "analiz_yapildi" not in st.session_state:
     st.session_state.analiz_yapildi = False
 
@@ -293,7 +291,6 @@ if secilen_sehir_adi and secilen_bayi_adi and ref_img is not None and 'curr_file
             result_img = curr_resized.copy()
 
             uyumsuz_slotlar = []
-            aksiyon_maddeleri = []
             raf_urun_sayilari = {}
 
             # 7 Raf için eşit aralıklı/oransal dikey sınır oranları (7 rafın tamamı)
@@ -334,7 +331,6 @@ if secilen_sehir_adi and secilen_bayi_adi and ref_img is not None and 'curr_file
 
                     if fark_orani > renk_fark_esigi:
                         uyumsuz_slotlar.append([x_baslangic, y_baslangic, x_bitis, y_bitis])
-                        aksiyon_maddeleri.append(f"{raf_idx + 1}. Raf, {col_idx + 1}. Slot noktasında renk/ürün uyumsuzluğu tespit edildi.")
 
                 raf_urun_sayilari[raf_idx + 1] = raf_aktif_urun
 
@@ -362,7 +358,6 @@ if secilen_sehir_adi and secilen_bayi_adi and ref_img is not None and 'curr_file
             st.session_state.result_img = result_img
             st.session_state.uyumsuz_sayisi = uyumsuz_sayisi
             st.session_state.raf_yuzdesi = hesaplanan_yuzde
-            st.session_state.aksiyon_maddeleri = aksiyon_maddeleri
             st.session_state.analiz_yapildi = True
 
     if st.session_state.analiz_yapildi and st.session_state.result_img is not None:
@@ -370,11 +365,7 @@ if secilen_sehir_adi and secilen_bayi_adi and ref_img is not None and 'curr_file
         col_m1.metric("📊 Planogram Uyum Oranı", f"%{st.session_state.raf_yuzdesi:.1f}")
         col_m2.metric("⚠️ Uyumsuz/Yer Değişen Slot", f"{st.session_state.uyumsuz_sayisi} Adet")
 
-        if st.session_state.aksiyon_maddeleri:
-            st.markdown("> 🔔 **Düzeltme Talimatları:**")
-            for aksiyon in st.session_state.aksiyon_maddeleri:
-                st.markdown(f"- ⚠️ {aksiyon}")
-        else:
+        if st.session_state.uyumsuz_sayisi == 0:
             st.success("✅ Tebrikler! Saha fotoğrafı renk analizi ile referans şablonla tam uyumlu.")
 
         sonuc_gorsel_genisligi = st.slider("🔍 Denetim Görseli Boyutunu Ayarla", 300, 2000, 800, step=100)

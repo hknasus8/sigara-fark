@@ -43,48 +43,6 @@ def resmi_boyutlandir(img, max_genislik=1000):
         return cv2.resize(img, (max_genislik, yeni_yukseklik), interpolation=cv2.INTER_AREA)
     return img
 
-def gorselleri_hizala(ref_img, curr_img):
-    """Sahadan gelen görseli, referans görselin perspektifine ve açısına otomatik hizalar."""
-    try:
-        h, w = ref_img.shape[:2]
-        curr_resized = cv2.resize(curr_img, (w, h), interpolation=cv2.INTER_AREA)
-
-        gray_ref = cv2.cvtColor(ref_img, cv2.COLOR_BGR2GRAY)
-        gray_curr = cv2.cvtColor(curr_resized, cv2.COLOR_BGR2GRAY)
-
-        # ORB Özellik Dedektörü
-        orb = cv2.ORB_create(2000)
-        kp1, des1 = orb.detectAndCompute(gray_ref, None)
-        kp2, des2 = orb.detectAndCompute(gray_curr, None)
-
-        if des1 is None or des2 is None or len(kp1) < 10 or len(kp2) < 10:
-            return curr_resized # Yeterli özellik bulunamazsa boyutlandırılmış hali döndür
-
-        # Eşleştirici (BFMatcher)
-        bf = cv2.BFMatcher(cv2.NORM_HAMMING, crossCheck=True)
-        matches = bf.match(des1, des2)
-        matches = sorted(matches, key=lambda x: x.distance)
-
-        # En iyi eşleşmelerin %30'unu al
-        good_matches = matches[:int(len(matches) * 0.3)]
-
-        if len(good_matches) < 10:
-            return curr_resized
-
-        src_pts = np.float32([kp1[m.queryIdx].pt for m in good_matches]).reshape(-1, 1, 2)
-        dst_pts = np.float32([kp2[m.trainIdx].pt for m in good_matches]).reshape(-1, 1, 2)
-
-        # Homografi matrisini hesapla
-        matrix, mask = cv2.findHomography(dst_pts, src_pts, cv2.RANSAC, 5.0)
-
-        if matrix is not None:
-            aligned_img = cv2.warpPerspective(curr_resized, matrix, (w, h))
-            return aligned_img
-        
-        return curr_resized
-    except Exception:
-        return cv2.resize(curr_img, (ref_img.shape[1], ref_img.shape[0]), interpolation=cv2.INTER_AREA)
-
 def benzerlik_orani(a, b):
     return SequenceMatcher(None, a, b).ratio()
 
@@ -121,9 +79,9 @@ if not st.session_state.authenticated:
     st.stop()
 
 st.sidebar.markdown("---")
-st.sidebar.header("Denetim ve OCR Ayarları")
-min_area_val = st.sidebar.slider("Minimum Eksik Boyutu (Hassasiyet)", 800, 6000, 2000, step=100)
-fark_esigi = st.sidebar.slider("Piksel Fark Eşiği (Yoğunluk)", 50, 150, 80, step=5)
+st.sidebar.header("Slot ve OCR Ayarları")
+kolon_sayisi = st.sidebar.slider("Her Raftaki Slot (Paket) Sayısı", 8, 16, 12, step=1)
+bosluk_esigi = st.sidebar.slider("Boşluk / Parlaklık Eşiği", 50, 200, 110, step=5)
 etiket_benzerlik_esigi = st.sidebar.slider(
     "Etiket Eşleşme Hassasiyeti (Benzerlik Eşiği)",
     0.50, 0.95, 0.72, step=0.01
@@ -259,7 +217,7 @@ with col_cikis:
         st.rerun()
 
 st.markdown("---")
-st.subheader("1. Lokasyon ve Bayi Seçimi")
+st.subheader("1. Lokasyon and Bayi Seçimi")
 
 dinamik_sehirler, sehir_hata = yandex_sehirleri_getir(YANDEX_ROOT_PUBLIC_KEY)
 col_s1, col_s2 = st.columns(2)
@@ -338,7 +296,7 @@ with col_up2:
 
 st.markdown("---")
 st.subheader("4. Stand Kapasite Ayarı")
-ideal_urun_sayisi = st.number_input("Standda Bulunması Gereken Toplam Ürün (Slot) Sayısı", min_value=1, value=50, step=1)
+ideal_urun_sayisi = st.number_input("Standda Bulunması Gereken Toplam Ürün (Slot) Sayısı", min_value=1, value=60, step=1)
 st.markdown("---")
 
 if "result_img" not in st.session_state:
@@ -353,51 +311,47 @@ if "analiz_yapildi" not in st.session_state:
     st.session_state.analiz_yapildi = False
 
 if secilen_sehir_adi and secilen_bayi_adi and ref_img is not None and 'curr_file' in locals() and curr_file is not None and 'curr_img' in locals() and curr_img is not None:
-    if st.button("Otomatik Hizala ve Denetle", type="primary"):
-        with st.spinner("Görsel referansa göre otomatik hizalanıyor ve analiz ediliyor..."):
-
-            # 1. OTOMATİK PERSPEKTİF VE AÇI HİZALAMA
-            aligned_curr_img = gorselleri_hizala(ref_img, curr_img)
+    if st.button("Slot (Izgara) Tabanlı Denetle", type="primary"):
+        with st.spinner("Stand ızgaralara bölünüp slot bazlı kontrol ediliyor..."):
 
             img_h, img_w = ref_img.shape[:2]
-            result_img = aligned_curr_img.copy()
+            # Boyutları eşitle
+            curr_resized = cv2.resize(curr_img, (img_w, img_h), interpolation=cv2.INTER_AREA)
+            result_img = curr_resized.copy()
+
             filtered_boxes = []
             mismatch_details = []
 
             raf_yuksekligi = img_h / 6.0
+            slot_ genisligi = img_w / float(kolon_sayisi)
 
+            # 1. SLOT (GRID) TABANLI BOŞLUK KONTROLÜ
             for raf_idx in range(6):
                 y_baslangic = int(raf_idx * raf_yuksekligi)
                 y_bitis = int((raf_idx + 1) * raf_yuksekligi)
 
-                raf_ref = ref_img[y_baslangic:y_bitis, 0:img_w]
-                raf_curr = aligned_curr_img[y_baslangic:y_bitis, 0:img_w]
+                for col_idx in range(kolon_sayisi):
+                    x_baslangic = int(col_idx * slot_genisligi)
+                    x_bitis = int((col_idx + 1) * slot_genisligi)
 
-                gray_ref = cv2.cvtColor(raf_ref, cv2.COLOR_BGR2GRAY)
-                gray_curr = cv2.cvtColor(raf_curr, cv2.COLOR_BGR2GRAY)
+                    # İlgili slot kesiti
+                    slot_img = curr_resized[y_baslangic + int(raf_yuksekligi*0.1): y_bitis - int(raf_yuksekligi*0.1), 
+                                             x_baslangic + 5: x_bitis - 5]
 
-                gray_ref = cv2.GaussianBlur(gray_ref, (9, 9), 0)
-                gray_curr = cv2.GaussianBlur(gray_curr, (9, 9), 0)
+                    if slot_img.size == 0:
+                        continue
 
-                fark = cv2.absdiff(gray_ref, gray_curr)
-                _, thresh = cv2.threshold(fark, fark_esigi, 255, cv2.THRESH_BINARY)
+                    gray_slot = cv2.cvtColor(slot_img, cv2.COLOR_BGR2GRAY)
+                    ortalama_parlaklik = np.mean(gray_slot)
 
-                kernel = np.ones((13, 13), np.uint8)
-                thresh = cv2.morphologyEx(thresh, cv2.MORPH_OPEN, kernel)
-                thresh = cv2.morphologyEx(thresh, cv2.MORPH_CLOSE, kernel)
+                    # Eğer slot ortalama parlaklığı belirli bir eşikten yüksekse (arka plan / boşluk rengi) veya çok karanlıksa eksiktir
+                    # Sigara paketleri genellikle koyu renklidir, boşluklar ise açık gri/beyaz zemini gösterir.
+                    if ortalama_parlaklik > bosluk_esigi:
+                        filtered_boxes.append([x_baslangic, y_baslangic, x_bitis, y_bitis])
 
-                contours, _ = cv2.findContours(thresh.copy(), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-
-                for c in contours:
-                    if cv2.contourArea(c) > min_area_val:
-                        x, y, w, h = cv2.boundingRect(c)
-                        global_y = y_baslangic + y
-                        if h > (raf_yuksekligi * 0.35) and w > 40: 
-                            filtered_boxes.append([x, global_y, x + w, global_y + h])
-
-            # Etiket (OCR) Karşılaştırma
+            # 2. ETİKET (OCR) KONTROLÜ
             ref_ocr_results = reader.readtext(ref_img)
-            curr_ocr_results = reader.readtext(aligned_curr_img)
+            curr_ocr_results = reader.readtext(curr_resized)
             ref_texts = [r[1].strip().lower() for r in ref_ocr_results if len(r[1].strip()) > 2]
 
             for (c_box, c_text, c_prob) in curr_ocr_results:
@@ -419,8 +373,9 @@ if secilen_sehir_adi and secilen_bayi_adi and ref_img is not None and 'curr_file
             eksik_sayisi = len(filtered_boxes)
             for idx, (startX, startY, endX, endY) in enumerate(filtered_boxes, 1):
                 cv2.rectangle(result_img, (startX, startY), (endX, endY), (0, 0, 255), 2)
-                cv2.putText(result_img, f"Eksik #{idx}", (startX + 5, startY + 20), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 2)
+                cv2.putText(result_img, f"Eksik #{idx}", (startX + 5, startY + 20), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0, 0, 255), 2)
 
+            # Alt Kısım Kontrol Edilmedi Bölgesi
             kirmizi_x_baslangic_y = int(raf_yuksekligi * 6)
             if kirmizi_x_baslangic_y < img_h:
                 overlay = result_img.copy()
@@ -432,9 +387,10 @@ if secilen_sehir_adi and secilen_bayi_adi and ref_img is not None and 'curr_file
                     cv2.putText(result_img, "X - KONTROL EDILMEDI", (center_x - 150, y_pos), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
                     cv2.line(result_img, (center_x - 180, y_pos - 20), (center_x - 160, y_pos + 10), (0, 0, 255), 3)
 
+            # Üst Bilgi Bantları
             cv2.rectangle(result_img, (0, 0), (img_w, 100), (0, 0, 0), -1)
             cv2.putText(result_img, f"Bayi: {secilen_bayi_adi}", (15, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
-            cv2.putText(result_img, f"Gerçek Eksik: {eksik_sayisi} | Otomatik Hizalandı", (15, 70), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 255, 0), 2)
+            cv2.putText(result_img, f"Gerçek Eksik: {eksik_sayisi} | Slot Tabanlı Analiz", (15, 70), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 255, 0), 2)
 
             hesaplanan_yuzde = max(0.0, 100.0 - ((eksik_sayisi / max(1, ideal_urun_sayisi)) * 100.0))
 
@@ -445,7 +401,7 @@ if secilen_sehir_adi and secilen_bayi_adi and ref_img is not None and 'curr_file
             st.session_state.analiz_yapildi = True
 
     if st.session_state.analiz_yapildi and st.session_state.result_img is not None:
-        st.subheader("Hizalanmış Görüntü Üzerinde Tespit Edilen Sonuçlar")
+        st.subheader("Slot Analizi Sonuçları")
         col_m1, col_m2, col_m3 = st.columns(3)
         col_m1.metric("📊 Raf Doğruluk Oranı", f"%{st.session_state.raf_yuzdesi:.1f}")
         col_m2.metric("⚠️ Eksik Alan (Kırmızı)", f"{st.session_state.eksik_sayisi} Adet")
@@ -466,7 +422,7 @@ if secilen_sehir_adi and secilen_bayi_adi and ref_img is not None and 'curr_file
             st.download_button(
                 label="📥 Rapor Fotoğrafını İndir",
                 data=encoded_image.tobytes(),
-                file_name=f"{secilen_bayi_adi.replace(' ', '_')}_hizalanmis_analiz.jpg",
+                file_name=f"{secilen_bayi_adi.replace(' ', '_')}_slot_analiz.jpg",
                 mime="image/jpeg"
             )
 else:

@@ -315,7 +315,6 @@ if secilen_sehir_adi and secilen_bayi_adi and ref_img is not None and 'curr_file
         with st.spinner("Stand ızgaralara bölünüp slot bazlı kontrol ediliyor..."):
 
             img_h, img_w = ref_img.shape[:2]
-            # Boyutları eşitle
             curr_resized = cv2.resize(curr_img, (img_w, img_h), interpolation=cv2.INTER_AREA)
             result_img = curr_resized.copy()
 
@@ -323,7 +322,7 @@ if secilen_sehir_adi and secilen_bayi_adi and ref_img is not None and 'curr_file
             mismatch_details = []
 
             raf_yuksekligi = img_h / 6.0
-            slot_ genisligi = img_w / float(kolon_sayisi)
+            slot_genisligi = img_w / float(kolon_sayisi)
 
             # 1. SLOT (GRID) TABANLI BOŞLUK KONTROLÜ
             for raf_idx in range(6):
@@ -334,7 +333,6 @@ if secilen_sehir_adi and secilen_bayi_adi and ref_img is not None and 'curr_file
                     x_baslangic = int(col_idx * slot_genisligi)
                     x_bitis = int((col_idx + 1) * slot_genisligi)
 
-                    # İlgili slot kesiti
                     slot_img = curr_resized[y_baslangic + int(raf_yuksekligi*0.1): y_bitis - int(raf_yuksekligi*0.1), 
                                              x_baslangic + 5: x_bitis - 5]
 
@@ -344,8 +342,6 @@ if secilen_sehir_adi and secilen_bayi_adi and ref_img is not None and 'curr_file
                     gray_slot = cv2.cvtColor(slot_img, cv2.COLOR_BGR2GRAY)
                     ortalama_parlaklik = np.mean(gray_slot)
 
-                    # Eğer slot ortalama parlaklığı belirli bir eşikten yüksekse (arka plan / boşluk rengi) veya çok karanlıksa eksiktir
-                    # Sigara paketleri genellikle koyu renklidir, boşluklar ise açık gri/beyaz zemini gösterir.
                     if ortalama_parlaklik > bosluk_esigi:
                         filtered_boxes.append([x_baslangic, y_baslangic, x_bitis, y_bitis])
 
@@ -375,7 +371,6 @@ if secilen_sehir_adi and secilen_bayi_adi and ref_img is not None and 'curr_file
                 cv2.rectangle(result_img, (startX, startY), (endX, endY), (0, 0, 255), 2)
                 cv2.putText(result_img, f"Eksik #{idx}", (startX + 5, startY + 20), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0, 0, 255), 2)
 
-            # Alt Kısım Kontrol Edilmedi Bölgesi
             kirmizi_x_baslangic_y = int(raf_yuksekligi * 6)
             if kirmizi_x_baslangic_y < img_h:
                 overlay = result_img.copy()
@@ -387,7 +382,6 @@ if secilen_sehir_adi and secilen_bayi_adi and ref_img is not None and 'curr_file
                     cv2.putText(result_img, "X - KONTROL EDILMEDI", (center_x - 150, y_pos), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
                     cv2.line(result_img, (center_x - 180, y_pos - 20), (center_x - 160, y_pos + 10), (0, 0, 255), 3)
 
-            # Üst Bilgi Bantları
             cv2.rectangle(result_img, (0, 0), (img_w, 100), (0, 0, 0), -1)
             cv2.putText(result_img, f"Bayi: {secilen_bayi_adi}", (15, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
             cv2.putText(result_img, f"Gerçek Eksik: {eksik_sayisi} | Slot Tabanlı Analiz", (15, 70), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 255, 0), 2)

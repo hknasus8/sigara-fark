@@ -1,427 +1,2223 @@
-import streamlit as st
+# -*- coding: utf-8 -*-
+"""
+SIGARA STANDI PLANOGRAM DENETİM SİSTEMİ
+Robust Streamlit sürümü
+
+Kurulum:
+    pip install streamlit opencv-python-headless numpy requests pillow
+
+Streamlit Cloud Secrets:
+    app_password = "SIFRENIZ"
+
+Yandex klasör yapısı için mevcut public key korunmuştur.
+"""
+
+import hashlib
+import re
+import urllib.parse
+
 import cv2
 import numpy as np
-import os
 import requests
-import urllib.parse
-import pytesseract
+import streamlit as st
 
-# Tesseract yolunu sistem yapılandırmasına göre ayarlıyoruz
-# (Streamlit Cloud üzerinde genellikle doğrudan 'tesseract' olarak bulunur)
-# pytesseract.pytesseract.tesseract_cmd = r'/usr/bin/tesseract' 
 
+# =========================================================
+# SAYFA
+# =========================================================
 st.set_page_config(
-    page_title="Sigara Standı Akıllı Denetim Sistemi",
-    page_icon="🚬",
+    page_title="Sigara Standı Planogram Denetim Sistemi",
+    page_icon="📊",
     layout="wide",
-    initial_sidebar_state="expanded"
+    initial_sidebar_state="expanded",
 )
 
-st.components.v1.html(
+st.markdown(
     """
-    <script>
-        const doc = window.parent.document;
-        doc.documentElement.lang = 'tr';
-        doc.documentElement.setAttribute('translate', 'no');
-    </script>
-    """,
-    height=0,
-    width=0
+<style>
+#MainMenu {visibility:hidden;}
+footer {visibility:hidden;}
+header {visibility:hidden;}
+.block-container {padding-top:1rem;padding-bottom:2rem;}
+</style>
+""",
+    unsafe_allow_html=True,
 )
 
-hide_st_style = """
-    <style>
-    #MainMenu {visibility: hidden;}
-    header {visibility: hidden;}
-    footer {visibility: hidden;}
-    .stAppToolbar {visibility: hidden; display: none !important;}
-    [data-testid="stHeader"] {visibility: hidden; display: none !important;}
-    [data-testid="stToolbar"] {visibility: hidden; display: none !important;}
-    </style>
-"""
-st.markdown(hide_st_style, unsafe_allow_html=True)
 
-def resmi_boyutlandir(img, max_genislik=1000):
+# =========================================================
+# SABİTLER
+# =========================================================
+YANDEX_ROOT_PUBLIC_KEY = "https://disk.yandex.com.tr/d/ikCHPwREiCVv_g"
+
+DEFAULT_ROWS = 7
+DEFAULT_COLS = 11
+
+# Fark karar eşikleri.
+DIFF_SCORE_THRESHOLD = 0.36
+SUSPICIOUS_SCORE_THRESHOLD = 0.27
+EMPTY_THRESHOLD = 0.62
+
+BRANDS = [
+    "CAMEL",
+    "WINSTON",
+    "LD",
+    "MONTE CARLO",
+    "PARLIAMENT",
+    "MARLBORO",
+    "MURATTI",
+    "LARK",
+    "CHESTERFIELD",
+    "KENT",
+    "ROTHMANS",
+    "DAVIDOFF",
+]
+
+
+# =========================================================
+# GÜVENLİ YARDIMCILAR
+# =========================================================
+def safe_float(value, default=0.0):
+    try:
+        value = float(value)
+        if not np.isfinite(value):
+            return default
+        return value
+    except Exception:
+        return default
+
+
+def clamp01(value):
+    return max(0.0, min(1.0, safe_float(value)))
+
+
+def normalize_text(value):
+    value = str(value or "").upper().strip()
+    value = (
+        value.replace("İ", "I")
+        .replace("Ş", "S")
+        .replace("Ğ", "G")
+        .replace("Ü", "U")
+        .replace("Ö", "O")
+        .replace("Ç", "C")
+    )
+    return re.sub(r"\s+", " ", value)
+
+
+def make_result(**kwargs):
+    """
+    Analiz sonucundaki bütün alanları garanti eder.
+    Böylece item['renk'], item['ssim'] vb. KeyError oluşturmaz.
+    """
+    item = {
+        "raf": 0,
+        "slot": 0,
+        "score": 0.0,
+        "ssim": 0.0,
+        "renk": 0.0,
+        "kenar": 0.0,
+        "orb": 0.0,
+        "pixel": 0.0,
+        "bosluk": 0.0,
+        "durum": "ŞÜPHELİ",
+        "different": False,
+        "x1": 0,
+        "y1": 0,
+        "x2": 0,
+        "y2": 0,
+    }
+    item.update(kwargs)
+
+    for key in (
+        "score",
+        "ssim",
+        "renk",
+        "kenar",
+        "orb",
+        "pixel",
+        "bosluk",
+    ):
+        item[key] = clamp01(item.get(key, 0.0))
+
+    return item
+
+
+# =========================================================
+# GÖRSEL OKUMA
+# =========================================================
+def decode_uploaded(uploaded_file):
+    if uploaded_file is None:
+        return None
+
+    try:
+        data = np.frombuffer(
+            uploaded_file.getvalue(),
+            dtype=np.uint8,
+        )
+        return cv2.imdecode(data, cv2.IMREAD_COLOR)
+    except Exception:
+        return None
+
+
+def resize_keep_ratio(
+    img,
+    max_width=1200,
+    max_height=1800,
+):
     if img is None:
         return None
-    h, w = img.shape[:2]
-    if w > max_genislik:
-        oran = max_genislik / float(w)
-        yeni_yukseklik = int(h * oran)
-        return cv2.resize(img, (max_genislik, yeni_yukseklik), interpolation=cv2.INTER_AREA)
-    return img
 
+    h, w = img.shape[:2]
+
+    if h <= 0 or w <= 0:
+        return None
+
+    scale = min(
+        max_width / float(w),
+        max_height / float(h),
+        1.0,
+    )
+
+    if scale >= 0.999:
+        return img.copy()
+
+    new_w = max(1, int(round(w * scale)))
+    new_h = max(1, int(round(h * scale)))
+
+    return cv2.resize(
+        img,
+        (new_w, new_h),
+        interpolation=cv2.INTER_AREA,
+    )
+
+
+def prepare_image(img):
+    return resize_keep_ratio(
+        img,
+        max_width=1200,
+        max_height=1800,
+    )
+
+
+def safe_download_image(url, timeout=25):
+    try:
+        if not url:
+            return None
+
+        response = requests.get(
+            url,
+            headers={"User-Agent": "Mozilla/5.0"},
+            timeout=timeout,
+        )
+
+        if response.status_code != 200:
+            return None
+
+        data = np.frombuffer(
+            response.content,
+            dtype=np.uint8,
+        )
+
+        return cv2.imdecode(
+            data,
+            cv2.IMREAD_COLOR,
+        )
+
+    except Exception:
+        return None
+
+
+# =========================================================
+# YANDEX
+# =========================================================
+@st.cache_data(ttl=600, show_spinner=False)
+def yandex_root_items(public_key):
+    try:
+        url = (
+            "https://cloud-api.yandex.net/v1/disk/public/resources"
+            f"?public_key={urllib.parse.quote(public_key, safe='')}"
+            "&limit=500"
+        )
+
+        response = requests.get(
+            url,
+            headers={"User-Agent": "Mozilla/5.0"},
+            timeout=20,
+        )
+
+        if response.status_code != 200:
+            return [], f"Yandex HTTP {response.status_code}"
+
+        return (
+            response.json()
+            .get("_embedded", {})
+            .get("items", []),
+            None,
+        )
+
+    except Exception as exc:
+        return [], str(exc)
+
+
+@st.cache_data(ttl=600, show_spinner=False)
+def yandex_list_dir(public_key, path):
+    try:
+        url = (
+            "https://cloud-api.yandex.net/v1/disk/public/resources"
+            f"?public_key={urllib.parse.quote(public_key, safe='')}"
+            f"&path={urllib.parse.quote(path, safe='/')}"
+            "&limit=500"
+        )
+
+        response = requests.get(
+            url,
+            headers={"User-Agent": "Mozilla/5.0"},
+            timeout=20,
+        )
+
+        if response.status_code != 200:
+            return [], f"Yandex HTTP {response.status_code}"
+
+        return (
+            response.json()
+            .get("_embedded", {})
+            .get("items", []),
+            None,
+        )
+
+    except Exception as exc:
+        return [], str(exc)
+
+
+@st.cache_data(ttl=600, show_spinner=False)
+def get_cities(public_key):
+    items, error = yandex_root_items(public_key)
+
+    if error:
+        return [], error
+
+    cities = []
+
+    for item in items:
+        if item.get("type") != "dir":
+            continue
+
+        name = item.get("name", "")
+
+        if normalize_text(name) == "BAYI":
+            sub_items, _ = yandex_list_dir(
+                public_key,
+                item.get("path", ""),
+            )
+
+            for sub in sub_items:
+                if sub.get("type") == "dir":
+                    cities.append(
+                        sub.get("name", "")
+                    )
+        else:
+            cities.append(name)
+
+    cities = sorted(
+        {x for x in cities if x},
+        key=normalize_text,
+    )
+
+    return cities, None
+
+
+@st.cache_data(ttl=600, show_spinner=False)
+def get_dealers(public_key, city):
+    root_items, error = yandex_root_items(public_key)
+
+    if error:
+        return [], error
+
+    city_item = None
+
+    for item in root_items:
+        if (
+            item.get("type") == "dir"
+            and normalize_text(item.get("name"))
+            == normalize_text(city)
+        ):
+            city_item = item
+            break
+
+    if city_item is None:
+        for item in root_items:
+            if item.get("type") != "dir":
+                continue
+
+            if normalize_text(item.get("name")) != "BAYI":
+                continue
+
+            sub_items, _ = yandex_list_dir(
+                public_key,
+                item.get("path", ""),
+            )
+
+            for sub in sub_items:
+                if (
+                    sub.get("type") == "dir"
+                    and normalize_text(sub.get("name"))
+                    == normalize_text(city)
+                ):
+                    city_item = sub
+                    break
+
+            if city_item is not None:
+                break
+
+    if city_item is None:
+        return [], f"'{city}' klasörü bulunamadı."
+
+    items, error = yandex_list_dir(
+        public_key,
+        city_item.get("path", ""),
+    )
+
+    if error:
+        return [], error
+
+    dealers = []
+
+    for item in items:
+        if (
+            item.get("type") == "dir"
+            and item.get("name")
+            and item.get("path")
+        ):
+            dealers.append(
+                {
+                    "name": item["name"],
+                    "path": item["path"],
+                }
+            )
+
+    dealers.sort(
+        key=lambda x: normalize_text(x["name"])
+    )
+
+    return dealers, None
+
+
+@st.cache_data(ttl=600, show_spinner=False)
+def get_reference_image(public_key, dealer_path):
+    items, error = yandex_list_dir(
+        public_key,
+        dealer_path,
+    )
+
+    if error:
+        return None, error
+
+    image_items = []
+
+    for item in items:
+        if item.get("type") != "file":
+            continue
+
+        name = normalize_text(
+            item.get("name", "")
+        )
+
+        if name.endswith(
+            (".JPG", ".JPEG", ".PNG", ".WEBP")
+        ):
+            image_items.append(item)
+
+    image_items.sort(
+        key=lambda x: (
+            0
+            if "ORJ" in normalize_text(x.get("name"))
+            else (
+                0
+                if "PLANOGRAM"
+                in normalize_text(x.get("name"))
+                else 1
+            ),
+            normalize_text(x.get("name")),
+        )
+    )
+
+    for item in image_items:
+        img = safe_download_image(
+            item.get("file")
+        )
+
+        if img is not None:
+            return prepare_image(img), None
+
+    return (
+        None,
+        "Bayi klasöründe okunabilir JPG/PNG görsel bulunamadı.",
+    )
+
+
+# =========================================================
+# HİZALAMA
+# =========================================================
+def gray_normalize(img):
+    gray = cv2.cvtColor(
+        img,
+        cv2.COLOR_BGR2GRAY,
+    )
+
+    clahe = cv2.createCLAHE(
+        clipLimit=2.0,
+        tileGridSize=(8, 8),
+    )
+
+    return clahe.apply(gray)
+
+
+def orb_align(reference, target):
+    """
+    ORB + RANSAC.
+    Saha fotoğrafındaki perspektif ve konum farkını azaltır.
+    """
+    if reference is None or target is None:
+        return target, False, 0
+
+    h, w = reference.shape[:2]
+
+    target = cv2.resize(
+        target,
+        (w, h),
+        interpolation=cv2.INTER_AREA,
+    )
+
+    ref_gray = gray_normalize(reference)
+    tar_gray = gray_normalize(target)
+
+    orb = cv2.ORB_create(
+        nfeatures=7000,
+        scaleFactor=1.2,
+        nlevels=8,
+        edgeThreshold=15,
+        fastThreshold=8,
+    )
+
+    kp1, des1 = orb.detectAndCompute(
+        ref_gray,
+        None,
+    )
+    kp2, des2 = orb.detectAndCompute(
+        tar_gray,
+        None,
+    )
+
+    if des1 is None or des2 is None:
+        return target, False, 0
+
+    if len(kp1) < 15 or len(kp2) < 15:
+        return target, False, 0
+
+    matcher = cv2.BFMatcher(
+        cv2.NORM_HAMMING
+    )
+
+    pairs = matcher.knnMatch(
+        des2,
+        des1,
+        k=2,
+    )
+
+    good = []
+
+    for pair in pairs:
+        if len(pair) != 2:
+            continue
+
+        m, n = pair
+
+        if m.distance < 0.76 * n.distance:
+            good.append(m)
+
+    if len(good) < 15:
+        return target, False, len(good)
+
+    src = np.float32(
+        [kp2[m.queryIdx].pt for m in good]
+    ).reshape(-1, 1, 2)
+
+    dst = np.float32(
+        [kp1[m.trainIdx].pt for m in good]
+    ).reshape(-1, 1, 2)
+
+    matrix, mask = cv2.findHomography(
+        src,
+        dst,
+        cv2.RANSAC,
+        5.0,
+    )
+
+    if matrix is None or mask is None:
+        return target, False, 0
+
+    inliers = int(mask.sum())
+    ratio = inliers / max(1, len(good))
+
+    if inliers < 12 or ratio < 0.22:
+        return target, False, inliers
+
+    corners = np.float32(
+        [
+            [0, 0],
+            [w, 0],
+            [w, h],
+            [0, h],
+        ]
+    ).reshape(-1, 1, 2)
+
+    warped_corners = cv2.perspectiveTransform(
+        corners,
+        matrix,
+    ).reshape(-1, 2)
+
+    if not np.all(
+        np.isfinite(warped_corners)
+    ):
+        return target, False, inliers
+
+    area = cv2.contourArea(
+        warped_corners.astype(np.float32)
+    )
+
+    if (
+        area < w * h * 0.35
+        or area > w * h * 2.8
+    ):
+        return target, False, inliers
+
+    aligned = cv2.warpPerspective(
+        target,
+        matrix,
+        (w, h),
+        flags=cv2.INTER_LINEAR,
+        borderMode=cv2.BORDER_REPLICATE,
+    )
+
+    return aligned, True, inliers
+
+
+def ecc_align(reference, target):
+    """
+    ORB başarısız olduğunda affine ECC hizalama.
+    """
+    h, w = reference.shape[:2]
+
+    target = cv2.resize(
+        target,
+        (w, h),
+        interpolation=cv2.INTER_AREA,
+    )
+
+    ref_gray = (
+        cv2.cvtColor(
+            reference,
+            cv2.COLOR_BGR2GRAY,
+        ).astype(np.float32)
+        / 255.0
+    )
+
+    tar_gray = (
+        cv2.cvtColor(
+            target,
+            cv2.COLOR_BGR2GRAY,
+        ).astype(np.float32)
+        / 255.0
+    )
+
+    warp = np.eye(
+        2,
+        3,
+        dtype=np.float32,
+    )
+
+    criteria = (
+        cv2.TERM_CRITERIA_EPS
+        | cv2.TERM_CRITERIA_COUNT,
+        80,
+        1e-5,
+    )
+
+    try:
+        cv2.findTransformECC(
+            ref_gray,
+            tar_gray,
+            warp,
+            cv2.MOTION_AFFINE,
+            criteria,
+            None,
+            3,
+        )
+
+        aligned = cv2.warpAffine(
+            target,
+            warp,
+            (w, h),
+            flags=(
+                cv2.INTER_LINEAR
+                + cv2.WARP_INVERSE_MAP
+            ),
+            borderMode=cv2.BORDER_REPLICATE,
+        )
+
+        return aligned, True
+
+    except Exception:
+        return target, False
+
+
+def align_images(reference, target):
+    aligned, ok, inliers = orb_align(
+        reference,
+        target,
+    )
+
+    if ok:
+        return (
+            aligned,
+            True,
+            inliers,
+            "ORB/RANSAC",
+        )
+
+    aligned, ok = ecc_align(
+        reference,
+        target,
+    )
+
+    if ok:
+        return (
+            aligned,
+            True,
+            0,
+            "ECC",
+        )
+
+    return (
+        target,
+        False,
+        0,
+        "Ölçek eşitleme",
+    )
+
+
+# =========================================================
+# 7 x 11 SLOT GEOMETRİSİ
+# =========================================================
+def grid_boxes(
+    h,
+    w,
+    rows=DEFAULT_ROWS,
+    cols=DEFAULT_COLS,
+):
+    boxes = []
+
+    for row in range(rows):
+        y1 = int(
+            round(row * h / rows)
+        )
+        y2 = int(
+            round((row + 1) * h / rows)
+        )
+
+        for col in range(cols):
+            x1 = int(
+                round(col * w / cols)
+            )
+            x2 = int(
+                round((col + 1) * w / cols)
+            )
+
+            boxes.append(
+                (
+                    row + 1,
+                    col + 1,
+                    x1,
+                    y1,
+                    x2,
+                    y2,
+                )
+            )
+
+    return boxes
+
+
+def crop_slot(
+    img,
+    box,
+    x_pad=0.04,
+    y_pad=0.10,
+):
+    _, _, x1, y1, x2, y2 = box
+
+    width = x2 - x1
+    height = y2 - y1
+
+    px = max(
+        2,
+        int(width * x_pad),
+    )
+    py = max(
+        2,
+        int(height * y_pad),
+    )
+
+    a = img[
+        y1 + py:y2 - py,
+        x1 + px:x2 - px,
+    ]
+
+    return a
+
+
+# =========================================================
+# SLOT METRİKLERİ
+# =========================================================
+def resize_gray(
+    slot,
+    size=(180, 150),
+):
+    if (
+        slot is None
+        or slot.size == 0
+    ):
+        return None
+
+    gray = cv2.cvtColor(
+        slot,
+        cv2.COLOR_BGR2GRAY,
+    )
+
+    gray = cv2.resize(
+        gray,
+        size,
+        interpolation=cv2.INTER_AREA,
+    )
+
+    return cv2.GaussianBlur(
+        gray,
+        (3, 3),
+        0,
+    )
+
+
+def structural_similarity(a, b):
+    a = resize_gray(a)
+    b = resize_gray(b)
+
+    if a is None or b is None:
+        return 0.0
+
+    af = a.astype(np.float32)
+    bf = b.astype(np.float32)
+
+    mu_a = cv2.GaussianBlur(
+        af,
+        (11, 11),
+        1.5,
+    )
+    mu_b = cv2.GaussianBlur(
+        bf,
+        (11, 11),
+        1.5,
+    )
+
+    sigma_a = (
+        cv2.GaussianBlur(
+            af * af,
+            (11, 11),
+            1.5,
+        )
+        - mu_a * mu_a
+    )
+
+    sigma_b = (
+        cv2.GaussianBlur(
+            bf * bf,
+            (11, 11),
+            1.5,
+        )
+        - mu_b * mu_b
+    )
+
+    sigma_ab = (
+        cv2.GaussianBlur(
+            af * bf,
+            (11, 11),
+            1.5,
+        )
+        - mu_a * mu_b
+    )
+
+    c1 = 6.5025
+    c2 = 58.5225
+
+    numerator = (
+        (2 * mu_a * mu_b + c1)
+        * (2 * sigma_ab + c2)
+    )
+
+    denominator = (
+        (mu_a * mu_a + mu_b * mu_b + c1)
+        * (sigma_a + sigma_b + c2)
+    )
+
+    score = np.mean(
+        numerator
+        / (denominator + 1e-8)
+    )
+
+    return clamp01(
+        (score + 1.0) / 2.0
+    )
+
+
+def color_similarity(a, b):
+    if (
+        a is None
+        or b is None
+        or a.size == 0
+        or b.size == 0
+    ):
+        return 0.0
+
+    a = cv2.resize(
+        a,
+        (64, 64),
+        interpolation=cv2.INTER_AREA,
+    )
+    b = cv2.resize(
+        b,
+        (64, 64),
+        interpolation=cv2.INTER_AREA,
+    )
+
+    hsv_a = cv2.cvtColor(
+        a,
+        cv2.COLOR_BGR2HSV,
+    )
+    hsv_b = cv2.cvtColor(
+        b,
+        cv2.COLOR_BGR2HSV,
+    )
+
+    hist_a = cv2.calcHist(
+        [hsv_a],
+        [0, 1],
+        None,
+        [24, 16],
+        [0, 180, 0, 256],
+    )
+
+    hist_b = cv2.calcHist(
+        [hsv_b],
+        [0, 1],
+        None,
+        [24, 16],
+        [0, 180, 0, 256],
+    )
+
+    cv2.normalize(
+        hist_a,
+        hist_a,
+    )
+    cv2.normalize(
+        hist_b,
+        hist_b,
+    )
+
+    corr = cv2.compareHist(
+        hist_a,
+        hist_b,
+        cv2.HISTCMP_CORREL,
+    )
+
+    return clamp01(
+        (corr + 1.0) / 2.0
+    )
+
+
+def edge_similarity(a, b):
+    ga = resize_gray(a)
+    gb = resize_gray(b)
+
+    if ga is None or gb is None:
+        return 0.0
+
+    ea = cv2.Canny(
+        ga,
+        50,
+        140,
+    )
+    eb = cv2.Canny(
+        gb,
+        50,
+        140,
+    )
+
+    intersection = np.logical_and(
+        ea > 0,
+        eb > 0,
+    ).sum()
+
+    union = np.logical_or(
+        ea > 0,
+        eb > 0,
+    ).sum()
+
+    if union == 0:
+        return 1.0
+
+    return clamp01(
+        intersection / union
+    )
+
+
+def orb_similarity(a, b):
+    if (
+        a is None
+        or b is None
+        or a.size == 0
+        or b.size == 0
+    ):
+        return 0.0
+
+    ga = resize_gray(
+        a,
+        (220, 180),
+    )
+    gb = resize_gray(
+        b,
+        (220, 180),
+    )
+
+    orb = cv2.ORB_create(
+        nfeatures=600,
+        fastThreshold=10,
+    )
+
+    k1, d1 = orb.detectAndCompute(
+        ga,
+        None,
+    )
+    k2, d2 = orb.detectAndCompute(
+        gb,
+        None,
+    )
+
+    if (
+        d1 is None
+        or d2 is None
+        or len(k1) < 4
+        or len(k2) < 4
+    ):
+        return 0.0
+
+    matcher = cv2.BFMatcher(
+        cv2.NORM_HAMMING
+    )
+
+    pairs = matcher.knnMatch(
+        d1,
+        d2,
+        k=2,
+    )
+
+    good = 0
+    total = 0
+
+    for pair in pairs:
+        if len(pair) != 2:
+            continue
+
+        total += 1
+
+        m, n = pair
+
+        if m.distance < 0.78 * n.distance:
+            good += 1
+
+    return clamp01(
+        good
+        / max(
+            8.0,
+            min(
+                len(k1),
+                len(k2),
+            )
+            * 0.30,
+        )
+    )
+
+
+def occupancy(slot):
+    """
+    Slot içindeki ürün/boşluk yapısını yaklaşık ölçer.
+    Gerçek stok adedi değildir.
+    """
+    if (
+        slot is None
+        or slot.size == 0
+    ):
+        return 0.0
+
+    gray = cv2.cvtColor(
+        slot,
+        cv2.COLOR_BGR2GRAY,
+    )
+
+    gray = cv2.resize(
+        gray,
+        (120, 160),
+        interpolation=cv2.INTER_AREA,
+    )
+
+    edges = cv2.Canny(
+        gray,
+        45,
+        130,
+    )
+
+    edge_density = float(
+        np.mean(edges > 0)
+    )
+
+    mean_value = (
+        float(np.mean(gray))
+        / 255.0
+    )
+
+    dark = 1.0 - mean_value
+
+    return clamp01(
+        0.55 * edge_density / 0.22
+        + 0.45 * dark
+    )
+
+
+def compare_slot(
+    ref_slot,
+    current_slot,
+):
+    if (
+        ref_slot is None
+        or current_slot is None
+        or ref_slot.size == 0
+        or current_slot.size == 0
+    ):
+        return make_result(
+            score=1.0,
+            durum="ŞÜPHELİ",
+            different=True,
+        )
+
+    ssim = structural_similarity(
+        ref_slot,
+        current_slot,
+    )
+
+    renk = color_similarity(
+        ref_slot,
+        current_slot,
+    )
+
+    kenar = edge_similarity(
+        ref_slot,
+        current_slot,
+    )
+
+    orb = orb_similarity(
+        ref_slot,
+        current_slot,
+    )
+
+    # Normalize edilmiş ham piksel farkı.
+    a = cv2.resize(
+        ref_slot,
+        (160, 180),
+        interpolation=cv2.INTER_AREA,
+    )
+    b = cv2.resize(
+        current_slot,
+        (160, 180),
+        interpolation=cv2.INTER_AREA,
+    )
+
+    ga = cv2.cvtColor(
+        a,
+        cv2.COLOR_BGR2GRAY,
+    )
+    gb = cv2.cvtColor(
+        b,
+        cv2.COLOR_BGR2GRAY,
+    )
+
+    ga = cv2.normalize(
+        ga,
+        None,
+        0,
+        255,
+        cv2.NORM_MINMAX,
+    )
+    gb = cv2.normalize(
+        gb,
+        None,
+        0,
+        255,
+        cv2.NORM_MINMAX,
+    )
+
+    pixel_diff = clamp01(
+        float(
+            np.mean(
+                cv2.absdiff(
+                    ga,
+                    gb,
+                )
+            )
+        )
+        / 70.0
+    )
+
+    structural_diff = 1.0 - ssim
+    color_diff = 1.0 - renk
+    edge_diff = 1.0 - kenar
+    orb_diff = 1.0 - orb
+
+    occ_a = occupancy(ref_slot)
+    occ_b = occupancy(current_slot)
+
+    empty_diff = clamp01(
+        abs(occ_a - occ_b) / 0.45
+    )
+
+    # Birleşik fark skoru.
+    score = (
+        structural_diff * 0.34
+        + color_diff * 0.18
+        + edge_diff * 0.20
+        + orb_diff * 0.10
+        + pixel_diff * 0.10
+        + empty_diff * 0.08
+    )
+
+    score = clamp01(score)
+
+    strong_change = (
+        structural_diff > 0.43
+        or color_diff > 0.40
+        or edge_diff > 0.48
+    )
+
+    if (
+        score >= DIFF_SCORE_THRESHOLD
+        and strong_change
+    ):
+        status = "FARK"
+        different = True
+
+    elif (
+        score >= SUSPICIOUS_SCORE_THRESHOLD
+        or empty_diff > EMPTY_THRESHOLD
+    ):
+        status = "ŞÜPHELİ"
+        different = True
+
+    else:
+        status = "UYUMLU"
+        different = False
+
+    return make_result(
+        score=score,
+        ssim=ssim,
+        renk=renk,
+        kenar=kenar,
+        orb=orb,
+        pixel=pixel_diff,
+        bosluk=empty_diff,
+        durum=status,
+        different=different,
+    )
+
+
+# =========================================================
+# ANA PLANOGRAM ANALİZİ
+# =========================================================
+def analyze_planogram(
+    reference,
+    field,
+    rows=DEFAULT_ROWS,
+    cols=DEFAULT_COLS,
+):
+    h, w = reference.shape[:2]
+
+    field = cv2.resize(
+        field,
+        (w, h),
+        interpolation=cv2.INTER_AREA,
+    )
+
+    aligned, aligned_ok, inliers, method = (
+        align_images(
+            reference,
+            field,
+        )
+    )
+
+    results = []
+    result_img = aligned.copy()
+
+    boxes = grid_boxes(
+        h,
+        w,
+        rows,
+        cols,
+    )
+
+    for box in boxes:
+        row, col, x1, y1, x2, y2 = box
+
+        ref_slot = crop_slot(
+            reference,
+            box,
+        )
+
+        current_slot = crop_slot(
+            aligned,
+            box,
+        )
+
+        metrics = compare_slot(
+            ref_slot,
+            current_slot,
+        )
+
+        metrics.update(
+            {
+                "raf": row,
+                "slot": col,
+                "x1": x1,
+                "y1": y1,
+                "x2": x2,
+                "y2": y2,
+            }
+        )
+
+        metrics = make_result(
+            **metrics
+        )
+
+        results.append(metrics)
+
+        if metrics["durum"] == "FARK":
+            color = (0, 0, 255)
+            thickness = 4
+
+        elif metrics["durum"] == "ŞÜPHELİ":
+            color = (0, 165, 255)
+            thickness = 3
+
+        else:
+            color = (0, 180, 0)
+            thickness = 2
+
+        cv2.rectangle(
+            result_img,
+            (x1 + 2, y1 + 2),
+            (x2 - 2, y2 - 2),
+            color,
+            thickness,
+        )
+
+        label = (
+            f"R{row}/S{col} "
+            f"%{metrics['score'] * 100:.0f}"
+        )
+
+        cv2.putText(
+            result_img,
+            label,
+            (x1 + 6, y1 + 20),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.38,
+            color,
+            1,
+            cv2.LINE_AA,
+        )
+
+    fark = sum(
+        1
+        for x in results
+        if x["durum"] == "FARK"
+    )
+
+    supheli = sum(
+        1
+        for x in results
+        if x["durum"] == "ŞÜPHELİ"
+    )
+
+    uyumlu = sum(
+        1
+        for x in results
+        if x["durum"] == "UYUMLU"
+    )
+
+    header_height = max(
+        72,
+        int(h * 0.055),
+    )
+
+    cv2.rectangle(
+        result_img,
+        (0, 0),
+        (w, header_height),
+        (18, 18, 18),
+        -1,
+    )
+
+    header1 = (
+        f"FARK: {fark} | "
+        f"SUPHELI: {supheli} | "
+        f"UYUMLU: {uyumlu}"
+    )
+
+    header2 = (
+        f"Hizalama: {method} | "
+        f"Inlier: {inliers}"
+    )
+
+    cv2.putText(
+        result_img,
+        header1,
+        (14, 29),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        0.72,
+        (255, 255, 255),
+        2,
+        cv2.LINE_AA,
+    )
+
+    cv2.putText(
+        result_img,
+        header2,
+        (14, 57),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        0.52,
+        (200, 200, 200),
+        1,
+        cv2.LINE_AA,
+    )
+
+    return (
+        result_img,
+        results,
+        {
+            "fark": fark,
+            "supheli": supheli,
+            "uyumlu": uyumlu,
+            "hizalama_ok": aligned_ok,
+            "hizalama": method,
+            "inliers": inliers,
+        },
+    )
+
+
+# =========================================================
+# OCR - YARDIMCI
+# =========================================================
+def ocr_brands(img):
+    try:
+        import pytesseract
+    except Exception:
+        return []
+
+    try:
+        gray = cv2.cvtColor(
+            img,
+            cv2.COLOR_BGR2GRAY,
+        )
+
+        gray = cv2.resize(
+            gray,
+            None,
+            fx=1.5,
+            fy=1.5,
+            interpolation=cv2.INTER_CUBIC,
+        )
+
+        clahe = cv2.createCLAHE(
+            clipLimit=2.5,
+            tileGridSize=(8, 8),
+        )
+
+        gray = clahe.apply(gray)
+
+        _, binary = cv2.threshold(
+            gray,
+            0,
+            255,
+            cv2.THRESH_BINARY
+            + cv2.THRESH_OTSU,
+        )
+
+        text = pytesseract.image_to_string(
+            binary,
+            config="--oem 3 --psm 11",
+        ).upper()
+
+        found = []
+
+        for brand in BRANDS:
+            if (
+                brand in text
+                and brand not in found
+            ):
+                found.append(brand)
+
+        return found
+
+    except Exception:
+        return []
+
+
+# =========================================================
+# RAPOR
+# =========================================================
+def build_report(
+    dealer,
+    results,
+    summary,
+    capacity,
+):
+    from datetime import datetime
+
+    lines = [
+        "=== SİGARA STANDI PLANOGRAM DENETİM RAPORU ===",
+        f"Bayi: {dealer}",
+        (
+            "Tarih: "
+            + datetime.now().strftime(
+                "%d.%m.%Y %H:%M:%S"
+            )
+        ),
+        "",
+        f"Toplam slot: {len(results)}",
+        f"FARK: {summary['fark']}",
+        f"ŞÜPHELİ: {summary['supheli']}",
+        f"UYUMLU: {summary['uyumlu']}",
+        f"Tanımlı kapasite: {capacity}",
+        (
+            f"Hizalama: {summary['hizalama']} "
+            f"/ inlier={summary['inliers']}"
+        ),
+        "",
+        "--- SLOT DETAYI ---",
+    ]
+
+    for item in results:
+        # .get + safe_float kullanıldığı için eski sonuç
+        # kayıtları da rapor ekranını bozmaz.
+        lines.append(
+            f"R{item.get('raf', 0)}/"
+            f"S{item.get('slot', 0)} | "
+            f"Durum={item.get('durum', 'ŞÜPHELİ')} | "
+            f"Skor=%{safe_float(item.get('score')) * 100:.1f} | "
+            f"Yapı=%{safe_float(item.get('ssim')) * 100:.1f} | "
+            f"Renk=%{safe_float(item.get('renk')) * 100:.1f} | "
+            f"Kenar=%{safe_float(item.get('kenar')) * 100:.1f} | "
+            f"ORB=%{safe_float(item.get('orb')) * 100:.1f}"
+        )
+
+    return "\n".join(lines)
+
+
+# =========================================================
+# SESSION STATE
+# =========================================================
+DEFAULT_STATE = {
+    "authenticated": False,
+    "result_img": None,
+    "results": [],
+    "summary": None,
+    "report": "",
+    "analysis_key": "",
+}
+
+for key, value in DEFAULT_STATE.items():
+    if key not in st.session_state:
+        st.session_state[key] = value
+
+
+# =========================================================
+# GİRİŞ
+# =========================================================
 if "app_password" not in st.secrets:
-    st.error("⚠️ Kritik Güvenlik Uyarısı: 'app_password' Streamlit secrets içinde tanımlı değil!")
+    st.error(
+        "Kritik: Streamlit Secrets içine "
+        "app_password eklenmemiş.\n\n"
+        "Örnek:\n"
+        'app_password = "SIFRENIZ"'
+    )
     st.stop()
 
-app_pass = st.secrets["app_password"]
-
-if "authenticated" not in st.session_state:
-    st.session_state.authenticated = False
-
 if not st.session_state.authenticated:
-    logo_yolu = "logo.jpg"
-    if os.path.exists(logo_yolu):
-        st.image(logo_yolu, width=180)
-    else:
-        try:
-            st.image("https://raw.githubusercontent.com/hknasus8/sigara-fark/main/logo.jpg", width=180)
-        except Exception:
-            pass
+    st.title(
+        "🔐 Kurumsal Planogram Denetim Sistemi"
+    )
+    st.caption("Güvenli giriş")
 
-    st.title("🔐 Sigara Standı Akıllı Denetim Sistemi - Giriş")
-    st.markdown("<p style='color: gray; font-size: 14px; margin-top: -15px;'>Developed by Hakan</p>", unsafe_allow_html=True)
-    
-    sifre_input = st.text_input("Şifre", type="password")
-    if st.button("Giriş Yap", type="primary"):
-        if sifre_input == app_pass:
+    password = st.text_input(
+        "Şifre",
+        type="password",
+    )
+
+    if st.button(
+        "Giriş Yap",
+        type="primary",
+        use_container_width=True,
+    ):
+        if password == str(
+            st.secrets["app_password"]
+        ):
             st.session_state.authenticated = True
             st.rerun()
         else:
-            st.error("❌ Hatalı şifre!")
+            st.error("❌ Hatalı şifre.")
+
     st.stop()
 
-st.sidebar.markdown("---")
-st.sidebar.header("Uygulama Ayarları")
-min_area_val = st.sidebar.slider("Minimum Eksik Boyutu (Hassasiyet)", 50, 2000, 150, step=25)
-fark_esigi = st.sidebar.slider("Piksel Fark Eşiği (Yoğunluk)", 20, 100, 40, step=5)
 
-YANDEX_ROOT_PUBLIC_KEY = "https://disk.yandex.com.tr/d/ikCHPwREiCVv_g"
+# =========================================================
+# SIDEBAR
+# =========================================================
+with st.sidebar:
+    st.header("⚙️ Denetim Ayarları")
 
-@st.cache_data(ttl=600, show_spinner=False)
-def yandex_sehirleri_getir(public_key):
-    headers = {"User-Agent": "Mozilla/5.0"}
-    sehirler = []
-    try:
-        root_url = f"https://cloud-api.yandex.net/v1/disk/public/resources?public_key={public_key}&limit=200"
-        resp = requests.get(root_url, headers=headers, timeout=15)
-        if resp.status_code != 200:
-            return [], f"Kök Dizin Okunamadı (HTTP {resp.status_code})"
-
-        root_items = resp.json().get("_embedded", {}).get("items", [])
-        for item in root_items:
-            if item.get("type") == "dir":
-                b_name = item.get("name")
-                if b_name.upper() in ["BAYİ", "BAYI"]:
-                    bayi_path = item.get("path")
-                    sub_url = f"https://cloud-api.yandex.net/v1/disk/public/resources?public_key={public_key}&path={urllib.parse.quote(bayi_path, safe='/')}&limit=200"
-                    sub_resp = requests.get(sub_url, headers=headers, timeout=15)
-                    if sub_resp.status_code == 200:
-                        for sub_item in sub_resp.json().get("_embedded", {}).get("items", []):
-                            if sub_item.get("type") == "dir":
-                                sehirler.append(sub_item.get("name"))
-                else:
-                    sehirler.append(b_name)
-        return sorted(list(set(sehirler))), None
-    except Exception as e:
-        return [], str(e)
-
-@st.cache_data(ttl=600, show_spinner=False)
-def yandex_sehir_bayilerini_getir(public_key, sehir_adi):
-    headers = {"User-Agent": "Mozilla/5.0"}
-    bayiler = []
-    try:
-        root_url = f"https://cloud-api.yandex.net/v1/disk/public/resources?public_key={public_key}&limit=200"
-        resp = requests.get(root_url, headers=headers, timeout=15)
-        if resp.status_code != 200:
-            return [], f"Kök Dizin Okunamadı"
-
-        root_items = resp.json().get("_embedded", {}).get("items", [])
-        sehir_item_found = None
-        
-        for item in root_items:
-            if item.get("type") == "dir" and item.get("name", "").upper() == sehir_adi.upper():
-                sehir_item_found = item
-                break
-        
-        if not sehir_item_found:
-            for item in root_items:
-                if item.get("type") == "dir" and item.get("name", "").upper() in ["BAYİ", "BAYI"]:
-                    bayi_path = item.get("path")
-                    sub_url = f"https://cloud-api.yandex.net/v1/disk/public/resources?public_key={public_key}&path={urllib.parse.quote(bayi_path, safe='/')}&limit=200"
-                    sub_resp = requests.get(sub_url, headers=headers, timeout=15)
-                    if sub_resp.status_code == 200:
-                        for sub_item in sub_resp.json().get("_embedded", {}).get("items", []):
-                            if sub_item.get("type") == "dir" and sub_item.get("name", "").upper() == sehir_adi.upper():
-                                sehir_item_found = sub_item
-                                break
-                    if sehir_item_found:
-                        break
-
-        if not sehir_item_found:
-            return [], f"'{sehir_adi}' klasörü bulunamadı."
-
-        sehir_path = sehir_item_found.get("path")
-        bayi_list_url = f"https://cloud-api.yandex.net/v1/disk/public/resources?public_key={public_key}&path={urllib.parse.quote(sehir_path, safe='/')}&limit=500"
-        bayi_resp = requests.get(bayi_list_url, headers=headers, timeout=15)
-        if bayi_resp.status_code != 200:
-            return [], "Şehir içeriği okunamadı"
-
-        bayi_items = bayi_resp.json().get("_embedded", {}).get("items", [])
-        for b_item in bayi_items:
-            if b_item.get("type") == "dir":
-                b_name = b_item.get("name")
-                b_path = b_item.get("path")
-                if b_name and b_path:
-                    bayiler.append({"name": b_name, "path": b_path})
-
-        return sorted(bayiler, key=lambda x: x["name"]), None
-    except Exception as e:
-        return [], str(e)
-
-@st.cache_data(ttl=600, show_spinner=False)
-def yandex_bayi_gorseli_getir(public_key, bayi_path):
-    headers = {"User-Agent": "Mozilla/5.0"}
-    try:
-        encoded_path = urllib.parse.quote(bayi_path, safe='/')
-        api_url = f"https://cloud-api.yandex.net/v1/disk/public/resources?public_key={public_key}&path={encoded_path}&limit=200"
-        resp = requests.get(api_url, headers=headers, timeout=15)
-        if resp.status_code != 200:
-            return None, "Klasör içeriği okunamadı."
-
-        final_embedded = resp.json().get("_embedded")
-        if not final_embedded:
-            return None, "Seçilen bayi klasörü boş."
-            
-        sub_items = final_embedded.get("items", [])
-        gorsel_download_url = None
-        for sub_item in sub_items:
-            if sub_item.get("type") == "file":
-                file_name = sub_item.get("name", "").lower()
-                if file_name.endswith((".jpg", ".jpeg", ".png")):
-                    gorsel_download_url = sub_item.get("file")
-                    break
-
-        if gorsel_download_url:
-            img_resp = requests.get(gorsel_download_url, headers=headers, timeout=15)
-            if img_resp.status_code == 200:
-                image_bytes = np.asarray(bytearray(img_resp.content), dtype=np.uint8)
-                img = cv2.imdecode(image_bytes, cv2.IMREAD_COLOR)
-                if img is not None:
-                    return resmi_boyutlandir(img), None
-
-        return None, "İçerikte uygun görsel bulunamadı."
-    except Exception as e:
-        return None, f"Hata: {e}"
-
-# Ürün ve Etiket Eşleşmesi için OCR Kontrol Fonksiyonu
-def metin_ve_etiket_kontrolu(img):
-    try:
-        gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-        gray = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY | cv2.THRESH_OTSU)[1]
-        
-        tes_veri = pytesseract.image_to_string(gray, lang='tur', config='--psm 11')
-        okunan_metinler = [line.strip().upper() for line in tes_veri.split('\n') if line.strip()]
-        return okunan_metinler
-    except Exception as e:
-        return []
-
-col_baslik, col_cikis = st.columns([5, 1])
-with col_baslik:
-    st.title("SİGARA STANDI AKILLI DENETİM SİSTEMİ")
-    st.markdown("<p style='color: gray; font-size: 14px; margin-top: -15px;'>Developed by Hakan</p>", unsafe_allow_html=True)
-
-with col_cikis:
-    st.write("") 
-    if st.button("🚪 Çıkış Yap", type="secondary"):
-        st.session_state.authenticated = False
-        st.rerun()
-
-st.markdown("---")
-st.subheader("1. Lokasyon ve Bayi Seçimi")
-
-dinamik_sehirler, sehir_hata = yandex_sehirleri_getir(YANDEX_ROOT_PUBLIC_KEY)
-col_s1, col_s2 = st.columns(2)
-
-with col_s1:
-    secilen_sehir_adi = st.selectbox(
-        "Şehir Seçin", 
-        options=dinamik_sehirler if dinamik_sehirler else ["Şehir Bulunamadı"],
-        index=None,
-        placeholder="Lütfen bir şehir seçin..."
+    rows = st.number_input(
+        "Raf sayısı",
+        min_value=1,
+        max_value=20,
+        value=DEFAULT_ROWS,
+        step=1,
     )
 
-bayiler_listesi = []
-bayi_hata = None
-if secilen_sehir_adi:
-    bayiler_listesi, bayi_hata = yandex_sehir_bayilerini_getir(YANDEX_ROOT_PUBLIC_KEY, secilen_sehir_adi)
+    cols = st.number_input(
+        "Slot / kolon sayısı",
+        min_value=1,
+        max_value=30,
+        value=DEFAULT_COLS,
+        step=1,
+    )
 
-with col_s2:
-    if secilen_sehir_adi:
-        if bayiler_listesi:
-            secilen_bayi_adi = st.selectbox(
-                "Bayi Seçin", 
-                options=[b["name"] for b in bayiler_listesi],
-                index=None,
-                placeholder="Lütfen bir bayi seçin..."
-            )
-        else:
-            secilen_bayi_adi = st.selectbox("Bayi Seçin", ["Bayi Bulunamadı"], index=None)
-    else:
-        secilen_bayi_adi = st.selectbox("Bayi Seçin", ["Önce Şehir Seçmelisiniz"], index=None, disabled=True)
+    capacity = st.number_input(
+        "Toplam ürün/slot kapasitesi",
+        min_value=1,
+        max_value=1000,
+        value=77,
+        step=1,
+    )
 
-secilen_bayi_path = ""
-if secilen_sehir_adi and secilen_bayi_adi and bayiler_listesi and secilen_bayi_adi != "Bayi Bulunamadı":
-    for b in bayiler_listesi:
-        if b["name"] == secilen_bayi_adi:
-            secilen_bayi_path = b["path"]
+    st.caption(
+        "Varsayılan geometri: 7 raf × 11 slot = 77. "
+        "Slot sayısı gerçek SKU/stok adedi değildir."
+    )
+
+    if st.button(
+        "🔄 Önbelleği Temizle",
+        use_container_width=True,
+    ):
+        yandex_root_items.clear()
+        yandex_list_dir.clear()
+        get_cities.clear()
+        get_dealers.clear()
+        get_reference_image.clear()
+
+        st.session_state.result_img = None
+        st.session_state.results = []
+        st.session_state.summary = None
+        st.session_state.report = ""
+
+        st.rerun()
+
+    if st.button(
+        "🚪 Çıkış Yap",
+        use_container_width=True,
+    ):
+        st.session_state.authenticated = False
+        st.session_state.result_img = None
+        st.session_state.results = []
+        st.session_state.summary = None
+        st.rerun()
+
+
+# =========================================================
+# BAŞLIK
+# =========================================================
+st.title(
+    "📊 SİGARA STANDI PLANOGRAM DENETİM SİSTEMİ"
+)
+
+st.caption(
+    "Referans planogram ↔ saha fotoğrafı "
+    "karşılaştırma motoru"
+)
+
+
+# =========================================================
+# LOKASYON / BAYİ
+# =========================================================
+st.subheader(
+    "1. Lokasyon ve Bayi"
+)
+
+cities, city_error = get_cities(
+    YANDEX_ROOT_PUBLIC_KEY
+)
+
+if city_error:
+    st.warning(
+        "Yandex şehir listesi alınamadı: "
+        + str(city_error)
+    )
+
+c1, c2 = st.columns(2)
+
+with c1:
+    city = st.selectbox(
+        "Şehir",
+        options=[""] + cities,
+        format_func=lambda x: (
+            "Şehir seçin..."
+            if x == ""
+            else x
+        ),
+    )
+
+dealers = []
+dealer_error = None
+
+if city:
+    dealers, dealer_error = get_dealers(
+        YANDEX_ROOT_PUBLIC_KEY,
+        city,
+    )
+
+with c2:
+    dealer_name = st.selectbox(
+        "Bayi",
+        options=[""]
+        + [
+            x["name"]
+            for x in dealers
+        ],
+        format_func=lambda x: (
+            "Bayi seçin..."
+            if x == ""
+            else x
+        ),
+    )
+
+dealer_path = ""
+
+if dealer_name:
+    for dealer in dealers:
+        if dealer["name"] == dealer_name:
+            dealer_path = dealer["path"]
             break
 
-if secilen_sehir_adi and secilen_bayi_adi:
-    st.markdown(f"**Seçilen Konum:** `{secilen_sehir_adi} / {secilen_bayi_adi}`")
-else:
-    st.markdown(f"**Seçilen Konum:** *Henüz tam seçim yapılmadı.*")
+if dealer_error:
+    st.warning(
+        "Bayi listesi: "
+        + str(dealer_error)
+    )
 
-if st.button("🔄 Önbelleği Yenile"):
-    yandex_sehirleri_getir.clear()
-    yandex_sehir_bayilerini_getir.clear()
-    yandex_bayi_gorseli_getir.clear()
-    st.toast("Önbellek temizlendi!", icon="🔄")
-    st.rerun()
 
-st.markdown("---")
+# =========================================================
+# GÖRSELLER
+# =========================================================
+st.divider()
+st.subheader("2. Görseller")
 
 ref_img = None
-hata_mesaji = None
-if secilen_bayi_path:
-    with st.spinner(f"'{secilen_bayi_adi}' için Yandex Disk'ten görsel yükleniyor..."):
-        ref_img, hata_mesaji = yandex_bayi_gorseli_getir(YANDEX_ROOT_PUBLIC_KEY, secilen_bayi_path)
 
-col_up1, col_up2 = st.columns(2)
-with col_up1:
-    st.subheader("2. Referans (İdeal) Görsel")
-    if secilen_bayi_path and ref_img is not None:
-        st.success(f"✅ Referans Yüklendi")
-        st.image(ref_img, channels="BGR", use_container_width=True)
-    else:
-        st.info("ℹ️ Şehir ve bayi seçin.")
-
-with col_up2:
-    st.subheader("3. Sahadan Gelen Görsel")
-    if secilen_bayi_path:
-        curr_file = st.file_uploader("Fotoğraf yükleyin", type=["jpg", "jpeg", "png"], key="curr")
-        curr_img = None
-        if curr_file is not None:
-            curr_bytes = np.asarray(bytearray(curr_file.read()), dtype=np.uint8)
-            raw_curr_img = cv2.imdecode(curr_bytes, cv2.IMREAD_COLOR)
-            curr_img = resmi_boyutlandir(raw_curr_img)
-            st.success("✅ Fotoğraf yüklendi")
-            st.image(curr_img, channels="BGR", use_container_width=True)
-    else:
-        st.file_uploader("Fotoğraf yükleyin", type=["jpg", "jpeg", "png"], key="curr_disabled", disabled=True)
-
-st.markdown("---")
-st.subheader("4. Stand Kapasite ve Etiket Eşleşme Ayarı")
-ideal_urun_sayisi = st.number_input("Standda Bulunması Gereken Toplam Ürün (Slot) Sayısı", min_value=1, value=50, step=1)
-beklenen_urun_adi = st.text_input("Kontrol Edilecek Ürün/Etiket Adı (Örn: MARLBORO)", value="")
-st.markdown("---")
-
-if "result_img" not in st.session_state:
-    st.session_state.result_img = None
-if "eksik_sayisi" not in st.session_state:
-    st.session_state.eksik_sayisi = 0
-if "raf_yuzdesi" not in st.session_state:
-    st.session_state.raf_yuzdesi = 100.0
-if "analiz_yapildi" not in st.session_state:
-    st.session_state.analiz_yapildi = False
-
-if secilen_sehir_adi and secilen_bayi_adi and ref_img is not None and 'curr_file' in locals() and curr_file is not None and 'curr_img' in locals() and curr_img is not None:
-    if st.button("Hassas Fark ve Etiket Kontrolünü Başlat", type="primary"):
-        with st.spinner("Gelişmiş hibrit analiz ve metin (OCR) okuması yapılıyor..."):
-            if ref_img.shape[:2] != curr_img.shape[:2]:
-                curr_img = cv2.resize(curr_img, (ref_img.shape[1], ref_img.shape[0]), interpolation=cv2.INTER_AREA)
-
-            gray_ref = cv2.GaussianBlur(cv2.cvtColor(ref_img, cv2.COLOR_BGR2GRAY), (5, 5), 0)
-            gray_curr = cv2.GaussianBlur(cv2.cvtColor(curr_img, cv2.COLOR_BGR2GRAY), (5, 5), 0)
-
-            diff = cv2.absdiff(gray_ref, gray_curr)
-            _, thresh = cv2.threshold(diff, fark_esigi, 255, cv2.THRESH_BINARY)
-            morph = cv2.morphologyEx(thresh, cv2.MORPH_CLOSE, np.ones((5, 15), np.uint8))
-            morph = cv2.morphologyEx(morph, cv2.MORPH_OPEN, np.ones((3, 3), np.uint8))
-
-            contours, _ = cv2.findContours(morph.copy(), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-            boxes = []
-            img_h, img_w = curr_img.shape[:2]
-            
-            for c in contours:
-                if cv2.contourArea(c) > min_area_val:
-                    x, y, w, h = cv2.boundingRect(c)
-                    if (img_w * 0.01 < x < img_w * 0.99) and (img_h * 0.02 < y < img_h * 0.98):
-                        boxes.append([x, y, x + w, y + h])
-
-            def non_max_suppression(boxes, overlapThresh=0.15):
-                if not boxes: return []
-                boxes = np.array(boxes)
-                pick = []
-                x1, y1, x2, y2 = boxes[:,0], boxes[:,1], boxes[:,2], boxes[:,3]
-                area = (x2 - x1 + 1) * (y2 - y1 + 1)
-                idxs = np.argsort(y2)
-                while len(idxs) > 0:
-                    last = len(idxs) - 1
-                    i = idxs[last]
-                    pick.append(i)
-                    xx1 = np.maximum(x1[i], x1[idxs[:last]])
-                    yy1 = np.maximum(y1[i], y1[idxs[:last]])
-                    xx2 = np.minimum(x2[i], x2[idxs[:last]])
-                    yy2 = np.minimum(y2[i], y2[idxs[:last]])
-                    w = np.maximum(0, xx2 - xx1 + 1)
-                    h = np.maximum(0, yy2 - yy1 + 1)
-                    overlap = (w * h) / area[idxs[:last]]
-                    idxs = np.delete(idxs, np.concatenate(([last], np.where(overlap > overlapThresh)[0])))
-                return boxes[pick].astype("int")
-
-            filtered_boxes = non_max_suppression(boxes)
-            result_img = curr_img.copy()
-            eksik_sayisi = len(filtered_boxes)
-            hesaplanan_yuzde = max(0.0, 100.0 - ((eksik_sayisi / max(1, ideal_urun_sayisi)) * 100.0))
-
-            # OCR ile sahada okunan metinleri buluyoruz
-            okunan_metinler = metin_ve_etiket_kontrolu(curr_img)
-            etiket_uyusmazligi = False
-            if beklenen_urun_adi:
-                bulundu = any(beklenen_urun_adi.upper() in m for m in okunan_metinler)
-                if not bulundu:
-                    etiket_uyusmazligi = True
-
-            for idx, (startX, startY, endX, endY) in enumerate(filtered_boxes, 1):
-                cv2.rectangle(result_img, (startX, startY), (endX, endY), (0, 0, 255), 2)
-                cv2.putText(result_img, f"#{idx}", (startX + 3, startY + 18), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 1)
-
-            cv2.rectangle(result_img, (0, 0), (img_w, 100), (0, 0, 0), -1)
-            cv2.putText(result_img, f"Bayi: {secilen_bayi_adi}", (15, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
-            cv2.putText(result_img, f"Eksik: {eksik_sayisi} | Uygunluk: %{hesaplanan_yuzde:.1f}", (15, 70), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 255) if eksik_sayisi > 0 else (0, 255, 0), 2)
-
-            st.session_state.result_img = result_img
-            st.session_state.eksik_sayisi = eksik_sayisi
-            st.session_state.raf_yuzdesi = hesaplanan_yuzde
-            st.session_state.etiket_uyusmazligi = etiket_uyusmazligi
-            st.session_state.analiz_yapildi = True
-
-    if st.session_state.analiz_yapildi and st.session_state.result_img is not None:
-        st.subheader("Tespit Edilen Eksikler ve Etiket Analiz Raporu")
-        col_m1, col_m2 = st.columns(2)
-        col_m1.metric("📊 Raf Doğruluk Oranı", f"%{st.session_state.raf_yuzdesi:.1f}")
-        col_m2.metric("⚠️ Eksik/Boşluk Alan", f"{st.session_state.eksik_sayisi} Adet")
-        
-        if beklenen_urun_adi:
-            if st.session_state.get("etiket_uyusmazligi", False):
-                st.error(f"🚨 **Etiket/Ürün Uyuşmazlık Uyarısı:** Görselde '{beklenen_urun_adi}' adına ait net bir eşleşme/yazı tespit edilemedi veya yanlış ürün yerleştirilmiş olabilir!")
-            else:
-                st.success(f"✅ **Etiket Doğrulaması Başarılı:** '{beklenen_urun_adi}' ifadesi görselde doğrulandı.")
-
-        sonuc_gorsel_genisligi = st.slider("🔍 Sonuç Görseli Boyutunu Ayarla", 300, 2000, 800, step=100)
-        st.image(st.session_state.result_img, channels="BGR", width=sonuc_gorsel_genisligi)
-
-        success, encoded_image = cv2.imencode(".jpg", st.session_state.result_img)
-        if success:
-            st.download_button(
-                label="📥 Sonuç Fotoğrafını İndir",
-                data=encoded_image.tobytes(),
-                file_name=f"{secilen_bayi_adi.replace(' ', '_')}_analiz_sonucu.jpg",
-                mime="image/jpeg"
+if dealer_path:
+    with st.spinner(
+        "Referans planogram yükleniyor..."
+    ):
+        ref_img, ref_error = (
+            get_reference_image(
+                YANDEX_ROOT_PUBLIC_KEY,
+                dealer_path,
             )
-else:
-    st.info("ℹ️ Analiz için şehir, bayi seçin ve sahadan gelen fotoğrafı yükleyin.")
+        )
 
-st.markdown("<br><p style='text-align: center; color: gray;'>Developed by Hakan</p>", unsafe_allow_html=True)
+    if ref_error:
+        st.warning(ref_error)
+
+u1, u2 = st.columns(2)
+
+with u1:
+    st.markdown(
+        "**Dijital Planogram / Referans**"
+    )
+
+    ref_upload = st.file_uploader(
+        "İsterseniz referans fotoğrafını elle yükleyin",
+        type=[
+            "jpg",
+            "jpeg",
+            "png",
+            "webp",
+        ],
+        key="ref_upload",
+    )
+
+    if ref_upload is not None:
+        ref_img = prepare_image(
+            decode_uploaded(
+                ref_upload
+            )
+        )
+
+    if ref_img is not None:
+        st.image(
+            ref_img,
+            channels="BGR",
+            use_container_width=True,
+        )
+    else:
+        st.info(
+            "Şehir + bayi seçin veya "
+            "referans görseli yükleyin."
+        )
+
+with u2:
+    st.markdown(
+        "**Saha Fotoğrafı**"
+    )
+
+    field_upload = st.file_uploader(
+        "Saha fotoğrafını yükleyin",
+        type=[
+            "jpg",
+            "jpeg",
+            "png",
+            "webp",
+        ],
+        key="field_upload",
+    )
+
+    field_img = (
+        prepare_image(
+            decode_uploaded(
+                field_upload
+            )
+        )
+        if field_upload is not None
+        else None
+    )
+
+    if field_img is not None:
+        st.image(
+            field_img,
+            channels="BGR",
+            use_container_width=True,
+        )
+    else:
+        st.info(
+            "Sahadan gelen fotoğrafı yükleyin."
+        )
+
+
+# =========================================================
+# ANALİZ
+# =========================================================
+st.divider()
+
+ready = (
+    ref_img is not None
+    and field_img is not None
+)
+
+if st.button(
+    "🚀 FARKLARI BUL VE PLANOGRAMI DENETLE",
+    type="primary",
+    use_container_width=True,
+    disabled=not ready,
+):
+    # Eski analiz kayıtlarını tamamen temizle.
+    st.session_state.result_img = None
+    st.session_state.results = []
+    st.session_state.summary = None
+    st.session_state.report = ""
+
+    with st.spinner(
+        "Fotoğraflar hizalanıyor ve "
+        f"{int(rows)}×{int(cols)} slot analiz ediliyor..."
+    ):
+        result_img, results, summary = (
+            analyze_planogram(
+                ref_img,
+                field_img,
+                rows=int(rows),
+                cols=int(cols),
+            )
+        )
+
+        report = build_report(
+            dealer_name or "Manuel",
+            results,
+            summary,
+            int(capacity),
+        )
+
+        st.session_state.result_img = result_img
+        st.session_state.results = results
+        st.session_state.summary = summary
+        st.session_state.report = report
+        st.session_state.analysis_key = (
+            hashlib.md5(
+                result_img.tobytes()
+            ).hexdigest()
+        )
+
+
+# =========================================================
+# SONUÇ
+# =========================================================
+if (
+    st.session_state.result_img is not None
+    and st.session_state.summary
+):
+    summary = st.session_state.summary
+    results = st.session_state.results
+
+    total = max(
+        1,
+        len(results),
+    )
+
+    fark = int(
+        summary.get("fark", 0)
+    )
+    supheli = int(
+        summary.get("supheli", 0)
+    )
+    uyumlu = int(
+        summary.get("uyumlu", 0)
+    )
+
+    uyum_orani = (
+        100.0 * uyumlu / total
+    )
+
+    st.subheader(
+        "3. Analiz Sonucu"
+    )
+
+    m1, m2, m3, m4 = st.columns(4)
+
+    m1.metric(
+        "🔴 FARK",
+        fark,
+    )
+
+    m2.metric(
+        "🟠 ŞÜPHELİ",
+        supheli,
+    )
+
+    m3.metric(
+        "🟢 UYUMLU",
+        uyumlu,
+    )
+
+    m4.metric(
+        "📊 Uyum Oranı",
+        f"%{uyum_orani:.1f}",
+    )
+
+    if summary.get(
+        "hizalama_ok"
+    ):
+        st.success(
+            "Fotoğraf hizalaması: "
+            f"{summary.get('hizalama')} "
+            f"(inlier={summary.get('inliers')})"
+        )
+    else:
+        st.warning(
+            "Tam geometrik hizalama "
+            "doğrulanamadı. Analiz ölçek "
+            "eşitleme üzerinden yapıldı."
+        )
+
+    st.image(
+        st.session_state.result_img,
+        channels="BGR",
+        use_container_width=True,
+    )
+
+
+    # =====================================================
+    # SLOT TABLOSU
+    # =====================================================
+    st.subheader(
+        "4. Slot Bazlı Detay"
+    )
+
+    table_data = []
+
+    for item in results:
+        table_data.append(
+            {
+                "Raf": item.get(
+                    "raf",
+                    0,
+                ),
+                "Slot": item.get(
+                    "slot",
+                    0,
+                ),
+                "Durum": item.get(
+                    "durum",
+                    "ŞÜPHELİ",
+                ),
+                "Fark Skoru %": round(
+                    safe_float(
+                        item.get(
+                            "score"
+                        )
+                    )
+                    * 100,
+                    1,
+                ),
+                "Yapı %": round(
+                    safe_float(
+                        item.get(
+                            "ssim"
+                        )
+                    )
+                    * 100,
+                    1,
+                ),
+                "Renk %": round(
+                    safe_float(
+                        item.get(
+                            "renk"
+                        )
+                    )
+                    * 100,
+                    1,
+                ),
+                "Kenar %": round(
+                    safe_float(
+                        item.get(
+                            "kenar"
+                        )
+                    )
+                    * 100,
+                    1,
+                ),
+                "ORB %": round(
+                    safe_float(
+                        item.get(
+                            "orb"
+                        )
+                    )
+                    * 100,
+                    1,
+                ),
+            }
+        )
+
+    st.dataframe(
+        table_data,
+        use_container_width=True,
+        hide_index=True,
+    )
+
+
+    # =====================================================
+    # RAF ÖZETİ
+    # =====================================================
+    st.subheader(
+        "5. Raf Özeti"
+    )
+
+    for row in range(
+        1,
+        int(rows) + 1,
+    ):
+        row_items = [
+            x
+            for x in results
+            if x.get("raf") == row
+        ]
+
+        if not row_items:
+            continue
+
+        row_fark = sum(
+            1
+            for x in row_items
+            if x.get("durum") == "FARK"
+        )
+
+        row_sup = sum(
+            1
+            for x in row_items
+            if x.get("durum")
+            == "ŞÜPHELİ"
+        )
+
+        row_ok = sum(
+            1
+            for x in row_items
+            if x.get("durum")
+            == "UYUMLU"
+        )
+
+        if row_fark:
+            st.error(
+                f"Raf {row}: "
+                f"{row_fark} FARK | "
+                f"{row_sup} ŞÜPHELİ | "
+                f"{row_ok} UYUMLU"
+            )
+
+        elif row_sup:
+            st.warning(
+                f"Raf {row}: "
+                f"{row_fark} FARK | "
+                f"{row_sup} ŞÜPHELİ | "
+                f"{row_ok} UYUMLU"
+            )
+
+        else:
+            st.success(
+                f"Raf {row}: "
+                f"{row_fark} FARK | "
+                f"{row_sup} ŞÜPHELİ | "
+                f"{row_ok} UYUMLU"
+            )
+
+
+    # =====================================================
+    # OCR
+    # =====================================================
+    with st.expander(
+        "🔤 OCR Marka Kontrolü (yardımcı bilgi)"
+    ):
+        ref_brands = ocr_brands(
+            ref_img
+        )
+
+        field_brands = ocr_brands(
+            field_img
+        )
+
+        st.write(
+            "**Referans:**",
+            (
+                ", ".join(ref_brands)
+                if ref_brands
+                else "Okunamadı"
+            ),
+        )
+
+        st.write(
+            "**Saha:**",
+            (
+                ", ".join(field_brands)
+                if field_brands
+                else "Okunamadı"
+            ),
+        )
+
+        missing = [
+            x
+            for x in ref_brands
+            if x not in field_brands
+        ]
+
+        st.write(
+            "**Referansta olup sahada "
+            "OCR ile bulunamayan:**",
+            (
+                ", ".join(missing)
+                if missing
+                else "Yok"
+            ),
+        )
+
+
+    # =====================================================
+    # RAPOR
+    # =====================================================
+    st.subheader(
+        "6. Rapor"
+    )
+
+    st.text_area(
+        "Rapor",
+        st.session_state.report,
+        height=360,
+        key="report_view",
+    )
+
+    st.download_button(
+        "📥 TXT Raporu İndir",
+        data=(
+            st.session_state.report
+            .encode("utf-8")
+        ),
+        file_name=(
+            f"{(dealer_name or 'planogram').replace(' ', '_')}"
+            "_rapor.txt"
+        ),
+        mime="text/plain",
+        use_container_width=True,
+    )
+
+    ok, encoded = cv2.imencode(
+        ".jpg",
+        st.session_state.result_img,
+    )
+
+    if ok:
+        st.download_button(
+            "📥 İşaretli Denetim Görselini İndir",
+            data=encoded.tobytes(),
+            file_name=(
+                f"{(dealer_name or 'planogram').replace(' ', '_')}"
+                "_denetim.jpg"
+            ),
+            mime="image/jpeg",
+            use_container_width=True,
+        )
+
+else:
+    st.info(
+        "Analiz için referans planogram ve "
+        "saha fotoğrafını yükleyin. Ardından "
+        "'FARKLARI BUL VE PLANOGRAMI DENETLE' "
+        "düğmesine basın."
+    )
+
+
+st.markdown(
+    """
+<br>
+<div style="text-align:center;color:#777;">
+Developed by Hakan
+</div>
+""",
+    unsafe_allow_html=True,
+)

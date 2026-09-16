@@ -1,14 +1,13 @@
 import streamlit as st
 import cv2
 import numpy as np
-import os
 import requests
 import urllib.parse
 import easyocr
 from difflib import SequenceMatcher
 
 st.set_page_config(
-    page_title="Sigara Standı Akıllı Denetim Sistemi",
+    page_title="Sigara Standı Planogram ve Denetim Sistemi",
     page_icon="🚬",
     layout="wide",
     initial_sidebar_state="expanded"
@@ -30,7 +29,7 @@ st.markdown(hide_st_style, unsafe_allow_html=True)
 def ocr_okuyucu_yukle():
     return easyocr.Reader(['tr', 'en'], gpu=False)
 
-with st.spinner("AI Metin Okuma (OCR) motoru hazırlanıyor..."):
+with st.spinner("AI Planogram ve OCR motoru hazırlanıyor..."):
     reader = ocr_okuyucu_yukle()
 
 def resmi_boyutlandir(img, max_genislik=1000):
@@ -66,7 +65,7 @@ if "authenticated" not in st.session_state:
     st.session_state.authenticated = False
 
 if not st.session_state.authenticated:
-    st.title("🔐 Sigara Standı Akıllı Denetim Sistemi - Giriş")
+    st.title("🔐 Planogram & Raf Denetim Sistemi - Giriş")
     st.markdown("<p style='color: gray; font-size: 14px; margin-top: -15px;'>Developed by Hakan</p>", unsafe_allow_html=True)
 
     sifre_input = st.text_input("Şifre", type="password")
@@ -79,11 +78,11 @@ if not st.session_state.authenticated:
     st.stop()
 
 st.sidebar.markdown("---")
-st.sidebar.header("Slot ve OCR Ayarları")
-kolon_sayisi = st.sidebar.slider("Her Raftaki Slot (Paket) Sayısı", 8, 16, 12, step=1)
-bosluk_esigi = st.sidebar.slider("Boşluk / Parlaklık Eşiği", 100, 240, 175, step=5)
+st.sidebar.header("Planogram ve Denetim Parametreleri")
+kolon_sayisi = st.sidebar.slider("Her Raftaki Slot / Ürün Sayısı", 8, 16, 12, step=1)
+bosluk_esigi = st.sidebar.slider("Boşluk / Doluluk Parlaklık Eşiği", 100, 240, 175, step=5)
 etiket_benzerlik_esigi = st.sidebar.slider(
-    "Etiket Eşleşme Hassasiyeti (Benzerlik Eşiği)",
+    "Etiket Eşleşme Hassasiyeti (Planogram Uyum)",
     0.50, 0.95, 0.72, step=0.01
 )
 
@@ -207,8 +206,8 @@ def yandex_bayi_gorseli_getir(public_key, bayi_path):
 
 col_baslik, col_cikis = st.columns([5, 1])
 with col_baslik:
-    st.title("SİGARA STANDI AKILLI DENETİM SİSTEMİ")
-    st.markdown("<p style='color: gray; font-size: 14px; margin-top: -15px;'>Developed by Hakan</p>", unsafe_allow_html=True)
+    st.title("SİGARA STANDI PLANOGRAM DENETİM SİSTEMİ")
+    st.markdown("<p style='color: gray; font-size: 14px; margin-top: -15px;'>FMCG AI Image Recognition & Planogram Compliance Module</p>", unsafe_allow_html=True)
 
 with col_cikis:
     st.write("")
@@ -217,7 +216,7 @@ with col_cikis:
         st.rerun()
 
 st.markdown("---")
-st.subheader("1. Lokasyon and Bayi Seçimi")
+st.subheader("1. Lokasyon ve Bayi Seçimi")
 
 dinamik_sehirler, sehir_hata = yandex_sehirleri_getir(YANDEX_ROOT_PUBLIC_KEY)
 col_s1, col_s2 = st.columns(2)
@@ -268,35 +267,35 @@ st.markdown("---")
 ref_img = None
 hata_mesaji = None
 if secilen_bayi_path:
-    with st.spinner(f"'{secilen_bayi_adi}' için Yandex Disk'ten görsel yükleniyor..."):
+    with st.spinner(f"'{secilen_bayi_adi}' için Dijital Planogram (Referans) Yükleniyor..."):
         ref_img, hata_mesaji = yandex_bayi_gorseli_getir(YANDEX_ROOT_PUBLIC_KEY, secilen_bayi_path)
 
 col_up1, col_up2 = st.columns(2)
 with col_up1:
-    st.subheader("2. Referans (İdeal) Görsel")
+    st.subheader("2. Dijital Planogram (İdeal Şablon)")
     if secilen_bayi_path and ref_img is not None:
-        st.success(f"✅ Referans Yüklendi")
+        st.success(f"✅ Planogram Şablonu Yüklendi")
         st.image(ref_img, channels="BGR", use_container_width=True)
     else:
         st.info("ℹ️ Şehir ve bayi seçin.")
 
 with col_up2:
-    st.subheader("3. Sahadan Gelen Görsel")
+    st.subheader("3. Saha Fotoğrafı (Merchandiser Upload)")
     if secilen_bayi_path:
-        curr_file = st.file_uploader("Fotoğraf yükleyin", type=["jpg", "jpeg", "png"], key="curr")
+        curr_file = st.file_uploader("Saha fotoğrafını yükleyin", type=["jpg", "jpeg", "png"], key="curr")
         curr_img = None
         if curr_file is not None:
             curr_bytes = np.asarray(bytearray(curr_file.read()), dtype=np.uint8)
             raw_curr_img = cv2.imdecode(curr_bytes, cv2.IMREAD_COLOR)
             curr_img = resmi_boyutlandir(raw_curr_img)
-            st.success("✅ Fotoğraf yüklendi")
+            st.success("✅ Saha fotoğrafı işlendi ve merkeze iletildi")
             st.image(curr_img, channels="BGR", use_container_width=True)
     else:
-        st.file_uploader("Fotoğraf yükleyin", type=["jpg", "jpeg", "png"], key="curr_disabled", disabled=True)
+        st.file_uploader("Saha fotoğrafını yükleyin", type=["jpg", "jpeg", "png"], key="curr_disabled", disabled=True)
 
 st.markdown("---")
 st.subheader("4. Stand Kapasite Ayarı")
-ideal_urun_sayisi = st.number_input("Standda Bulunması Gereken Toplam Ürün (Slot) Sayısı", min_value=1, value=60, step=1)
+ideal_urun_sayisi = st.number_input("Standda Bulunması Gereken Toplam SKU / Slot Sayısı", min_value=1, value=60, step=1)
 st.markdown("---")
 
 if "result_img" not in st.session_state:
@@ -307,12 +306,14 @@ if "raf_yuzdesi" not in st.session_state:
     st.session_state.raf_yuzdesi = 100.0
 if "ocr_raporu" not in st.session_state:
     st.session_state.ocr_raporu = []
+if "aksiyon_maddeleri" not in st.session_state:
+    st.session_state.aksiyon_maddeleri = []
 if "analiz_yapildi" not in st.session_state:
     st.session_state.analiz_yapildi = False
 
 if secilen_sehir_adi and secilen_bayi_adi and ref_img is not None and 'curr_file' in locals() and curr_file is not None and 'curr_img' in locals() and curr_img is not None:
-    if st.button("Slot (Izgara) Tabanlı Denetle", type="primary"):
-        with st.spinner("Stand ızgaralara bölünüp slot bazlı kontrol ediliyor..."):
+    if st.button("🚀 Planogram Uyumunu ve Eksikleri Denetle", type="primary"):
+        with st.spinner("Yapay zeka planogram ile canlı fotoğrafı karşılaştırıyor..."):
 
             img_h, img_w = ref_img.shape[:2]
             curr_resized = cv2.resize(curr_img, (img_w, img_h), interpolation=cv2.INTER_AREA)
@@ -320,11 +321,12 @@ if secilen_sehir_adi and secilen_bayi_adi and ref_img is not None and 'curr_file
 
             filtered_boxes = []
             mismatch_details = []
+            aksiyon_maddeleri = []
 
             raf_yuksekligi = img_h / 6.0
             slot_genisligi = img_w / float(kolon_sayisi)
 
-            # 1. SLOT (GRID) TABANLI BOŞLUK KONTROLÜ (Beyaz uyarıları atlayıp orta/alt kısma odaklanma)
+            # 1. SLOT & PLANOGRAM BOŞLUK KONTROLÜ (Out of Stock Tespiti)
             for raf_idx in range(6):
                 y_baslangic = int(raf_idx * raf_yuksekligi)
                 y_bitis = int((raf_idx + 1) * raf_yuksekligi)
@@ -333,7 +335,6 @@ if secilen_sehir_adi and secilen_bayi_adi and ref_img is not None and 'curr_file
                     x_baslangic = int(col_idx * slot_genisligi)
                     x_bitis = int((col_idx + 1) * slot_genisligi)
 
-                    # Slotun sadece orta ve alt kısmını incele (üstteki beyaz sağlık uyarısı etiketlerini hariç tut)
                     slot_img = curr_resized[y_baslangic + int(raf_yuksekligi*0.4): y_bitis - int(raf_yuksekligi*0.05), 
                                              x_baslangic + 8: x_bitis - 8]
 
@@ -345,8 +346,9 @@ if secilen_sehir_adi and secilen_bayi_adi and ref_img is not None and 'curr_file
 
                     if ortalama_parlaklik > bosluk_esigi:
                         filtered_boxes.append([x_baslangic, y_baslangic, x_bitis, y_bitis])
+                        aksiyon_maddeleri.append(f"{raf_idx + 1}. Raf, {col_idx + 1}. Kolon/Slot noktasında ürün bulunamadı (Out of Stock / Boş Alan).")
 
-            # 2. ETİKET (OCR) KONTROLÜ
+            # 2. ETİKET / PLANOGRAM OCR KONTROLÜ
             ref_ocr_results = reader.readtext(ref_img)
             curr_ocr_results = reader.readtext(curr_resized)
             ref_texts = [r[1].strip().lower() for r in ref_ocr_results if len(r[1].strip()) > 2]
@@ -366,6 +368,7 @@ if secilen_sehir_adi and secilen_bayi_adi and ref_img is not None and 'curr_file
                         pt_x = int(c_box[0][0])
                         pt_y = int(c_box[0][1] - 5)
                         cv2.putText(result_img, "Etiket Uyumsuz", (pt_x, max(15, pt_y)), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 0, 0), 1)
+                        aksiyon_maddeleri.append(f"Etiket Uyarı: '{c_text}' etiket/metni planogram şablonu ile uyuşmuyor.")
 
             eksik_sayisi = len(filtered_boxes)
             for idx, (startX, startY, endX, endY) in enumerate(filtered_boxes, 1):
@@ -385,7 +388,7 @@ if secilen_sehir_adi and secilen_bayi_adi and ref_img is not None and 'curr_file
 
             cv2.rectangle(result_img, (0, 0), (img_w, 100), (0, 0, 0), -1)
             cv2.putText(result_img, f"Bayi: {secilen_bayi_adi}", (15, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
-            cv2.putText(result_img, f"Gerçek Eksik: {eksik_sayisi} | Slot Tabanlı Analiz", (15, 70), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 255, 0), 2)
+            cv2.putText(result_img, f"Planogram Eksik: {eksik_sayisi} | Akıllı Denetim", (15, 70), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 255, 0), 2)
 
             hesaplanan_yuzde = max(0.0, 100.0 - ((eksik_sayisi / max(1, ideal_urun_sayisi)) * 100.0))
 
@@ -393,34 +396,36 @@ if secilen_sehir_adi and secilen_bayi_adi and ref_img is not None and 'curr_file
             st.session_state.eksik_sayisi = eksik_sayisi
             st.session_state.raf_yuzdesi = hesaplanan_yuzde
             st.session_state.ocr_raporu = mismatch_details
+            st.session_state.aksiyon_maddeleri = aksiyon_maddeleri
             st.session_state.analiz_yapildi = True
 
     if st.session_state.analiz_yapildi and st.session_state.result_img is not None:
-        st.subheader("Slot Analizi Sonuçları")
+        st.subheader("📋 Saha Personeli Anlık Bildirim & Aksiyon Raporu")
         col_m1, col_m2, col_m3 = st.columns(3)
-        col_m1.metric("📊 Raf Doğruluk Oranı", f"%{st.session_state.raf_yuzdesi:.1f}")
-        col_m2.metric("⚠️ Eksik Alan (Kırmızı)", f"{st.session_state.eksik_sayisi} Adet")
-        col_m3.metric("🔵 Uyuşmayan Etiket (Mavi)", f"{len(st.session_state.ocr_raporu)} Adet")
+        col_m1.metric("📊 Planogram Uyum Oranı", f"%{st.session_state.raf_yuzdesi:.1f}")
+        col_m2.metric("⚠️ Eksik Ürün (Kırmızı)", f"{st.session_state.eksik_sayisi} Adet")
+        col_m3.metric("🔵 Etiket Hatası (Mavi)", f"{len(st.session_state.ocr_raporu)} Adet")
 
-        if st.session_state.ocr_raporu:
-            with st.expander("🔍 Etiket Uyuşmazlık Detayları"):
-                for text in set(st.session_state.ocr_raporu):
-                    st.markdown(f"- 🔵 `{text}`")
+        # Saha Personeline Bildirim Ekranı (FMCG Standardı)
+        if st.session_state.aksiyon_maddeleri:
+            st.markdown("> 🔔 **Saha Ekibine Gönderilecek Anlık Bildirimler / Düzeltme Talimatları:**")
+            for aksiyon in st.session_state.aksiyon_maddeleri:
+                st.markdown(f"- ⚠️ {aksiyon}")
         else:
-            st.success("✅ Tüm etiket isimleri referans görsel ile uyumlu!")
+            st.success("✅ Tebrikler! Stand tamamen planogram şablonuna uygun. Hiçbir eksik veya uyumsuzluk bulunamadı.")
 
-        sonuc_gorsel_genisligi = st.slider("🔍 Sonuç Görseli Boyutunu Ayarla", 300, 2000, 800, step=100)
+        sonuc_gorsel_genisligi = st.slider("🔍 Denetim Görseli Boyutunu Ayarla", 300, 2000, 800, step=100)
         st.image(st.session_state.result_img, channels="BGR", width=sonuc_gorsel_genisligi)
 
         success, encoded_image = cv2.imencode(".jpg", st.session_state.result_img)
         if success:
             st.download_button(
-                label="📥 Rapor Fotoğrafını İndir",
+                label="📥 Denetim Raporunu İndir",
                 data=encoded_image.tobytes(),
-                file_name=f"{secilen_bayi_adi.replace(' ', '_')}_slot_analiz.jpg",
+                file_name=f"{secilen_bayi_adi.replace(' ', '_')}_planogram_denetim.jpg",
                 mime="image/jpeg"
             )
 else:
-    st.info("ℹ️ Analiz için şehir, bayi seçin ve sahadan gelen fotoğrafı yükleyin.")
+    st.info("ℹ️ Planogram denetimi için şehir, bayi seçin ve sahadan gelen fotoğrafı yükleyin.")
 
 st.markdown("<br><p style='text-align: center; color: gray;'>Developed by Hakan</p>", unsafe_allow_html=True)

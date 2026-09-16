@@ -4,24 +4,14 @@ import numpy as np
 import os
 import requests
 import urllib.parse
+import easyocr
+from difflib import SequenceMatcher
 
 st.set_page_config(
     page_title="Sigara Standı Akıllı Denetim Sistemi",
     page_icon="🚬",
     layout="wide",
     initial_sidebar_state="expanded"
-)
-
-st.components.v1.html(
-    """
-    <script>
-        const doc = window.parent.document;
-        doc.documentElement.lang = 'tr';
-        doc.documentElement.setAttribute('translate', 'no');
-    </script>
-    """,
-    height=0,
-    width=0
 )
 
 hide_st_style = """
@@ -36,6 +26,13 @@ hide_st_style = """
 """
 st.markdown(hide_st_style, unsafe_allow_html=True)
 
+@st.cache_resource
+def ocr_okuyucu_yukle():
+    return easyocr.Reader(['tr', 'en'], gpu=False)
+
+with st.spinner("AI Metin Okuma (OCR) motoru hazırlanıyor..."):
+    reader = ocr_okuyucu_yukle()
+
 def resmi_boyutlandir(img, max_genislik=1000):
     if img is None:
         return None
@@ -45,6 +42,19 @@ def resmi_boyutlandir(img, max_genislik=1000):
         yeni_yukseklik = int(h * oran)
         return cv2.resize(img, (max_genislik, yeni_yukseklik), interpolation=cv2.INTER_AREA)
     return img
+
+def benzerlik_orani(a, b):
+    return SequenceMatcher(None, a, b).ratio()
+
+def metin_eslesiyor_mu(hedef_metin, referans_metinler, esik=0.72):
+    for r_t in referans_metinler:
+        skor = benzerlik_orani(hedef_metin, r_t)
+        if skor >= esik:
+            return True
+        if len(hedef_metin) <= 5 and len(r_t) <= 8:
+            if hedef_metin == r_t:
+                return True
+    return False
 
 if "app_password" not in st.secrets:
     st.error("⚠️ Kritik Güvenlik Uyarısı: 'app_password' Streamlit secrets içinde tanımlı değil!")
@@ -56,18 +66,9 @@ if "authenticated" not in st.session_state:
     st.session_state.authenticated = False
 
 if not st.session_state.authenticated:
-    logo_yolu = "logo.jpg"
-    if os.path.exists(logo_yolu):
-        st.image(logo_yolu, width=180)
-    else:
-        try:
-            st.image("https://raw.githubusercontent.com/hknasus8/sigara-fark/main/logo.jpg", width=180)
-        except Exception:
-            pass
-
     st.title("🔐 Sigara Standı Akıllı Denetim Sistemi - Giriş")
     st.markdown("<p style='color: gray; font-size: 14px; margin-top: -15px;'>Developed by Hakan</p>", unsafe_allow_html=True)
-    
+
     sifre_input = st.text_input("Şifre", type="password")
     if st.button("Giriş Yap", type="primary"):
         if sifre_input == app_pass:
@@ -78,35 +79,62 @@ if not st.session_state.authenticated:
     st.stop()
 
 st.sidebar.markdown("---")
-st.sidebar.header("Uygulama Ayarları")
-min_area_val = st.sidebar.slider("Minimum Eksik Boyutu (Hassasiyet)", 50, 2000, 150, step=25)
-fark_esigi = st.sidebar.slider("Piksel Fark Eşiği (Yoğunluk)", 20, 100, 40, step=5)
+st.sidebar.header("Denetim ve OCR Ayarları")
+min_area_val = st.sidebar.slider("Minimum Eksik Boyutu (Hassasiyet)", 100, 3000, 500, step=100)
+fark_esigi = st.sidebar.slider("Piksel Fark Eşiği (Yoğunluk)", 20, 100, 45, step=5)
+etiket_benzerlik_esigi = st.sidebar.slider(
+    "Etiket Eşleşme Hassasiyeti (Benzerlik Eşiği)",
+    0.50, 0.95, 0.72, step=0.01
+)
 
-YANDEX_ROOT_PUBLIC_KEY = "https://disk.yandex.com.tr/d/JXJNYBDAk6fePw"
+YANDEX_ROOT_PUBLIC_KEY = "https://disk.yandex.com.tr/d/ikCHPwREiCVv_g"
 
 @st.cache_data(ttl=600, show_spinner=False)
-def yandex_sehir_bayilerini_getir(public_key, sehir_adi):
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-    }
-    bayiler = []
+def yandex_sehirleri_getir(public_key):
+    headers = {"User-Agent": "Mozilla/5.0"}
+    sehirler = []
     try:
-        # Kök dizini çekerek Yandex'in atadığı gerçek path'leri alıyoruz
         root_url = f"https://cloud-api.yandex.net/v1/disk/public/resources?public_key={public_key}&limit=200"
         resp = requests.get(root_url, headers=headers, timeout=15)
         if resp.status_code != 200:
             return [], f"Kök Dizin Okunamadı (HTTP {resp.status_code})"
 
         root_items = resp.json().get("_embedded", {}).get("items", [])
+        for item in root_items:
+            if item.get("type") == "dir":
+                b_name = item.get("name")
+                if b_name.upper() in ["BAYİ", "BAYI"]:
+                    bayi_path = item.get("path")
+                    sub_url = f"https://cloud-api.yandex.net/v1/disk/public/resources?public_key={public_key}&path={urllib.parse.quote(bayi_path, safe='/')}&limit=200"
+                    sub_resp = requests.get(sub_url, headers=headers, timeout=15)
+                    if sub_resp.status_code == 200:
+                        for sub_item in sub_resp.json().get("_embedded", {}).get("items", []):
+                            if sub_item.get("type") == "dir":
+                                sehirler.append(sub_item.get("name"))
+                else:
+                    sehirler.append(b_name)
+        return sorted(list(set(sehirler))), None
+    except Exception as e:
+        return [], str(e)
+
+@st.cache_data(ttl=600, show_spinner=False)
+def yandex_sehir_bayilerini_getir(public_key, sehir_adi):
+    headers = {"User-Agent": "Mozilla/5.0"}
+    bayiler = []
+    try:
+        root_url = f"https://cloud-api.yandex.net/v1/disk/public/resources?public_key={public_key}&limit=200"
+        resp = requests.get(root_url, headers=headers, timeout=15)
+        if resp.status_code != 200:
+            return [], "Kök Dizin Okunamadı"
+
+        root_items = resp.json().get("_embedded", {}).get("items", [])
         sehir_item_found = None
-        
-        # 1. Doğrudan kökte şehir var mı?
+
         for item in root_items:
             if item.get("type") == "dir" and item.get("name", "").upper() == sehir_adi.upper():
                 sehir_item_found = item
                 break
-        
-        # 2. Kökte yoksa "BAYİ" veya benzeri ana klasörün içine bakalım
+
         if not sehir_item_found:
             for item in root_items:
                 if item.get("type") == "dir" and item.get("name", "").upper() in ["BAYİ", "BAYI"]:
@@ -122,14 +150,13 @@ def yandex_sehir_bayilerini_getir(public_key, sehir_adi):
                         break
 
         if not sehir_item_found:
-            return [], f"'{sehir_adi}' klasörü diskte bulunamadı."
+            return [], f"'{sehir_adi}' klasörü bulunamadı."
 
-        # Şehrin içindeki bayileri listele
         sehir_path = sehir_item_found.get("path")
         bayi_list_url = f"https://cloud-api.yandex.net/v1/disk/public/resources?public_key={public_key}&path={urllib.parse.quote(sehir_path, safe='/')}&limit=500"
         bayi_resp = requests.get(bayi_list_url, headers=headers, timeout=15)
         if bayi_resp.status_code != 200:
-            return [], f"Şehir içeriği okunamadı (HTTP {bayi_resp.status_code})"
+            return [], "Şehir içeriği okunamadı"
 
         bayi_items = bayi_resp.json().get("_embedded", {}).get("items", [])
         for b_item in bayi_items:
@@ -145,20 +172,18 @@ def yandex_sehir_bayilerini_getir(public_key, sehir_adi):
 
 @st.cache_data(ttl=600, show_spinner=False)
 def yandex_bayi_gorseli_getir(public_key, bayi_path):
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-    }
+    headers = {"User-Agent": "Mozilla/5.0"}
     try:
         encoded_path = urllib.parse.quote(bayi_path, safe='/')
         api_url = f"https://cloud-api.yandex.net/v1/disk/public/resources?public_key={public_key}&path={encoded_path}&limit=200"
         resp = requests.get(api_url, headers=headers, timeout=15)
         if resp.status_code != 200:
-            return None, f"Klasör içeriği okunamadı (HTTP {resp.status_code})."
+            return None, "Klasör içeriği okunamadı."
 
         final_embedded = resp.json().get("_embedded")
         if not final_embedded:
             return None, "Seçilen bayi klasörü boş."
-            
+
         sub_items = final_embedded.get("items", [])
         gorsel_download_url = None
         for sub_item in sub_items:
@@ -176,9 +201,9 @@ def yandex_bayi_gorseli_getir(public_key, bayi_path):
                 if img is not None:
                     return resmi_boyutlandir(img), None
 
-        return None, "Klasör bulundu ancak içinde .jpg/.png görsel yok."
+        return None, "İçerikte uygun görsel bulunamadı."
     except Exception as e:
-        return None, f"Bağlantı hatası: {e}"
+        return None, f"Hata: {e}"
 
 col_baslik, col_cikis = st.columns([5, 1])
 with col_baslik:
@@ -186,7 +211,7 @@ with col_baslik:
     st.markdown("<p style='color: gray; font-size: 14px; margin-top: -15px;'>Developed by Hakan</p>", unsafe_allow_html=True)
 
 with col_cikis:
-    st.write("") 
+    st.write("")
     if st.button("🚪 Çıkış Yap", type="secondary"):
         st.session_state.authenticated = False
         st.rerun()
@@ -194,33 +219,45 @@ with col_cikis:
 st.markdown("---")
 st.subheader("1. Lokasyon ve Bayi Seçimi")
 
-sabit_sehirler = ["AFYON", "ALANYA", "ANKARA", "ANTALYA", "KÜTAHYA", "MANAVGAT"]
-
+dinamik_sehirler, sehir_hata = yandex_sehirleri_getir(YANDEX_ROOT_PUBLIC_KEY)
 col_s1, col_s2 = st.columns(2)
 
 with col_s1:
-    secilen_sehir_adi = st.selectbox("Şehir Seçin", sabit_sehirler)
+    secilen_sehir_adi = st.selectbox(
+        "Şehir Seçin",
+        options=dinamik_sehirler if dinamik_sehirler else ["Şehir Bulunamadı"],
+        index=None,
+        placeholder="Lütfen bir şehir seçin..."
+    )
 
-bayiler_listesi, bayi_hata = yandex_sehir_bayilerini_getir(YANDEX_ROOT_PUBLIC_KEY, secilen_sehir_adi)
+bayiler_listesi = []
+bayi_hata = None
+if secilen_sehir_adi:
+    bayiler_listesi, bayi_hata = yandex_sehir_bayilerini_getir(YANDEX_ROOT_PUBLIC_KEY, secilen_sehir_adi)
 
 with col_s2:
-    if bayiler_listesi:
-        secilen_bayi_adi = st.selectbox("Bayi Seçin", [b["name"] for b in bayiler_listesi])
+    if secilen_sehir_adi:
+        if bayiler_listesi:
+            secilen_bayi_adi = st.selectbox(
+                "Bayi Seçin",
+                options=[b["name"] for b in bayiler_listesi],
+                index=None,
+                placeholder="Lütfen bir bayi seçin..."
+            )
+        else:
+            secilen_bayi_adi = st.selectbox("Bayi Seçin", ["Bayi Bulunamadı"], index=None)
     else:
-        secilen_bayi_adi = st.selectbox("Bayi Seçin", ["Bayi Bulunamadı"])
-        if bayi_hata:
-            st.caption(f"⚠️ {bayi_hata}")
+        secilen_bayi_adi = st.selectbox("Bayi Seçin", ["Önce Şehir Seçmelisiniz"], index=None, disabled=True)
 
-    secilen_bayi_path = ""
-    if bayiler_listesi and secilen_bayi_adi != "Bayi Bulunamadı":
-        for b in bayiler_listesi:
-            if b["name"] == secilen_bayi_adi:
-                secilen_bayi_path = b["path"]
-                break
-
-st.markdown(f"**Seçilen Konum:** `{secilen_sehir_adi} / {secilen_bayi_adi}`")
+secilen_bayi_path = ""
+if secilen_sehir_adi and secilen_bayi_adi and bayiler_listesi and secilen_bayi_adi != "Bayi Bulunamadı":
+    for b in bayiler_listesi:
+        if b["name"] == secilen_bayi_adi:
+            secilen_bayi_path = b["path"]
+            break
 
 if st.button("🔄 Önbelleği Yenile"):
+    yandex_sehirleri_getir.clear()
     yandex_sehir_bayilerini_getir.clear()
     yandex_bayi_gorseli_getir.clear()
     st.toast("Önbellek temizlendi!", icon="🔄")
@@ -237,22 +274,25 @@ if secilen_bayi_path:
 col_up1, col_up2 = st.columns(2)
 with col_up1:
     st.subheader("2. Referans (İdeal) Görsel")
-    if ref_img is not None:
-        st.success(f"✅ '{secilen_bayi_adi}' Yandex'ten Yüklendi")
+    if secilen_bayi_path and ref_img is not None:
+        st.success(f"✅ Referans Yüklendi")
         st.image(ref_img, channels="BGR", use_container_width=True)
     else:
-        st.warning(f"⚠️ Görsel yüklenemedi. Nedeni: {hata_mesaji}")
+        st.info("ℹ️ Şehir ve bayi seçin.")
 
 with col_up2:
     st.subheader("3. Sahadan Gelen Görsel")
-    curr_file = st.file_uploader("Fotoğraf yükleyin", type=["jpg", "jpeg", "png"], key="curr")
-    curr_img = None
-    if curr_file is not None:
-        curr_bytes = np.asarray(bytearray(curr_file.read()), dtype=np.uint8)
-        raw_curr_img = cv2.imdecode(curr_bytes, cv2.IMREAD_COLOR)
-        curr_img = resmi_boyutlandir(raw_curr_img)
-        st.success("✅ Fotoğraf yüklendi")
-        st.image(curr_img, channels="BGR", use_container_width=True)
+    if secilen_bayi_path:
+        curr_file = st.file_uploader("Fotoğraf yükleyin", type=["jpg", "jpeg", "png"], key="curr")
+        curr_img = None
+        if curr_file is not None:
+            curr_bytes = np.asarray(bytearray(curr_file.read()), dtype=np.uint8)
+            raw_curr_img = cv2.imdecode(curr_bytes, cv2.IMREAD_COLOR)
+            curr_img = resmi_boyutlandir(raw_curr_img)
+            st.success("✅ Fotoğraf yüklendi")
+            st.image(curr_img, channels="BGR", use_container_width=True)
+    else:
+        st.file_uploader("Fotoğraf yükleyin", type=["jpg", "jpeg", "png"], key="curr_disabled", disabled=True)
 
 st.markdown("---")
 st.subheader("4. Stand Kapasite Ayarı")
@@ -265,90 +305,135 @@ if "eksik_sayisi" not in st.session_state:
     st.session_state.eksik_sayisi = 0
 if "raf_yuzdesi" not in st.session_state:
     st.session_state.raf_yuzdesi = 100.0
+if "ocr_raporu" not in st.session_state:
+    st.session_state.ocr_raporu = []
 if "analiz_yapildi" not in st.session_state:
     st.session_state.analiz_yapildi = False
 
-if ref_img is not None and curr_file is not None and curr_img is not None:
-    if st.button("Hassas Farkı Analiz Et", type="primary"):
-        with st.spinner("Gelişmiş hibrit matris ve piksel analizi yapılıyor..."):
-            if ref_img.shape[:2] != curr_img.shape[:2]:
-                curr_img = cv2.resize(curr_img, (ref_img.shape[1], ref_img.shape[0]), interpolation=cv2.INTER_AREA)
+if secilen_sehir_adi and secilen_bayi_adi and ref_img is not None and 'curr_file' in locals() and curr_file is not None and 'curr_img' in locals() and curr_img is not None:
+    if st.button("Akıllı Raf Denetimini Başlat", type="primary"):
+        with st.spinner("İlk 6 raf optimize edilmiş algoritma ile taranıyor..."):
 
-            gray_ref = cv2.GaussianBlur(cv2.cvtColor(ref_img, cv2.COLOR_BGR2GRAY), (5, 5), 0)
-            gray_curr = cv2.GaussianBlur(cv2.cvtColor(curr_img, cv2.COLOR_BGR2GRAY), (5, 5), 0)
+            img_h, img_w = ref_img.shape[:2]
+            curr_img_resized = cv2.resize(curr_img, (img_w, img_h), interpolation=cv2.INTER_AREA)
+            curr_img = curr_img_resized
 
-            diff = cv2.absdiff(gray_ref, gray_curr)
-            _, thresh = cv2.threshold(diff, fark_esigi, 255, cv2.THRESH_BINARY)
-            morph = cv2.morphologyEx(thresh, cv2.MORPH_CLOSE, np.ones((5, 15), np.uint8))
-            morph = cv2.morphologyEx(morph, cv2.MORPH_OPEN, np.ones((3, 3), np.uint8))
-
-            contours, _ = cv2.findContours(morph.copy(), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-            boxes = []
-            img_h, img_w = curr_img.shape[:2]
-            
-            for c in contours:
-                if cv2.contourArea(c) > min_area_val:
-                    x, y, w, h = cv2.boundingRect(c)
-                    if (img_w * 0.01 < x < img_w * 0.99) and (img_h * 0.02 < y < img_h * 0.98):
-                        boxes.append([x, y, x + w, y + h])
-
-            def non_max_suppression(boxes, overlapThresh=0.15):
-                if not boxes: return []
-                boxes = np.array(boxes)
-                pick = []
-                x1, y1, x2, y2 = boxes[:,0], boxes[:,1], boxes[:,2], boxes[:,3]
-                area = (x2 - x1 + 1) * (y2 - y1 + 1)
-                idxs = np.argsort(y2)
-                while len(idxs) > 0:
-                    last = len(idxs) - 1
-                    i = idxs[last]
-                    pick.append(i)
-                    xx1 = np.maximum(x1[i], x1[idxs[:last]])
-                    yy1 = np.maximum(y1[i], y1[idxs[:last]])
-                    xx2 = np.minimum(x2[i], x2[idxs[:last]])
-                    yy2 = np.minimum(y2[i], y2[idxs[:last]])
-                    w = np.maximum(0, xx2 - xx1 + 1)
-                    h = np.maximum(0, yy2 - yy1 + 1)
-                    overlap = (w * h) / area[idxs[:last]]
-                    idxs = np.delete(idxs, np.concatenate(([last], np.where(overlap > overlapThresh)[0])))
-                return boxes[pick].astype("int")
-
-            filtered_boxes = non_max_suppression(boxes)
             result_img = curr_img.copy()
-            eksik_sayisi = len(filtered_boxes)
-            hesaplanan_yuzde = max(0.0, 100.0 - ((eksik_sayisi / max(1, ideal_urun_sayisi)) * 100.0))
+            filtered_boxes = []
+            mismatch_details = []
 
+            # --- 6 RAF BAZLI OPTİMİZE KONTROL (Çizgileri kaldıran temiz yapı) ---
+            raf_yuksekligi = img_h / 6.0
+
+            for raf_idx in range(6):
+                y_baslangic = int(raf_idx * raf_yuksekligi)
+                y_bitis = int((raf_idx + 1) * raf_yuksekligi)
+
+                raf_ref = ref_img[y_baslangic:y_bitis, 0:img_w]
+                raf_curr = curr_img[y_baslangic:y_bitis, 0:img_w]
+
+                gray_ref = cv2.cvtColor(raf_ref, cv2.COLOR_BGR2GRAY)
+                gray_curr = cv2.cvtColor(raf_curr, cv2.COLOR_BGR2GRAY)
+
+                # Hafif blur ile piksel kaymalarını ve parlamaları absorbe et
+                gray_ref = cv2.GaussianBlur(gray_ref, (5, 5), 0)
+                gray_curr = cv2.GaussianBlur(gray_curr, (5, 5), 0)
+
+                fark = cv2.absdiff(gray_ref, gray_curr)
+                _, thresh = cv2.threshold(fark, fark_esigi, 255, cv2.THRESH_BINARY)
+
+                # Gürültüyü temizle, sadece anlamlı büyük boşluk/değişim öbeklerini bırak
+                kernel = np.ones((7, 7), np.uint8)
+                thresh = cv2.morphologyEx(thresh, cv2.MORPH_OPEN, kernel)
+                thresh = cv2.morphologyEx(thresh, cv2.MORPH_CLOSE, kernel)
+
+                contours, _ = cv2.findContours(thresh.copy(), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+
+                for c in contours:
+                    if cv2.contourArea(c) > min_area_val:
+                        x, y, w, h = cv2.boundingRect(c)
+                        global_y = y_baslangic + y
+                        # Çok küçük veya raf dışı kalan gürültüleri ele
+                        if h > (raf_yuksekligi * 0.2): 
+                            filtered_boxes.append([x, global_y, x + w, global_y + h])
+
+            # Etiket (OCR) Karşılaştırma
+            ref_ocr_results = reader.readtext(ref_img)
+            curr_ocr_results = reader.readtext(curr_img)
+            ref_texts = [r[1].strip().lower() for r in ref_ocr_results if len(r[1].strip()) > 2]
+
+            for (c_box, c_text, c_prob) in curr_ocr_results:
+                clean_c_text = c_text.strip().lower()
+                if len(clean_c_text) > 2:
+                    box_y_orta = sum([pt[1] for pt in c_box]) / 4.0
+                    if box_y_orta > (raf_yuksekligi * 6):
+                        continue
+
+                    eslesti = metin_eslesiyor_mu(clean_c_text, ref_texts, esik=etiket_benzerlik_esigi)
+                    if not eslesti:
+                        mismatch_details.append(c_text)
+                        pts = np.array(c_box, dtype=np.int32)
+                        cv2.polylines(result_img, [pts], isClosed=True, color=(255, 0, 0), thickness=2)
+                        pt_x = int(c_box[0][0])
+                        pt_y = int(c_box[0][1] - 5)
+                        cv2.putText(result_img, "Etiket Uyumsuz", (pt_x, max(15, pt_y)), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 0, 0), 1)
+
+            # Gerçek eksik/fark alanlarını kırmızı çerçeve ile işaretle
+            eksik_sayisi = len(filtered_boxes)
             for idx, (startX, startY, endX, endY) in enumerate(filtered_boxes, 1):
                 cv2.rectangle(result_img, (startX, startY), (endX, endY), (0, 0, 255), 2)
-                cv2.putText(result_img, f"#{idx}", (startX + 3, startY + 18), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 1)
+                cv2.putText(result_img, f"Fark #{idx}", (startX + 5, startY + 20), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 2)
+
+            # 6. Raftan Sonrası İçin Kırmızı X İşaretleri Ekleme
+            kirmizi_x_baslangic_y = int(raf_yuksekligi * 6)
+            if kirmizi_x_baslangic_y < img_h:
+                overlay = result_img.copy()
+                cv2.rectangle(overlay, (0, kirmizi_x_baslangic_y), (img_w, img_h), (0, 0, 50), -1)
+                cv2.addWeighted(overlay, 0.3, result_img, 0.7, 0, result_img)
+
+                for y_pos in range(kirmizi_x_baslangic_y + int(raf_yuksekligi/2), img_h, int(raf_yuksekligi)):
+                    center_x = int(img_w / 2)
+                    cv2.putText(result_img, "X - KONTROL EDILMEDI", (center_x - 150, y_pos), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
+                    cv2.line(result_img, (center_x - 180, y_pos - 20), (center_x - 160, y_pos + 10), (0, 0, 255), 3)
 
             cv2.rectangle(result_img, (0, 0), (img_w, 100), (0, 0, 0), -1)
             cv2.putText(result_img, f"Bayi: {secilen_bayi_adi}", (15, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
-            cv2.putText(result_img, f"Eksik Alan: {eksik_sayisi} | Raf Uygunluk: %{hesaplanan_yuzde:.1f}", (15, 70), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 255) if eksik_sayisi > 0 else (0, 255, 0), 2)
+            cv2.putText(result_img, f"Tespit Edilen Fark: {eksik_sayisi} | İlk 6 Raf İncelendi", (15, 70), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 255, 0), 2)
+
+            hesaplanan_yuzde = max(0.0, 100.0 - ((eksik_sayisi / max(1, ideal_urun_sayisi)) * 100.0))
 
             st.session_state.result_img = result_img
             st.session_state.eksik_sayisi = eksik_sayisi
             st.session_state.raf_yuzdesi = hesaplanan_yuzde
+            st.session_state.ocr_raporu = mismatch_details
             st.session_state.analiz_yapildi = True
 
     if st.session_state.analiz_yapildi and st.session_state.result_img is not None:
-        st.subheader("Tespit Edilen Eksikler ve Detaylı Rapor")
-        col_m1, col_m2 = st.columns(2)
-        col_m1.metric("📊 Hesaplanan Raf Doğruluk Oranı", f"%{st.session_state.raf_yuzdesi:.1f}")
-        col_m2.metric("⚠️ Tespit Edilen Eksik/Boşluk Alan", f"{st.session_state.eksik_sayisi} Adet")
-        
-        sonuc_gorsel_genisligi = st.slider("🔍 Sonuç Görseli Boyutunu Ayarla (Piksel)", 300, 2000, 800, step=100)
+        st.subheader("Tespit Edilen Eksikler ve Etiket Karşılaştırma Raporu")
+        col_m1, col_m2, col_m3 = st.columns(3)
+        col_m1.metric("📊 Raf Doğruluk Oranı (İlk 6 Raf)", f"%{st.session_state.raf_yuzdesi:.1f}")
+        col_m2.metric("⚠️ Tespit Edilen Fark (Kırmızı)", f"{st.session_state.eksik_sayisi} Adet")
+        col_m3.metric("🔵 Uyuşmayan Etiket (Mavi)", f"{len(st.session_state.ocr_raporu)} Adet")
+
+        if st.session_state.ocr_raporu:
+            with st.expander("🔍 Etiket Uyuşmazlık Detayları"):
+                for text in set(st.session_state.ocr_raporu):
+                    st.markdown(f"- 🔵 `{text}`")
+        else:
+            st.success("✅ İlk 6 raftaki tüm etiket isimleri referans görsel ile uyumlu!")
+
+        sonuc_gorsel_genisligi = st.slider("🔍 Sonuç Görseli Boyutunu Ayarla", 300, 2000, 800, step=100)
         st.image(st.session_state.result_img, channels="BGR", width=sonuc_gorsel_genisligi)
 
         success, encoded_image = cv2.imencode(".jpg", st.session_state.result_img)
         if success:
             st.download_button(
-                label="📥 Sonuç Fotoğrafını İndir",
+                label="📥 Rapor Fotoğrafını İndir",
                 data=encoded_image.tobytes(),
-                file_name=f"{secilen_bayi_adi.replace(' ', '_')}_analiz_sonucu.jpg",
+                file_name=f"{secilen_bayi_adi.replace(' ', '_')}_temiz_analiz_sonucu.jpg",
                 mime="image/jpeg"
             )
 else:
-    st.info("ℹ️ Analiz yapabilmek için lütfen yukarıdan şehir ve bayinizi seçin, ardından sağdaki alandan **Sahadan Gelen Fotoğrafı** yükleyin.")
+    st.info("ℹ️ Analiz için şehir, bayi seçin ve sahadan gelen fotoğrafı yükleyin.")
 
 st.markdown("<br><p style='text-align: center; color: gray;'>Developed by Hakan</p>", unsafe_allow_html=True)

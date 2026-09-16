@@ -57,7 +57,9 @@ if not st.session_state.authenticated:
 
 st.sidebar.markdown("---")
 st.sidebar.header("Renk ve Histogram Ayarları")
-kolon_sayisi = st.sidebar.slider("Her Raftaki Slot / Ürün Sayısı", 8, 16, 12, step=1)
+# Her raftaki ürün/slot sayısı net olarak 11'e sabitlendi
+kolon_sayisi = 11
+st.sidebar.info("ℹ️ Her raftaki slot sayısı standart olarak 11 olarak sabitlenmiştir.")
 renk_fark_esigi = st.sidebar.slider("Renk Farklılığı Hassasiyet Eşiği", 0.1, 0.6, 0.28, step=0.02)
 
 YANDEX_ROOT_PUBLIC_KEY = "https://disk.yandex.com.tr/d/ikCHPwREiCVv_g"
@@ -269,7 +271,7 @@ with col_up2:
 
 st.markdown("---")
 st.subheader("4. Stand Kapasite Ayarı")
-ideal_urun_sayisi = st.number_input("Standda Bulunması Gereken Toplam Slot Sayısı", min_value=1, value=60, step=1)
+ideal_urun_sayisi = st.number_input("Standda Bulunması Gereken Toplam Slot Sayısı", min_value=1, value=66, step=1)
 st.markdown("---")
 
 if "result_img" not in st.session_state:
@@ -298,7 +300,7 @@ if secilen_sehir_adi and secilen_bayi_adi and ref_img is not None and 'curr_file
             raf_yuksekligi = img_h / 6.0
             slot_genisligi = img_w / float(kolon_sayisi)
 
-            # SLOT BAZLI RENK HISTOGRAMI VE RAF SAYIMI
+            # SLOT BAZLI RENK HISTOGRAMI VE RAF SAYIMI (11 Sütun)
             for raf_idx in range(6):
                 y_baslangic = int(raf_idx * raf_yuksekligi)
                 y_bitis = int((raf_idx + 1) * raf_yuksekligi)
@@ -316,7 +318,6 @@ if secilen_sehir_adi and secilen_bayi_adi and ref_img is not None and 'curr_file
                     if ref_slot.size == 0 or curr_slot.size == 0:
                         continue
 
-                    # Ürün var sayımı (Boş alan değilse urun sayılır)
                     raf_aktif_urun += 1
 
                     ref_hsv = cv2.cvtColor(ref_slot, cv2.COLOR_BGR2HSV)
@@ -337,19 +338,16 @@ if secilen_sehir_adi and secilen_bayi_adi and ref_img is not None and 'curr_file
 
                 raf_urun_sayilari[raf_idx + 1] = raf_aktif_urun
 
-            # Uyumsuz slotları işaretle
             uyumsuz_sayisi = len(uyumsuz_slotlar)
             for idx, (startX, startY, endX, endY) in enumerate(uyumsuz_slotlar, 1):
                 cv2.rectangle(result_img, (startX, startY), (endX, endY), (0, 0, 255), 2)
                 cv2.putText(result_img, f"Uyumsuz #{idx}", (startX + 2, startY + 20), cv2.FONT_HERSHEY_SIMPLEX, 0.35, (0, 0, 255), 2)
 
-            # HER RAFIN SOL YANINA ÜRÜN SAYISINI YAZDIR
             for raf_idx in range(6):
                 y_baslangic = int(raf_idx * raf_yuksekligi)
                 y_merkez = y_baslangic + int(raf_yuksekligi / 2)
                 urun_adedi = raf_urun_sayilari.get(raf_idx + 1, 0)
                 
-                # Sol kenara arka plan kutusu ve metin
                 text_str = f"Raf {raf_idx+1}: {urun_adedi} Adet"
                 cv2.rectangle(result_img, (5, y_merkez - 15), (170, y_merkez + 15), (0, 0, 0), -1)
                 cv2.putText(result_img, text_str, (10, y_merkez + 5), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 2)

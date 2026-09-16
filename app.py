@@ -81,7 +81,7 @@ if not st.session_state.authenticated:
 st.sidebar.markdown("---")
 st.sidebar.header("Slot ve OCR Ayarları")
 kolon_sayisi = st.sidebar.slider("Her Raftaki Slot (Paket) Sayısı", 8, 16, 12, step=1)
-bosluk_esigi = st.sidebar.slider("Boşluk / Parlaklık Eşiği", 50, 200, 110, step=5)
+bosluk_esigi = st.sidebar.slider("Boşluk / Parlaklık Eşiği", 100, 240, 175, step=5)
 etiket_benzerlik_esigi = st.sidebar.slider(
     "Etiket Eşleşme Hassasiyeti (Benzerlik Eşiği)",
     0.50, 0.95, 0.72, step=0.01
@@ -324,7 +324,7 @@ if secilen_sehir_adi and secilen_bayi_adi and ref_img is not None and 'curr_file
             raf_yuksekligi = img_h / 6.0
             slot_genisligi = img_w / float(kolon_sayisi)
 
-            # 1. SLOT (GRID) TABANLI BOŞLUK KONTROLÜ
+            # 1. SLOT (GRID) TABANLI BOŞLUK KONTROLÜ (Beyaz uyarıları atlayıp orta/alt kısma odaklanma)
             for raf_idx in range(6):
                 y_baslangic = int(raf_idx * raf_yuksekligi)
                 y_bitis = int((raf_idx + 1) * raf_yuksekligi)
@@ -333,8 +333,9 @@ if secilen_sehir_adi and secilen_bayi_adi and ref_img is not None and 'curr_file
                     x_baslangic = int(col_idx * slot_genisligi)
                     x_bitis = int((col_idx + 1) * slot_genisligi)
 
-                    slot_img = curr_resized[y_baslangic + int(raf_yuksekligi*0.1): y_bitis - int(raf_yuksekligi*0.1), 
-                                             x_baslangic + 5: x_bitis - 5]
+                    # Slotun sadece orta ve alt kısmını incele (üstteki beyaz sağlık uyarısı etiketlerini hariç tut)
+                    slot_img = curr_resized[y_baslangic + int(raf_yuksekligi*0.4): y_bitis - int(raf_yuksekligi*0.05), 
+                                             x_baslangic + 8: x_bitis - 8]
 
                     if slot_img.size == 0:
                         continue

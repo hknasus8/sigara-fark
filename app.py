@@ -57,8 +57,7 @@ if not st.session_state.authenticated:
 
 st.sidebar.markdown("---")
 st.sidebar.header("Renk ve Histogram Ayarları")
-kolon_sayisi = 11
-st.sidebar.info("ℹ️ Her raftaki slot sayısı referans şablona göre dinamik olarak hesaplanır.")
+kolon_sayisi = st.sidebar.slider("Stand Kolon (Slot) Sayısı", 10, 25, 11, step=1)
 renk_fark_esigi = st.sidebar.slider("Renk Farklılığı Hassasiyet Eşiği", 0.1, 0.6, 0.28, step=0.02)
 
 YANDEX_ROOT_PUBLIC_KEY = "https://disk.yandex.com.tr/d/ikCHPwREiCVv_g"
@@ -284,52 +283,29 @@ if "analiz_yapildi" not in st.session_state:
 
 if secilen_sehir_adi and secilen_bayi_adi and ref_img is not None and 'curr_file' in locals() and curr_file is not None and 'curr_img' in locals() and curr_img is not None:
     if st.button("🚀 Renk Histogramı ile Planogram Denetle", type="primary"):
-        with st.spinner("Renk histogramı ve her raf için hassas paket sayımı yapılıyor..."):
+        with st.spinner("Renk histogramı analizi yapılıyor..."):
 
             img_h, img_w = ref_img.shape[:2]
             curr_resized = cv2.resize(curr_img, (img_w, img_h), interpolation=cv2.INTER_AREA)
             result_img = curr_resized.copy()
 
             uyumsuz_slotlar = []
-            raf_urun_sayilari = {}
-
             raf_oranlari = [0.0, 1/7, 2/7, 3/7, 4/7, 5/7, 6/7, 1.0]
 
             for raf_idx in range(7):
                 y_baslangic = int(img_h * raf_oranlari[raf_idx])
                 y_bitis = int(img_h * raf_oranlari[raf_idx + 1])
                 
-                # Her rafın üzerindeki gerçek dolu paketleri incelemek için ince dikey dilim taraması (Örn: 21 potansiyel slot)
-                aktif_slot_sayisi = 0
-                test_kolon_adedi = 21
-                dilim_genislik = img_w / float(test_kolon_adedi)
-
-                for c_idx in range(test_kolon_adedi):
-                    x_b = int(c_idx * dilim_genislik)
-                    x_t = int((c_idx + 1) * dilim_genislik)
-
-                    # Dilim içindeki bölgeyi al
-                    ornek_bolge = curr_resized[y_baslangic + int((y_bitis - y_baslangic)*0.2): y_bitis - int((y_bitis - y_baslangic)*0.1), x_b + 2: x_t - 2]
-                    if ornek_bolge.size > 0:
-                        gray_parca = cv2.cvtColor(ornek_bolge, cv2.COLOR_BGR2GRAY)
-                        # Eğer parça boş değilse (stand arka planından farklı bir renk/doku yoğunluğu varsa) paket var sayalım
-                        if np.std(gray_parca) > 12 and np.mean(gray_parca) < 220:
-                            aktif_slot_sayisi += 1
-
-                # Her raf için tespit edilen gerçek ürün sayısını sınırlar içinde kaydet
-                gercek_raf_adedi = max(5, min(22, aktif_slot_sayisi))
-                raf_urun_sayilari[raf_idx + 1] = gercek_raf_adedi
-
-                # Standart planogram renk uyumsuzluğu denetimi
                 slot_genisligi = img_w / float(kolon_sayisi)
+
                 for col_idx in range(kolon_sayisi):
                     x_baslangic = int(col_idx * slot_genisligi)
                     x_bitis = int((col_idx + 1) * slot_genisligi)
 
                     ref_slot = ref_img[y_baslangic + int((y_bitis - y_baslangic)*0.1): y_bitis - int((y_bitis - y_baslangic)*0.1), 
-                                       x_baslangic + 5: x_bitis - 5]
+                                       x_baslangic + 2: x_bitis - 2]
                     curr_slot = curr_resized[y_baslangic + int((y_bitis - y_baslangic)*0.1): y_bitis - int((y_bitis - y_baslangic)*0.1), 
-                                             x_baslangic + 5: x_bitis - 5]
+                                             x_baslangic + 2: x_bitis - 2]
 
                     if ref_slot.size == 0 or curr_slot.size == 0:
                         continue
@@ -351,15 +327,14 @@ if secilen_sehir_adi and secilen_bayi_adi and ref_img is not None and 'curr_file
 
             uyumsuz_sayisi = len(uyumsuz_slotlar)
 
-            # Raf etiketlerini ve her rafa ait doğru dinamik paket adetlerini görsel üzerine yazdırıyoruz
+            # Raf başı etiketleri (Yanlış sayım kargaşasına son vermek için her rafta sol tarafta net kapasite gösterimi)
             for raf_idx in range(7):
                 y_baslangic = int(img_h * raf_oranlari[raf_idx])
                 y_bitis = int(img_h * raf_oranlari[raf_idx + 1])
                 y_merkez = int((y_baslangic + y_bitis) / 2)
-                urun_adedi = raf_urun_sayilari.get(raf_idx + 1, 11)
                 
-                text_str = f"Raf {raf_idx+1}: {urun_adedi} Adet"
-                cv2.rectangle(result_img, (5, y_merkez - 15), (185, y_merkez + 15), (0, 0, 0), -1)
+                text_str = f"Raf {raf_idx+1}: {kolon_sayisi} Slot"
+                cv2.rectangle(result_img, (5, y_merkez - 15), (170, y_merkez + 15), (0, 0, 0), -1)
                 cv2.putText(result_img, text_str, (10, y_merkez + 5), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 2)
 
             cv2.rectangle(result_img, (0, 0), (img_w, 100), (0, 0, 0), -1)

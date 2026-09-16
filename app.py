@@ -14,7 +14,6 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# Arayüz gizleme stilleri
 hide_st_style = """
     <style>
     #MainMenu {visibility: hidden;}
@@ -27,15 +26,12 @@ hide_st_style = """
 """
 st.markdown(hide_st_style, unsafe_allow_html=True)
 
-
 @st.cache_resource
 def ocr_okuyucu_yukle():
     return easyocr.Reader(['tr', 'en'], gpu=False)
 
-
 with st.spinner("AI Metin Okuma (OCR) motoru hazırlanıyor..."):
     reader = ocr_okuyucu_yukle()
-
 
 def resmi_boyutlandir(img, max_genislik=1000):
     if img is None:
@@ -47,10 +43,8 @@ def resmi_boyutlandir(img, max_genislik=1000):
         return cv2.resize(img, (max_genislik, yeni_yukseklik), interpolation=cv2.INTER_AREA)
     return img
 
-
 def benzerlik_orani(a, b):
     return SequenceMatcher(None, a, b).ratio()
-
 
 def metin_eslesiyor_mu(hedef_metin, referans_metinler, esik=0.72):
     for r_t in referans_metinler:
@@ -61,7 +55,6 @@ def metin_eslesiyor_mu(hedef_metin, referans_metinler, esik=0.72):
             if hedef_metin == r_t:
                 return True
     return False
-
 
 if "app_password" not in st.secrets:
     st.error("⚠️ Kritik Güvenlik Uyarısı: 'app_password' Streamlit secrets içinde tanımlı değil!")
@@ -87,15 +80,14 @@ if not st.session_state.authenticated:
 
 st.sidebar.markdown("---")
 st.sidebar.header("Denetim ve OCR Ayarları")
-min_area_val = st.sidebar.slider("Minimum Eksik Boyutu (Hassasiyet)", 10, 1000, 40, step=10)
-fark_esigi = st.sidebar.slider("Piksel Fark Eşiği (Yoğunluk)", 5, 80, 18, step=1)
+min_area_val = st.sidebar.slider("Minimum Eksik Boyutu (Hassasiyet)", 100, 3000, 500, step=100)
+fark_esigi = st.sidebar.slider("Piksel Fark Eşiği (Yoğunluk)", 20, 100, 45, step=5)
 etiket_benzerlik_esigi = st.sidebar.slider(
     "Etiket Eşleşme Hassasiyeti (Benzerlik Eşiği)",
     0.50, 0.95, 0.72, step=0.01
 )
 
 YANDEX_ROOT_PUBLIC_KEY = "https://disk.yandex.com.tr/d/ikCHPwREiCVv_g"
-
 
 @st.cache_data(ttl=600, show_spinner=False)
 def yandex_sehirleri_getir(public_key):
@@ -124,7 +116,6 @@ def yandex_sehirleri_getir(public_key):
         return sorted(list(set(sehirler))), None
     except Exception as e:
         return [], str(e)
-
 
 @st.cache_data(ttl=600, show_spinner=False)
 def yandex_sehir_bayilerini_getir(public_key, sehir_adi):
@@ -179,7 +170,6 @@ def yandex_sehir_bayilerini_getir(public_key, sehir_adi):
     except Exception as e:
         return [], str(e)
 
-
 @st.cache_data(ttl=600, show_spinner=False)
 def yandex_bayi_gorseli_getir(public_key, bayi_path):
     headers = {"User-Agent": "Mozilla/5.0"}
@@ -214,7 +204,6 @@ def yandex_bayi_gorseli_getir(public_key, bayi_path):
         return None, "İçerikte uygun görsel bulunamadı."
     except Exception as e:
         return None, f"Hata: {e}"
-
 
 col_baslik, col_cikis = st.columns([5, 1])
 with col_baslik:
@@ -322,8 +311,8 @@ if "analiz_yapildi" not in st.session_state:
     st.session_state.analiz_yapildi = False
 
 if secilen_sehir_adi and secilen_bayi_adi and ref_img is not None and 'curr_file' in locals() and curr_file is not None and 'curr_img' in locals() and curr_img is not None:
-    if st.button("Hassas Slot ve Ürün Denetimini Başlat", type="primary"):
-        with st.spinner("İlk 6 raf slot bazlı olarak taranıyor, küçük farklar ayıklanıyor..."):
+    if st.button("Akıllı Raf Denetimini Başlat", type="primary"):
+        with st.spinner("İlk 6 raf optimize edilmiş algoritma ile taranıyor..."):
 
             img_h, img_w = ref_img.shape[:2]
             curr_img_resized = cv2.resize(curr_img, (img_w, img_h), interpolation=cv2.INTER_AREA)
@@ -333,40 +322,40 @@ if secilen_sehir_adi and secilen_bayi_adi and ref_img is not None and 'curr_file
             filtered_boxes = []
             mismatch_details = []
 
-            # --- 6 RAF BAZLI HASSAS SLOT KONTROLÜ ---
+            # --- 6 RAF BAZLI OPTİMİZE KONTROL (Çizgileri kaldıran temiz yapı) ---
             raf_yuksekligi = img_h / 6.0
-            kolon_sayisi = 12  # Her raftaki ortalama slot/ürün sütun sayısı
-            kolon_genisligi = img_w / float(kolon_sayisi)
 
             for raf_idx in range(6):
                 y_baslangic = int(raf_idx * raf_yuksekligi)
                 y_bitis = int((raf_idx + 1) * raf_yuksekligi)
 
-                for col_idx in range(kolon_sayisi):
-                    x_baslangic = int(col_idx * kolon_genisligi)
-                    x_bitis = int((col_idx + 1) * kolon_genisligi)
+                raf_ref = ref_img[y_baslangic:y_bitis, 0:img_w]
+                raf_curr = curr_img[y_baslangic:y_bitis, 0:img_w]
 
-                    # Her bir ürün sütununu ayrı ayrı kes ve kıyasla (Devasa birleştirme hatalarını önler)
-                    slot_ref = ref_img[y_baslangic:y_bitis, x_baslangic:x_bitis]
-                    slot_curr = curr_img[y_baslangic:y_bitis, x_baslangic:x_bitis]
+                gray_ref = cv2.cvtColor(raf_ref, cv2.COLOR_BGR2GRAY)
+                gray_curr = cv2.cvtColor(raf_curr, cv2.COLOR_BGR2GRAY)
 
-                    gray_ref_slot = cv2.cvtColor(slot_ref, cv2.COLOR_BGR2GRAY)
-                    gray_curr_slot = cv2.cvtColor(slot_curr, cv2.COLOR_BGR2GRAY)
+                # Hafif blur ile piksel kaymalarını ve parlamaları absorbe et
+                gray_ref = cv2.GaussianBlur(gray_ref, (5, 5), 0)
+                gray_curr = cv2.GaussianBlur(gray_curr, (5, 5), 0)
 
-                    fark = cv2.absdiff(gray_ref_slot, gray_curr_slot)
-                    _, thresh_slot = cv2.threshold(fark, fark_esigi, 255, cv2.THRESH_BINARY)
+                fark = cv2.absdiff(gray_ref, gray_curr)
+                _, thresh = cv2.threshold(fark, fark_esigi, 255, cv2.THRESH_BINARY)
 
-                    morph_slot = cv2.morphologyEx(thresh_slot, cv2.MORPH_CLOSE, np.ones((3, 3), np.uint8))
-                    contours, _ = cv2.findContours(morph_slot.copy(), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+                # Gürültüyü temizle, sadece anlamlı büyük boşluk/değişim öbeklerini bırak
+                kernel = np.ones((7, 7), np.uint8)
+                thresh = cv2.morphologyEx(thresh, cv2.MORPH_OPEN, kernel)
+                thresh = cv2.morphologyEx(thresh, cv2.MORPH_CLOSE, kernel)
 
-                    for c in contours:
-                        if cv2.contourArea(c) > min_area_val:
-                            cx, cy, cw, ch = cv2.boundingRect(c)
-                            global_x = x_baslangic + cx
-                            global_y = y_baslangic + cy
-                            
-                            # Tekil ürün veya küçük eksik kutusu olarak ekle
-                            filtered_boxes.append([global_x, global_y, global_x + cw, global_y + ch])
+                contours, _ = cv2.findContours(thresh.copy(), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+
+                for c in contours:
+                    if cv2.contourArea(c) > min_area_val:
+                        x, y, w, h = cv2.boundingRect(c)
+                        global_y = y_baslangic + y
+                        # Çok küçük veya raf dışı kalan gürültüleri ele
+                        if h > (raf_yuksekligi * 0.2): 
+                            filtered_boxes.append([x, global_y, x + w, global_y + h])
 
             # Etiket (OCR) Karşılaştırma
             ref_ocr_results = reader.readtext(ref_img)
@@ -389,11 +378,11 @@ if secilen_sehir_adi and secilen_bayi_adi and ref_img is not None and 'curr_file
                         pt_y = int(c_box[0][1] - 5)
                         cv2.putText(result_img, "Etiket Uyumsuz", (pt_x, max(15, pt_y)), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 0, 0), 1)
 
-            # Eksik alanları nokta atışı küçük kırmızı kutularla işaretle
+            # Gerçek eksik/fark alanlarını kırmızı çerçeve ile işaretle
             eksik_sayisi = len(filtered_boxes)
             for idx, (startX, startY, endX, endY) in enumerate(filtered_boxes, 1):
                 cv2.rectangle(result_img, (startX, startY), (endX, endY), (0, 0, 255), 2)
-                cv2.putText(result_img, f"Eksik #{idx}", (startX + 2, startY + 14), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0, 0, 255), 1)
+                cv2.putText(result_img, f"Fark #{idx}", (startX + 5, startY + 20), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 2)
 
             # 6. Raftan Sonrası İçin Kırmızı X İşaretleri Ekleme
             kirmizi_x_baslangic_y = int(raf_yuksekligi * 6)
@@ -409,7 +398,7 @@ if secilen_sehir_adi and secilen_bayi_adi and ref_img is not None and 'curr_file
 
             cv2.rectangle(result_img, (0, 0), (img_w, 100), (0, 0, 0), -1)
             cv2.putText(result_img, f"Bayi: {secilen_bayi_adi}", (15, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
-            cv2.putText(result_img, f"Eksik: {eksik_sayisi} | 6 Raf Slot Bazlı Denetlendi", (15, 70), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 255, 0), 2)
+            cv2.putText(result_img, f"Tespit Edilen Fark: {eksik_sayisi} | İlk 6 Raf İncelendi", (15, 70), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 255, 0), 2)
 
             hesaplanan_yuzde = max(0.0, 100.0 - ((eksik_sayisi / max(1, ideal_urun_sayisi)) * 100.0))
 
@@ -423,7 +412,7 @@ if secilen_sehir_adi and secilen_bayi_adi and ref_img is not None and 'curr_file
         st.subheader("Tespit Edilen Eksikler ve Etiket Karşılaştırma Raporu")
         col_m1, col_m2, col_m3 = st.columns(3)
         col_m1.metric("📊 Raf Doğruluk Oranı (İlk 6 Raf)", f"%{st.session_state.raf_yuzdesi:.1f}")
-        col_m2.metric("⚠️ Eksik/Boşluk Alan (Kırmızı)", f"{st.session_state.eksik_sayisi} Adet")
+        col_m2.metric("⚠️ Tespit Edilen Fark (Kırmızı)", f"{st.session_state.eksik_sayisi} Adet")
         col_m3.metric("🔵 Uyuşmayan Etiket (Mavi)", f"{len(st.session_state.ocr_raporu)} Adet")
 
         if st.session_state.ocr_raporu:
@@ -431,7 +420,7 @@ if secilen_sehir_adi and secilen_bayi_adi and ref_img is not None and 'curr_file
                 for text in set(st.session_state.ocr_raporu):
                     st.markdown(f"- 🔵 `{text}`")
         else:
-            st.success("✅ İlk 6 raftaki tüm ürünler ve etiket isimleri referans görsel ile birebir uyumlu!")
+            st.success("✅ İlk 6 raftaki tüm etiket isimleri referans görsel ile uyumlu!")
 
         sonuc_gorsel_genisligi = st.slider("🔍 Sonuç Görseli Boyutunu Ayarla", 300, 2000, 800, step=100)
         st.image(st.session_state.result_img, channels="BGR", width=sonuc_gorsel_genisligi)
@@ -441,7 +430,7 @@ if secilen_sehir_adi and secilen_bayi_adi and ref_img is not None and 'curr_file
             st.download_button(
                 label="📥 Rapor Fotoğrafını İndir",
                 data=encoded_image.tobytes(),
-                file_name=f"{secilen_bayi_adi.replace(' ', '_')}_slot_analiz_sonucu.jpg",
+                file_name=f"{secilen_bayi_adi.replace(' ', '_')}_temiz_analiz_sonucu.jpg",
                 mime="image/jpeg"
             )
 else:

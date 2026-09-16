@@ -3,11 +3,10 @@ import cv2
 import numpy as np
 import requests
 import urllib.parse
-import easyocr
 from difflib import SequenceMatcher
 
 st.set_page_config(
-    page_title="Sigara Standı Planogram Denetim Sistemi",
+    page_title="Sigara Standı Gelişmiş Planogram Denetim Sistemi",
     page_icon="🚬",
     layout="wide",
     initial_sidebar_state="expanded"
@@ -24,13 +23,6 @@ hide_st_style = """
     </style>
 """
 st.markdown(hide_st_style, unsafe_allow_html=True)
-
-@st.cache_resource
-def ocr_okuyucu_yukle():
-    return easyocr.Reader(['tr', 'en'], gpu=False)
-
-with st.spinner("AI Planogram motoru hazırlanıyor..."):
-    reader = ocr_okuyucu_yukle()
 
 def resmi_boyutlandir(img, max_genislik=1000):
     if img is None:
@@ -52,7 +44,7 @@ if "authenticated" not in st.session_state:
     st.session_state.authenticated = False
 
 if not st.session_state.authenticated:
-    st.title("🔐 Planogram & Raf Denetim Sistemi - Giriş")
+    st.title("🔐 Gelişmiş Planogram & Denetim Sistemi - Giriş")
     st.markdown("<p style='color: gray; font-size: 14px; margin-top: -15px;'>Developed by Hakan</p>", unsafe_allow_html=True)
 
     sifre_input = st.text_input("Şifre", type="password")
@@ -65,9 +57,9 @@ if not st.session_state.authenticated:
     st.stop()
 
 st.sidebar.markdown("---")
-st.sidebar.header("Planogram Eşleşme Ayarları")
+st.sidebar.header("Öznitelik ve Eşleşme Ayarları")
 kolon_sayisi = st.sidebar.slider("Her Raftaki Slot / Ürün Sayısı", 8, 16, 12, step=1)
-benzerlik_farki_esigi = st.sidebar.slider("Planogram Uyumsuzluk Hassasiyeti", 0.1, 0.8, 0.35, step=0.05)
+orb_esik_orani = st.sidebar.slider("ORB Benzerlik Eşiği (Hassasiyet)", 0.2, 0.8, 0.45, step=0.05)
 
 YANDEX_ROOT_PUBLIC_KEY = "https://disk.yandex.com.tr/d/ikCHPwREiCVv_g"
 
@@ -190,7 +182,7 @@ def yandex_bayi_gorseli_getir(public_key, bayi_path):
 col_baslik, col_cikis = st.columns([5, 1])
 with col_baslik:
     st.title("SİGARA STANDI PLANOGRAM DENETİM SİSTEMİ")
-    st.markdown("<p style='color: gray; font-size: 14px; margin-top: -15px;'>Planogram Compliance & Product Mismatch Engine</p>", unsafe_allow_html=True)
+    st.markdown("<p style='color: gray; font-size: 14px; margin-top: -15px;'>Advanced ORB Feature-Based Compliance Engine</p>", unsafe_allow_html=True)
 
 with col_cikis:
     st.write("")
@@ -250,7 +242,7 @@ st.markdown("---")
 ref_img = None
 hata_mesaji = None
 if secilen_bayi_path:
-    with st.spinner(f"'{secilen_bayi_adi}' için Planogram Referansı Yükleniyor..."):
+    with st.spinner(f"'{secilen_bayi_adi}' için Referans Planogram Yükleniyor..."):
         ref_img, hata_mesaji = yandex_bayi_gorseli_getir(YANDEX_ROOT_PUBLIC_KEY, secilen_bayi_path)
 
 col_up1, col_up2 = st.columns(2)
@@ -293,8 +285,8 @@ if "analiz_yapildi" not in st.session_state:
     st.session_state.analiz_yapildi = False
 
 if secilen_sehir_adi and secilen_bayi_adi and ref_img is not None and 'curr_file' in locals() and curr_file is not None and 'curr_img' in locals() and curr_img is not None:
-    if st.button("🚀 Planogram Uyumsuzluklarını Denetle", type="primary"):
-        with st.spinner("Referans planogram ile saha fotoğrafı slot bazlı karşılaştırılıyor..."):
+    if st.button("🚀 Gelişmiş Öznitelik Tabanlı Planogram Denetimi", type="primary"):
+        with st.spinner("ORB Özellik Eşleme motoru çalışıyor (Açı ve yerleşim farkları taranıyor)..."):
 
             img_h, img_w = ref_img.shape[:2]
             curr_resized = cv2.resize(curr_img, (img_w, img_h), interpolation=cv2.INTER_AREA)
@@ -306,7 +298,10 @@ if secilen_sehir_adi and secilen_bayi_adi and ref_img is not None and 'curr_file
             raf_yuksekligi = img_h / 6.0
             slot_genisligi = img_w / float(kolon_sayisi)
 
-            # PLANOGRAM & SLOT BAZLI YAPISAL KARŞILAŞTIRMA (Yer Değişikliği / Uyumsuzluk Tespiti)
+            # ORB Dedektörü Tanımla
+            orb = cv2.ORB_create(nfeatures=500)
+
+            # SLOT BAZLI ORB ÖZNİTELİK VE BENZERLİK ANALİZİ
             for raf_idx in range(6):
                 y_baslangic = int(raf_idx * raf_yuksekligi)
                 y_bitis = int((raf_idx + 1) * raf_yuksekligi)
@@ -315,28 +310,36 @@ if secilen_sehir_adi and secilen_bayi_adi and ref_img is not None and 'curr_file
                     x_baslangic = int(col_idx * slot_genisligi)
                     x_bitis = int((col_idx + 1) * slot_genisligi)
 
-                    # Referans slot (İdeal Planogram)
                     ref_slot = ref_img[y_baslangic + int(raf_yuksekligi*0.1): y_bitis - int(raf_yuksekligi*0.1), 
                                        x_baslangic + 5: x_bitis - 5]
-                    
-                    # Saha slotu (Gerçek Durum)
                     curr_slot = curr_resized[y_baslangic + int(raf_yuksekligi*0.1): y_bitis - int(raf_yuksekligi*0.1), 
                                              x_baslangic + 5: x_bitis - 5]
 
                     if ref_slot.size == 0 or curr_slot.size == 0:
                         continue
 
-                    # Gri tonlamaya çevirip yapısal farka (Structural Difference / Mean Absolute Difference) bakıyoruz
                     ref_gray = cv2.cvtColor(ref_slot, cv2.COLOR_BGR2GRAY)
                     curr_gray = cv2.cvtColor(curr_slot, cv2.COLOR_BGR2GRAY)
 
-                    # Normalize edilmiş mutlak fark
-                    fark = np.mean(cv2.absdiff(ref_gray, curr_gray)) / 255.0
+                    # Öznitelik çıkarımı
+                    kp1, des1 = orb.detectAndCompute(ref_gray, None)
+                    kp2, des2 = orb.detectAndCompute(curr_gray, None)
 
-                    # Eğer fark belirlenen eşikten büyükse, bu slotta planogram dışı ürün var veya yer değişmiş demektir
-                    if fark > benzerlik_farki_esigi:
+                    match_skoru = 0.0
+                    if des1 is not None and des2 is not None and len(des1) > 0 and len(des2) > 0:
+                        bf = cv2.BFMatcher(cv2.NORM_HAMMING, crossCheck=True)
+                        matches = bf.match(des1, des2)
+                        # Eşleşme oranını normalize et
+                        match_skoru = len(matches) / max(len(kp1), len(kp2), 1)
+                    else:
+                        # Eğer öznitelik çıkarılamadıysa yapısal mutlak farka başvur
+                        diff = np.mean(cv2.absdiff(ref_gray, curr_gray)) / 255.0
+                        match_skoru = 1.0 - diff
+
+                    # Eğer ORB eşleşme skoru belirlenen eşiğin altındaysa, ürün farklı veya yanlış yerleştirilmiş demektir
+                    if match_skoru < orb_esik_orani:
                         uyumsuz_slotlar.append([x_baslangic, y_baslangic, x_bitis, y_bitis])
-                        aksiyon_maddeleri.append(f"{raf_idx + 1}. Raf, {col_idx + 1}. Slot noktasında planogram dışı ürün/yerleşim uyumsuzluğu tespit edildi.")
+                        aksiyon_maddeleri.append(f"{raf_idx + 1}. Raf, {col_idx + 1}. Slot noktasında ürün/etiket planogram ile uyuşmuyor (Yanlış yerleşim tespit edildi).")
 
             uyumsuz_sayisi = len(uyumsuz_slotlar)
             for idx, (startX, startY, endX, endY) in enumerate(uyumsuz_slotlar, 1):
@@ -356,7 +359,7 @@ if secilen_sehir_adi and secilen_bayi_adi and ref_img is not None and 'curr_file
 
             cv2.rectangle(result_img, (0, 0), (img_w, 100), (0, 0, 0), -1)
             cv2.putText(result_img, f"Bayi: {secilen_bayi_adi}", (15, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
-            cv2.putText(result_img, f"Planogram Uyumsuzluk: {uyumsuz_sayisi} Slot", (15, 70), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 255, 0), 2)
+            cv2.putText(result_img, f"Planogram Uyumsuzluk (ORB): {uyumsuz_sayisi} Slot", (15, 70), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 255, 0), 2)
 
             hesaplanan_yuzde = max(0.0, 100.0 - ((uyumsuz_sayisi / max(1, ideal_urun_sayisi)) * 100.0))
 
@@ -377,7 +380,7 @@ if secilen_sehir_adi and secilen_bayi_adi and ref_img is not None and 'curr_file
             for aksiyon in st.session_state.aksiyon_maddeleri:
                 st.markdown(f"- ⚠️ {aksiyon}")
         else:
-            st.success("✅ Tebrikler! Saha fotoğrafı referans planogram şablonu ile birebir uyumlu.")
+            st.success("✅ Tebrikler! Saha fotoğrafı ORB özellik analizi ile referans şablonla tam uyumlu.")
 
         sonuc_gorsel_genisligi = st.slider("🔍 Denetim Görseli Boyutunu Ayarla", 300, 2000, 800, step=100)
         st.image(st.session_state.result_img, channels="BGR", width=sonuc_gorsel_genisligi)
@@ -387,7 +390,7 @@ if secilen_sehir_adi and secilen_bayi_adi and ref_img is not None and 'curr_file
             st.download_button(
                 label="📥 Planogram Raporunu İndir",
                 data=encoded_image.tobytes(),
-                file_name=f"{secilen_bayi_adi.replace(' ', '_')}_planogram_rapor.jpg",
+                file_name=f"{secilen_bayi_adi.replace(' ', '_')}_orb_planogram_rapor.jpg",
                 mime="image/jpeg"
             )
 else:

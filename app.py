@@ -191,7 +191,7 @@ with col_cikis:
         st.rerun()
 
 st.markdown("---")
-st.subheader("1. Lokasyon dan Bayi Seçimi")
+st.subheader("1. Lokasyon ve Bayi Seçimi")
 
 dinamik_sehirler, sehir_hata = yandex_sehirleri_getir(YANDEX_ROOT_PUBLIC_KEY)
 col_s1, col_s2 = st.columns(2)
@@ -284,7 +284,7 @@ if "analiz_yapildi" not in st.session_state:
 
 if secilen_sehir_adi and secilen_bayi_adi and ref_img is not None and 'curr_file' in locals() and curr_file is not None and 'curr_img' in locals() and curr_img is not None:
     if st.button("🚀 Renk Histogramı ile Planogram Denetle", type="primary"):
-        with st.spinner("Renk histogramı ve her raf için gerçek paket sayımı yapılıyor..."):
+        with st.spinner("Renk histogramı ve her raf için hassas paket sayımı yapılıyor..."):
 
             img_h, img_w = ref_img.shape[:2]
             curr_resized = cv2.resize(curr_img, (img_w, img_h), interpolation=cv2.INTER_AREA)
@@ -299,30 +299,28 @@ if secilen_sehir_adi and secilen_bayi_adi and ref_img is not None and 'curr_file
                 y_baslangic = int(img_h * raf_oranlari[raf_idx])
                 y_bitis = int(img_h * raf_oranlari[raf_idx + 1])
                 
-                # Her rafın kendi içindeki gerçek paket adetlerini dikey profil/kontur çıkararak bulalım
-                raf_seridi = curr_resized[y_baslangic + int((y_bitis - y_baslangic)*0.1): y_bitis - int((y_bitis - y_baslangic)*0.1), :]
-                gray_raf = cv2.cvtColor(raf_seridi, cv2.COLOR_BGR2GRAY)
-                
-                # Yatay eksendeki dikey kenarları veya paket geçişlerini bulmak için dikey projeksiyon analizi
-                kolon_profil = np.sum(gray_raf < 150, axis=0) # Koyu paket alanlarının yoğunluğu
-                
-                # Yerel tepeleri (peak) sayarak o raftaki gerçek ürün/paket adetini dinamik hesapla
-                # Eşik değerine göre paket geçişlerini sayıyoruz
-                aktif_paket_sayisi = 0
-                esik_deger = np.max(kolon_profil) * 0.25
-                cikti_tepe = False
-                for val in kolon_profil:
-                    if val > esik_deger and not cikti_tepe:
-                        aktif_paket_sayisi += 1
-                        cikti_tepe = True
-                    elif val <= esik_deger:
-                        cikti_tepe = False
+                # Her rafın üzerindeki gerçek dolu paketleri incelemek için ince dikey dilim taraması (Örn: 21 potansiyel slot)
+                aktif_slot_sayisi = 0
+                test_kolon_adedi = 21
+                dilim_genislik = img_w / float(test_kolon_adedi)
 
-                # Eğer görsel kalitesinden ötürü sayım çok düşük çıkarsa minimum kolon tabanına sabitleyelim, çok yüksek çıkarsa sınırlandıralim
-                gercek_adet = max(8, min(25, aktif_paket_sayisi))
-                raf_urun_sayilari[raf_idx + 1] = gercek_adet
+                for c_idx in range(test_kolon_adedi):
+                    x_b = int(c_idx * dilim_genislik)
+                    x_t = int((c_idx + 1) * dilim_genislik)
 
-                # Histogram karşılaştırması (Uyumsuzluk tespiti için standart tarama)
+                    # Dilim içindeki bölgeyi al
+                    ornek_bolge = curr_resized[y_baslangic + int((y_bitis - y_baslangic)*0.2): y_bitis - int((y_bitis - y_baslangic)*0.1), x_b + 2: x_t - 2]
+                    if ornek_bolge.size > 0:
+                        gray_parca = cv2.cvtColor(ornek_bolge, cv2.COLOR_BGR2GRAY)
+                        # Eğer parça boş değilse (stand arka planından farklı bir renk/doku yoğunluğu varsa) paket var sayalım
+                        if np.std(gray_parca) > 12 and np.mean(gray_parca) < 220:
+                            aktif_slot_sayisi += 1
+
+                # Her raf için tespit edilen gerçek ürün sayısını sınırlar içinde kaydet
+                gercek_raf_adedi = max(5, min(22, aktif_slot_sayisi))
+                raf_urun_sayilari[raf_idx + 1] = gercek_raf_adedi
+
+                # Standart planogram renk uyumsuzluğu denetimi
                 slot_genisligi = img_w / float(kolon_sayisi)
                 for col_idx in range(kolon_sayisi):
                     x_baslangic = int(col_idx * slot_genisligi)
@@ -353,7 +351,7 @@ if secilen_sehir_adi and secilen_bayi_adi and ref_img is not None and 'curr_file
 
             uyumsuz_sayisi = len(uyumsuz_slotlar)
 
-            # Her raf için ayrı ve doğru hesaplanan paket adetlerini görsel üzerine yazdırıyoruz
+            # Raf etiketlerini ve her rafa ait doğru dinamik paket adetlerini görsel üzerine yazdırıyoruz
             for raf_idx in range(7):
                 y_baslangic = int(img_h * raf_oranlari[raf_idx])
                 y_bitis = int(img_h * raf_oranlari[raf_idx + 1])

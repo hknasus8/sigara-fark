@@ -5,7 +5,7 @@ import requests
 import urllib.parse
 
 st.set_page_config(
-    page_title="Sigara Standı Planogram Denetim Sistemi",
+    page_title="Sigara Standı Kurumsal Planogram Denetim Sistemi",
     page_icon="🚬",
     layout="wide",
     initial_sidebar_state="expanded"
@@ -43,7 +43,7 @@ if "authenticated" not in st.session_state:
     st.session_state.authenticated = False
 
 if not st.session_state.authenticated:
-    st.title("🔐 Renk Histogramı Planogram Sistemi - Giriş")
+    st.title("🔐 Kurumsal Planogram Denetim Sistemi - Giriş")
     st.markdown("<p style='color: gray; font-size: 14px; margin-top: -15px;'>Developed by Hakan</p>", unsafe_allow_html=True)
 
     sifre_input = st.text_input("Şifre", type="password")
@@ -56,9 +56,9 @@ if not st.session_state.authenticated:
     st.stop()
 
 st.sidebar.markdown("---")
-st.sidebar.header("Denetim ve Slot Ayarları")
+st.sidebar.header("Kurumsal Denetim Parametreleri")
 kolon_sayisi = st.sidebar.slider("Stand Kolon (Slot) Sayısı", 10, 25, 11, step=1)
-renk_fark_esigi = st.sidebar.slider("Renk Farklılığı Hassasiyet Eşiği", 0.1, 0.6, 0.28, step=0.02)
+benzerlik_esigi = st.sidebar.slider("Yapısal Eşleşme Eşiği (PM Standart)", 0.30, 0.80, 0.45, step=0.05)
 
 YANDEX_ROOT_PUBLIC_KEY = "https://disk.yandex.com.tr/d/ikCHPwREiCVv_g"
 
@@ -181,7 +181,7 @@ def yandex_bayi_gorseli_getir(public_key, bayi_path):
 col_baslik, col_cikis = st.columns([5, 1])
 with col_baslik:
     st.title("SİGARA STANDI PLANOGRAM DENETİM SİSTEMİ")
-    st.markdown("<p style='color: gray; font-size: 14px; margin-top: -15px;'>Color Histogram Compliance Engine</p>", unsafe_allow_html=True)
+    st.markdown("<p style='color: gray; font-size: 14px; margin-top: -15px;'>Corporate Template Matching Engine</p>", unsafe_allow_html=True)
 
 with col_cikis:
     st.write("")
@@ -282,8 +282,8 @@ if "analiz_yapildi" not in st.session_state:
     st.session_state.analiz_yapildi = False
 
 if secilen_sehir_adi and secilen_bayi_adi and ref_img is not None and 'curr_file' in locals() and curr_file is not None and 'curr_img' in locals() and curr_img is not None:
-    if st.button("🚀 Farkları Bul ve Kırmızı Çerçevele", type="primary"):
-        with st.spinner("Görseller karşılaştırılıyor ve farklar kırmızı çerçeve içine alınıyor..."):
+    if st.button("🚀 Şablon Eşleme ile Planogram Denetle", type="primary"):
+        with st.spinner("Kurumsal şablon eşleme ve ürün tanıma algoritması çalışıyor..."):
 
             img_h, img_w = ref_img.shape[:2]
             curr_resized = cv2.resize(curr_img, (img_w, img_h), interpolation=cv2.INTER_AREA)
@@ -302,28 +302,23 @@ if secilen_sehir_adi and secilen_bayi_adi and ref_img is not None and 'curr_file
                     x_baslangic = int(col_idx * slot_genisligi)
                     x_bitis = int((col_idx + 1) * slot_genisligi)
 
-                    ref_slot = ref_img[y_baslangic + int((y_bitis - y_baslangic)*0.1): y_bitis - int((y_bitis - y_baslangic)*0.1), 
-                                       x_baslangic + 2: x_bitis - 2]
-                    curr_slot = curr_resized[y_baslangic + int((y_bitis - y_baslangic)*0.1): y_bitis - int((y_bitis - y_baslangic)*0.1), 
-                                             x_baslangic + 2: x_bitis - 2]
+                    ref_slot = ref_img[y_baslangic + int((y_bitis - y_baslangic)*0.15): y_bitis - int((y_bitis - y_baslangic)*0.15), 
+                                       x_baslangic + 3: x_bitis - 3]
+                    curr_slot = curr_resized[y_baslangic + int((y_bitis - y_baslangic)*0.15): y_bitis - int((y_bitis - y_baslangic)*0.15), 
+                                             x_baslangic + 3: x_bitis - 3]
 
                     if ref_slot.size == 0 or curr_slot.size == 0:
                         continue
 
-                    ref_hsv = cv2.cvtColor(ref_slot, cv2.COLOR_BGR2HSV)
-                    curr_hsv = cv2.cvtColor(curr_slot, cv2.COLOR_BGR2HSV)
+                    # Kurumsal Şablon Eşleme (Template Matching / Normalized Cross Correlation)
+                    try:
+                        res = cv2.matchTemplate(curr_slot, ref_slot, cv2.TM_CCOEFF_NORMED)
+                        _, max_val, _, _ = cv2.minMaxLoc(res)
+                    except:
+                        max_val = 1.0
 
-                    hist_ref = cv2.calcHist([ref_hsv], [0, 1], None, [30, 32], [0, 180, 0, 256])
-                    cv2.normalize(hist_ref, hist_ref, alpha=0, beta=1, norm_type=cv2.NORM_MINMAX)
-
-                    hist_curr = cv2.calcHist([curr_hsv], [0, 1], None, [30, 32], [0, 180, 0, 256])
-                    cv2.normalize(hist_curr, hist_curr, alpha=0, beta=1, norm_type=cv2.NORM_MINMAX)
-
-                    similarity = cv2.compareHist(hist_ref, hist_curr, cv2.HISTCMP_CORREL)
-                    fark_orani = 1.0 - max(0.0, similarity)
-
-                    if fark_orani > renk_fark_esigi:
-                        # Tespit edilen farkı kırmızı çerçeve içine al
+                    # Eğer benzerlik eşiğin altındaysa ürün yanlış veya yerinde değil demektir
+                    if max_val < benzerlik_esigi:
                         cv2.rectangle(result_img, (x_baslangic + 2, y_baslangic + 2), (x_bitis - 2, y_bitis - 2), (0, 0, 255), 3)
                         uyumsuz_slotlar.append([x_baslangic, y_baslangic, x_bitis, y_bitis])
 
@@ -331,7 +326,7 @@ if secilen_sehir_adi and secilen_bayi_adi and ref_img is not None and 'curr_file
 
             cv2.rectangle(result_img, (0, 0), (img_w, 100), (0, 0, 0), -1)
             cv2.putText(result_img, f"Bayi: {secilen_bayi_adi}", (15, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
-            cv2.putText(result_img, f"Tespit Edilen Fark (Uyumsuzluk): {uyumsuz_sayisi} Slot", (15, 70), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 0, 255), 2)
+            cv2.putText(result_img, f"Kurumsal Uyumsuzluk Tespiti: {uyumsuz_sayisi} Slot", (15, 70), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 0, 255), 2)
 
             hesaplanan_yuzde = max(0.0, 100.0 - ((uyumsuz_sayisi / max(1, ideal_urun_sayisi)) * 100.0))
 
@@ -343,10 +338,10 @@ if secilen_sehir_adi and secilen_bayi_adi and ref_img is not None and 'curr_file
     if st.session_state.analiz_yapildi and st.session_state.result_img is not None:
         col_m1, col_m2 = st.columns(2)
         col_m1.metric("📊 Planogram Uyum Oranı", f"%{st.session_state.raf_yuzdesi:.1f}")
-        col_m2.metric("⚠️ Uyumsuz/Farklı Slot", f"{st.session_state.uyumsuz_sayisi} Adet")
+        col_m2.metric("⚠️ Uyumsuz/Yer Değişen Slot", f"{st.session_state.uyumsuz_sayisi} Adet")
 
         if st.session_state.uyumsuz_sayisi == 0:
-            st.success("✅ Tebrikler! Saha fotoğrafı referans şablonla birebir uyumlu.")
+            st.success("✅ Tebrikler! Saha fotoğrafı kurumsal şablon eşleme kriterlerine göre tam uyumlu.")
 
         sonuc_gorsel_genisligi = st.slider("🔍 Denetim Görseli Boyutunu Ayarla", 300, 2000, 800, step=100)
         st.image(st.session_state.result_img, channels="BGR", width=sonuc_gorsel_genisligi)
@@ -354,12 +349,12 @@ if secilen_sehir_adi and secilen_bayi_adi and ref_img is not None and 'curr_file
         success, encoded_image = cv2.imencode(".jpg", st.session_state.result_img)
         if success:
             st.download_button(
-                label="📥 Planogram Raporunu İndir",
+                label="📥 Kurumsal Raporu İndir",
                 data=encoded_image.tobytes(),
-                file_name=f"{secilen_bayi_adi.replace(' ', '_')}_farklar_rapor.jpg",
+                file_name=f"{secilen_bayi_adi.replace(' ', '_')}_kurumsal_rapor.jpg",
                 mime="image/jpeg"
             )
 else:
-    st.info("ℹ️ Planogram analizi için şehir, bayi seçin ve sahadan gelen fotoğrafı yükleyin.")
+    st.info("ℹ️ Kurumsal analiz için şehir, bayi seçin ve sahadan gelen fotoğrafı yükleyin.")
 
 st.markdown("<br><p style='text-align: center; color: gray;'>Developed by Hakan</p>", unsafe_allow_html=True)

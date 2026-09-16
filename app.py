@@ -87,8 +87,8 @@ if not st.session_state.authenticated:
 
 st.sidebar.markdown("---")
 st.sidebar.header("Denetim ve OCR Ayarları")
-min_area_val = st.sidebar.slider("Minimum Eksik Boyutu (Hassasiyet)", 30, 2000, 90, step=10)
-fark_esigi = st.sidebar.slider("Piksel Fark Eşiği (Yoğunluk)", 10, 100, 25, step=5)
+min_area_val = st.sidebar.slider("Minimum Eksik Boyutu (Hassasiyet)", 10, 1000, 40, step=10)
+fark_esigi = st.sidebar.slider("Piksel Fark Eşiği (Yoğunluk)", 5, 80, 18, step=1)
 etiket_benzerlik_esigi = st.sidebar.slider(
     "Etiket Eşleşme Hassasiyeti (Benzerlik Eşiği)",
     0.50, 0.95, 0.72, step=0.01
@@ -322,8 +322,8 @@ if "analiz_yapildi" not in st.session_state:
     st.session_state.analiz_yapildi = False
 
 if secilen_sehir_adi and secilen_bayi_adi and ref_img is not None and 'curr_file' in locals() and curr_file is not None and 'curr_img' in locals() and curr_img is not None:
-    if st.button("Raf Raf Sıralı Denetimi Başlat", type="primary"):
-        with st.spinner("İlk 6 raf tek tek taranıyor, ürün ve etiket slotları kıyaslanıyor..."):
+    if st.button("Hassas Slot ve Ürün Denetimini Başlat", type="primary"):
+        with st.spinner("İlk 6 raf slot bazlı olarak taranıyor, küçük farklar ayıklanıyor..."):
 
             img_h, img_w = ref_img.shape[:2]
             curr_img_resized = cv2.resize(curr_img, (img_w, img_h), interpolation=cv2.INTER_AREA)
@@ -333,38 +333,42 @@ if secilen_sehir_adi and secilen_bayi_adi and ref_img is not None and 'curr_file
             filtered_boxes = []
             mismatch_details = []
 
-            # --- 6 RAF BAZLI SIRALI KONTROL MANTIĞI ---
+            # --- 6 RAF BAZLI HASSAS SLOT KONTROLÜ ---
             raf_yuksekligi = img_h / 6.0
+            kolon_sayisi = 12  # Her raftaki ortalama slot/ürün sütun sayısı
+            kolon_genisligi = img_w / float(kolon_sayisi)
 
             for raf_idx in range(6):
                 y_baslangic = int(raf_idx * raf_yuksekligi)
                 y_bitis = int((raf_idx + 1) * raf_yuksekligi)
 
-                # İlgili rafa ait referans ve saha kesitleri
-                raf_ref = ref_img[y_baslangic:y_bitis, 0:img_w]
-                raf_curr = curr_img[y_baslangic:y_bitis, 0:img_w]
+                for col_idx in range(kolon_sayisi):
+                    x_baslangic = int(col_idx * kolon_genisligi)
+                    x_bitis = int((col_idx + 1) * kolon_genisligi)
 
-                gray_raf_ref = cv2.cvtColor(raf_ref, cv2.COLOR_BGR2GRAY)
-                gray_raf_curr = cv2.cvtColor(raf_curr, cv2.COLOR_BGR2GRAY)
+                    # Her bir ürün sütununu ayrı ayrı kes ve kıyasla (Devasa birleştirme hatalarını önler)
+                    slot_ref = ref_img[y_baslangic:y_bitis, x_baslangic:x_bitis]
+                    slot_curr = curr_img[y_baslangic:y_bitis, x_baslangic:x_bitis]
 
-                # Raf bazlı mutlak fark (absolute difference)
-                fark = cv2.absdiff(gray_raf_ref, gray_raf_curr)
-                _, thresh_raf = cv2.threshold(fark, fark_esigi, 255, cv2.THRESH_BINARY)
+                    gray_ref_slot = cv2.cvtColor(slot_ref, cv2.COLOR_BGR2GRAY)
+                    gray_curr_slot = cv2.cvtColor(slot_curr, cv2.COLOR_BGR2GRAY)
 
-                morph_raf = cv2.morphologyEx(thresh_raf, cv2.MORPH_CLOSE, np.ones((5, 11), np.uint8))
-                morph_raf = cv2.morphologyEx(morph_raf, cv2.MORPH_OPEN, np.ones((3, 3), np.uint8))
+                    fark = cv2.absdiff(gray_ref_slot, gray_curr_slot)
+                    _, thresh_slot = cv2.threshold(fark, fark_esigi, 255, cv2.THRESH_BINARY)
 
-                contours, _ = cv2.findContours(morph_raf.copy(), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+                    morph_slot = cv2.morphologyEx(thresh_slot, cv2.MORPH_CLOSE, np.ones((3, 3), np.uint8))
+                    contours, _ = cv2.findContours(morph_slot.copy(), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
-                for c in contours:
-                    if cv2.contourArea(c) > min_area_val:
-                        x, y, w, h = cv2.boundingRect(c)
-                        # Gerçek koordinat sistemine çevir
-                        global_y = y_baslangic + y
-                        if (img_w * 0.01 < x < img_w * 0.99) and (global_y + h <= int(raf_yuksekligi * 6)):
-                            filtered_boxes.append([x, global_y, x + w, global_y + h])
+                    for c in contours:
+                        if cv2.contourArea(c) > min_area_val:
+                            cx, cy, cw, ch = cv2.boundingRect(c)
+                            global_x = x_baslangic + cx
+                            global_y = y_baslangic + cy
+                            
+                            # Tekil ürün veya küçük eksik kutusu olarak ekle
+                            filtered_boxes.append([global_x, global_y, global_x + cw, global_y + ch])
 
-            # Etiket (OCR) Karşılaştırma - Raf Bazlı
+            # Etiket (OCR) Karşılaştırma
             ref_ocr_results = reader.readtext(ref_img)
             curr_ocr_results = reader.readtext(curr_img)
             ref_texts = [r[1].strip().lower() for r in ref_ocr_results if len(r[1].strip()) > 2]
@@ -385,11 +389,11 @@ if secilen_sehir_adi and secilen_bayi_adi and ref_img is not None and 'curr_file
                         pt_y = int(c_box[0][1] - 5)
                         cv2.putText(result_img, "Etiket Uyumsuz", (pt_x, max(15, pt_y)), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 0, 0), 1)
 
-            # Eksik alanları kırmızı çerçeve ile işaretle
+            # Eksik alanları nokta atışı küçük kırmızı kutularla işaretle
             eksik_sayisi = len(filtered_boxes)
             for idx, (startX, startY, endX, endY) in enumerate(filtered_boxes, 1):
                 cv2.rectangle(result_img, (startX, startY), (endX, endY), (0, 0, 255), 2)
-                cv2.putText(result_img, f"Eksik #{idx}", (startX + 3, startY + 18), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 1)
+                cv2.putText(result_img, f"Eksik #{idx}", (startX + 2, startY + 14), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0, 0, 255), 1)
 
             # 6. Raftan Sonrası İçin Kırmızı X İşaretleri Ekleme
             kirmizi_x_baslangic_y = int(raf_yuksekligi * 6)
@@ -405,7 +409,7 @@ if secilen_sehir_adi and secilen_bayi_adi and ref_img is not None and 'curr_file
 
             cv2.rectangle(result_img, (0, 0), (img_w, 100), (0, 0, 0), -1)
             cv2.putText(result_img, f"Bayi: {secilen_bayi_adi}", (15, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
-            cv2.putText(result_img, f"Eksik: {eksik_sayisi} | 6 Raf Sıralı Kontrol Edildi", (15, 70), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 255, 0), 2)
+            cv2.putText(result_img, f"Eksik: {eksik_sayisi} | 6 Raf Slot Bazlı Denetlendi", (15, 70), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 255, 0), 2)
 
             hesaplanan_yuzde = max(0.0, 100.0 - ((eksik_sayisi / max(1, ideal_urun_sayisi)) * 100.0))
 
@@ -437,7 +441,7 @@ if secilen_sehir_adi and secilen_bayi_adi and ref_img is not None and 'curr_file
             st.download_button(
                 label="📥 Rapor Fotoğrafını İndir",
                 data=encoded_image.tobytes(),
-                file_name=f"{secilen_bayi_adi.replace(' ', '_')}_sirali_analiz_sonucu.jpg",
+                file_name=f"{secilen_bayi_adi.replace(' ', '_')}_slot_analiz_sonucu.jpg",
                 mime="image/jpeg"
             )
 else:

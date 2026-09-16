@@ -57,7 +57,6 @@ if not st.session_state.authenticated:
 
 st.sidebar.markdown("---")
 st.sidebar.header("Renk ve Histogram Ayarları")
-# Her raftaki ürün/slot sayısı net olarak 11'e sabitlendi
 kolon_sayisi = 11
 st.sidebar.info("ℹ️ Her raftaki slot sayısı standart olarak 11 olarak sabitlenmiştir.")
 renk_fark_esigi = st.sidebar.slider("Renk Farklılığı Hassasiyet Eşiği", 0.1, 0.6, 0.28, step=0.02)
@@ -192,7 +191,7 @@ with col_cikis:
         st.rerun()
 
 st.markdown("---")
-st.subheader("1. Lokasyon ve Bayi Seçimi")
+st.subheader("1. Lokasyon and Bayi Seçimi")
 
 dinamik_sehirler, sehir_hata = yandex_sehirleri_getir(YANDEX_ROOT_PUBLIC_KEY)
 col_s1, col_s2 = st.columns(2)
@@ -297,22 +296,23 @@ if secilen_sehir_adi and secilen_bayi_adi and ref_img is not None and 'curr_file
             aksiyon_maddeleri = []
             raf_urun_sayilari = {}
 
-            raf_yuksekligi = img_h / 6.0
+            # 6 Raf için hassas ve doğru oranlı dikey sınır oranları (4. ve 5. raflar dahil düzeltildi)
+            raf_oranlari = [0.0, 0.168, 0.335, 0.502, 0.670, 0.835, 1.0]
             slot_genisligi = img_w / float(kolon_sayisi)
 
-            # SLOT BAZLI RENK HISTOGRAMI VE RAF SAYIMI (11 Sütun)
+            # İLK 6 RAFI DOĞRU ŞEKİLDE TARA
             for raf_idx in range(6):
-                y_baslangic = int(raf_idx * raf_yuksekligi)
-                y_bitis = int((raf_idx + 1) * raf_yuksekligi)
+                y_baslangic = int(img_h * raf_oranlari[raf_idx])
+                y_bitis = int(img_h * raf_oranlari[raf_idx + 1])
                 raf_aktif_urun = 0
 
                 for col_idx in range(kolon_sayisi):
                     x_baslangic = int(col_idx * slot_genisligi)
                     x_bitis = int((col_idx + 1) * slot_genisligi)
 
-                    ref_slot = ref_img[y_baslangic + int(raf_yuksekligi*0.1): y_bitis - int(raf_yuksekligi*0.1), 
+                    ref_slot = ref_img[y_baslangic + int((y_bitis - y_baslangic)*0.1): y_bitis - int((y_bitis - y_baslangic)*0.1), 
                                        x_baslangic + 5: x_bitis - 5]
-                    curr_slot = curr_resized[y_baslangic + int(raf_yuksekligi*0.1): y_bitis - int(raf_yuksekligi*0.1), 
+                    curr_slot = curr_resized[y_baslangic + int((y_bitis - y_baslangic)*0.1): y_bitis - int((y_bitis - y_baslangic)*0.1), 
                                              x_baslangic + 5: x_bitis - 5]
 
                     if ref_slot.size == 0 or curr_slot.size == 0:
@@ -344,24 +344,14 @@ if secilen_sehir_adi and secilen_bayi_adi and ref_img is not None and 'curr_file
                 cv2.putText(result_img, f"Uyumsuz #{idx}", (startX + 2, startY + 20), cv2.FONT_HERSHEY_SIMPLEX, 0.35, (0, 0, 255), 2)
 
             for raf_idx in range(6):
-                y_baslangic = int(raf_idx * raf_yuksekligi)
-                y_merkez = y_baslangic + int(raf_yuksekligi / 2)
+                y_baslangic = int(img_h * raf_oranlari[raf_idx])
+                y_bitis = int(img_h * raf_oranlari[raf_idx + 1])
+                y_merkez = int((y_baslangic + y_bitis) / 2)
                 urun_adedi = raf_urun_sayilari.get(raf_idx + 1, 0)
                 
                 text_str = f"Raf {raf_idx+1}: {urun_adedi} Adet"
                 cv2.rectangle(result_img, (5, y_merkez - 15), (170, y_merkez + 15), (0, 0, 0), -1)
                 cv2.putText(result_img, text_str, (10, y_merkez + 5), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 2)
-
-            kirmizi_x_baslangic_y = int(raf_yuksekligi * 6)
-            if kirmizi_x_baslangic_y < img_h:
-                overlay = result_img.copy()
-                cv2.rectangle(overlay, (0, kirmizi_x_baslangic_y), (img_w, img_h), (0, 0, 50), -1)
-                cv2.addWeighted(overlay, 0.3, result_img, 0.7, 0, result_img)
-
-                for y_pos in range(kirmizi_x_baslangic_y + int(raf_yuksekligi/2), img_h, int(raf_yuksekligi)):
-                    center_x = int(img_w / 2)
-                    cv2.putText(result_img, "X - KONTROL EDILMEDI", (center_x - 150, y_pos), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
-                    cv2.line(result_img, (center_x - 180, y_pos - 20), (center_x - 160, y_pos + 10), (0, 0, 255), 3)
 
             cv2.rectangle(result_img, (0, 0), (img_w, 100), (0, 0, 0), -1)
             cv2.putText(result_img, f"Bayi: {secilen_bayi_adi}", (15, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)

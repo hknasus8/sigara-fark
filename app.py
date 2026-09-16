@@ -56,7 +56,7 @@ if not st.session_state.authenticated:
     st.stop()
 
 st.sidebar.markdown("---")
-st.sidebar.header("Renk ve Histogram Ayarları")
+st.sidebar.header("Renk and Histogram Ayarları")
 kolon_sayisi = 11
 st.sidebar.info("ℹ️ Her raftaki slot sayısı standart olarak 11 olarak sabitlenmiştir.")
 renk_fark_esigi = st.sidebar.slider("Renk Farklılığı Hassasiyet Eşiği", 0.1, 0.6, 0.28, step=0.02)
@@ -191,7 +191,7 @@ with col_cikis:
         st.rerun()
 
 st.markdown("---")
-st.subheader("1. Lokasyon and Bayi Seçimi")
+st.subheader("1. Lokasyon ve Bayi Seçimi")
 
 dinamik_sehirler, sehir_hata = yandex_sehirleri_getir(YANDEX_ROOT_PUBLIC_KEY)
 col_s1, col_s2 = st.columns(2)
@@ -270,7 +270,7 @@ with col_up2:
 
 st.markdown("---")
 st.subheader("4. Stand Kapasite Ayarı")
-ideal_urun_sayisi = st.number_input("Standda Bulunması Gereken Toplam Slot Sayısı", min_value=1, value=66, step=1)
+ideal_urun_sayisi = st.number_input("Standda Bulunması Gereken Toplam Slot Sayısı", min_value=1, value=77, step=1)
 st.markdown("---")
 
 if "result_img" not in st.session_state:
@@ -296,12 +296,12 @@ if secilen_sehir_adi and secilen_bayi_adi and ref_img is not None and 'curr_file
             aksiyon_maddeleri = []
             raf_urun_sayilari = {}
 
-            # 6 Raf için hassas ve doğru oranlı dikey sınır oranları (4. ve 5. raflar dahil düzeltildi)
-            raf_oranlari = [0.0, 0.168, 0.335, 0.502, 0.670, 0.835, 1.0]
+            # 7 Raf için eşit aralıklı/oransal dikey sınır oranları (7 rafın tamamı)
+            raf_oranlari = [0.0, 1/7, 2/7, 3/7, 4/7, 5/7, 6/7, 1.0]
             slot_genisligi = img_w / float(kolon_sayisi)
 
-            # İLK 6 RAFI DOĞRU ŞEKİLDE TARA
-            for raf_idx in range(6):
+            # 7 RAFIN TAMAMINI DOĞRU ŞEKİLDE TARA
+            for raf_idx in range(7):
                 y_baslangic = int(img_h * raf_oranlari[raf_idx])
                 y_bitis = int(img_h * raf_oranlari[raf_idx + 1])
                 raf_aktif_urun = 0
@@ -343,7 +343,7 @@ if secilen_sehir_adi and secilen_bayi_adi and ref_img is not None and 'curr_file
                 cv2.rectangle(result_img, (startX, startY), (endX, endY), (0, 0, 255), 2)
                 cv2.putText(result_img, f"Uyumsuz #{idx}", (startX + 2, startY + 20), cv2.FONT_HERSHEY_SIMPLEX, 0.35, (0, 0, 255), 2)
 
-            for raf_idx in range(6):
+            for raf_idx in range(7):
                 y_baslangic = int(img_h * raf_oranlari[raf_idx])
                 y_bitis = int(img_h * raf_oranlari[raf_idx + 1])
                 y_merkez = int((y_baslangic + y_bitis) / 2)

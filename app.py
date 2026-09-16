@@ -56,7 +56,7 @@ if not st.session_state.authenticated:
     st.stop()
 
 st.sidebar.markdown("---")
-st.sidebar.header("Renk and Histogram Ayarları")
+st.sidebar.header("Renk ve Histogram Ayarları")
 kolon_sayisi = 11
 st.sidebar.info("ℹ️ Her raftaki slot sayısı standart olarak 11 olarak sabitlenmiştir.")
 renk_fark_esigi = st.sidebar.slider("Renk Farklılığı Hassasiyet Eşiği", 0.1, 0.6, 0.28, step=0.02)
@@ -366,13 +366,12 @@ if secilen_sehir_adi and secilen_bayi_adi and ref_img is not None and 'curr_file
             st.session_state.analiz_yapildi = True
 
     if st.session_state.analiz_yapildi and st.session_state.result_img is not None:
-        st.subheader("📋 Planogram Denetim Raporu ve Saha Talimatları")
         col_m1, col_m2 = st.columns(2)
         col_m1.metric("📊 Planogram Uyum Oranı", f"%{st.session_state.raf_yuzdesi:.1f}")
         col_m2.metric("⚠️ Uyumsuz/Yer Değişen Slot", f"{st.session_state.uyumsuz_sayisi} Adet")
 
         if st.session_state.aksiyon_maddeleri:
-            st.markdown("> 🔔 **Saha Personeline Gönderilecek Anlık Düzeltme Talimatları:**")
+            st.markdown("> 🔔 **Düzeltme Talimatları:**")
             for aksiyon in st.session_state.aksiyon_maddeleri:
                 st.markdown(f"- ⚠️ {aksiyon}")
         else:

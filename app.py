@@ -330,161 +330,118 @@ if "analiz_yapildi" not in st.session_state:
 
 if secilen_sehir_adi and secilen_bayi_adi and ref_img is not None and 'curr_file' in locals() and curr_file is not None and 'curr_img' in locals() and curr_img is not None:
     if st.button("Hassas Görsel ve Etiket (OCR) Analizini Başlat", type="primary"):
-        with st.spinner("Stand arka planı, renk mimarisi ve raf yapısı doğrulanıyor..."):
+        with st.spinner("Görsel analiz ediliyor ve raflar taranıyor..."):
 
-            # --- GÖRSEL İSKELET, TON VE RENK KONTROLÜ ---
             img_h, img_w = ref_img.shape[:2]
             curr_img_resized = cv2.resize(curr_img, (img_w, img_h), interpolation=cv2.INTER_AREA)
+            curr_img = curr_img_resized 
 
-            # 1. Renk Dağılımı ve Ton Analizi
-            hsv_ref = cv2.cvtColor(ref_img, cv2.COLOR_BGR2HSV)
-            hsv_curr = cv2.cvtColor(curr_img_resized, cv2.COLOR_BGR2HSV)
+            gray_ref = cv2.cvtColor(ref_img, cv2.COLOR_BGR2GRAY)
+            gray_curr = cv2.cvtColor(curr_img, cv2.COLOR_BGR2GRAY)
 
-            hist_ref = cv2.calcHist([hsv_ref], [0, 1], None, [30, 32], [0, 180, 0, 256])
-            cv2.normalize(hist_ref, hist_ref, 0, 1, cv2.NORM_MINMAX)
+            # --- 6 RAF KONTROL MANTIĞI ---
+            raf_yuksekligi = img_h / 6.0
 
-            hist_curr = cv2.calcHist([hsv_curr], [0, 1], None, [30, 32], [0, 180, 0, 256])
-            cv2.normalize(hist_curr, hist_curr, 0, 1, cv2.NORM_MINMAX)
+            benzerlik_skoru, ssim_fark_haritasi = ssim(gray_ref, gray_curr, full=True)
+            ssim_fark_haritasi = (1.0 - ssim_fark_haritasi)
+            ssim_fark_8u = np.clip(ssim_fark_haritasi * 255, 0, 255).astype("uint8")
+            ssim_fark_8u = cv2.GaussianBlur(ssim_fark_8u, (5, 5), 0)
 
-            renk_benzerligi = cv2.compareHist(hist_ref, hist_curr, cv2.HISTCMP_CORREL)
+            _, thresh = cv2.threshold(ssim_fark_8u, fark_esigi, 255, cv2.THRESH_BINARY)
+            
+            # 6. raftan sonraki pikselleri sıfırla
+            thresh[int(raf_yuksekligi * 6):, :] = 0
 
-            # 2. Stand Mimarisi (Arka Plan ve Raflar)
-            gray_ref_blur = cv2.GaussianBlur(cv2.cvtColor(ref_img, cv2.COLOR_BGR2GRAY), (55, 55), 0)
-            gray_curr_blur = cv2.GaussianBlur(cv2.cvtColor(curr_img_resized, cv2.COLOR_BGR2GRAY), (55, 55), 0)
+            morph = cv2.morphologyEx(thresh, cv2.MORPH_CLOSE, np.ones((7, 15), np.uint8))
+            morph = cv2.morphologyEx(morph, cv2.MORPH_OPEN, np.ones((3, 3), np.uint8))
 
-            yapi_farki_matrisi = cv2.absdiff(gray_ref_blur, gray_curr_blur)
-            ortalama_yapi_farki = np.mean(yapi_farki_matrisi)
+            contours, _ = cv2.findContours(morph.copy(), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+            boxes = []
 
-            stand_tipi_uyusuyor = True
-            hata_mesaji_detayi = ""
+            for c in contours:
+                if cv2.contourArea(c) > min_area_val:
+                    x, y, w, h = cv2.boundingRect(c)
+                    if y + h <= int(raf_yuksekligi * 6):
+                        if (img_w * 0.01 < x < img_w * 0.99) and (img_h * 0.02 < y < img_h * 0.98):
+                            boxes.append([x, y, x + w, y + h])
 
-            if renk_benzerligi < 0.20:
-                stand_tipi_uyusuyor = False
-                hata_mesaji_detayi = "Genel renk mimarisi tamamen farklı."
-            elif ortalama_yapi_farki > 35:
-                stand_tipi_uyusuyor = False
-                hata_mesaji_detayi = "Standın raf sayısı veya arka planı uyuşmuyor."
+            def non_max_suppression(boxes, overlapThresh=0.15):
+                if not boxes:
+                    return []
+                boxes = np.array(boxes)
+                pick = []
+                x1, y1, x2, y2 = boxes[:, 0], boxes[:, 1], boxes[:, 2], boxes[:, 3]
+                area = (x2 - x1 + 1) * (y2 - y1 + 1)
+                idxs = np.argsort(y2)
+                while len(idxs) > 0:
+                    last = len(idxs) - 1
+                    i = idxs[last]
+                    pick.append(i)
+                    xx1 = np.maximum(x1[i], x1[idxs[:last]])
+                    yy1 = np.maximum(y1[i], y1[idxs[:last]])
+                    xx2 = np.minimum(x2[i], x2[idxs[:last]])
+                    yy2 = np.minimum(y2[i], y2[idxs[:last]])
+                    w = np.maximum(0, xx2 - xx1 + 1)
+                    h = np.maximum(0, yy2 - yy1 + 1)
+                    overlap = (w * h) / area[idxs[:last]]
+                    idxs = np.delete(idxs, np.concatenate(([last], np.where(overlap > overlapThresh)[0])))
+                return boxes[pick].astype("int")
 
-            if not stand_tipi_uyusuyor:
-                st.error(f"🚨 **UYARI: Stand Tipi ve Yapı Uyuşmazlığı!** \n\n{hata_mesaji_detayi}")
-                st.session_state.analiz_yapildi = False
-            else:
-                curr_img = curr_img_resized 
+            filtered_boxes = non_max_suppression(boxes)
 
-                gray_ref = cv2.cvtColor(ref_img, cv2.COLOR_BGR2GRAY)
-                gray_curr = cv2.cvtColor(curr_img, cv2.COLOR_BGR2GRAY)
+            # --- EasyOCR ile Etiket Karşılaştırma ---
+            ref_ocr_results = reader.readtext(ref_img)
+            curr_ocr_results = reader.readtext(curr_img)
 
-                # --- 6 RAF KONTROL MANTIĞI ---
-                # Stand dikey olarak 6 eşit rafa bölünür. 
-                # 6. raftan sonraki alanlar kontrol dışı bırakılır ve üzerlerine X atılır.
-                raf_yuksekligi = img_h / 6.0
+            mismatch_details = []
+            result_img = curr_img.copy()
+            eksik_sayisi = len(filtered_boxes)
+            hesaplanan_yuzde = max(0.0, 100.0 - ((eksik_sayisi / max(1, ideal_urun_sayisi)) * 100.0))
 
-                benzerlik_skoru, ssim_fark_haritasi = ssim(gray_ref, gray_curr, full=True)
-                ssim_fark_haritasi = (1.0 - ssim_fark_haritasi)
-                ssim_fark_8u = np.clip(ssim_fark_haritasi * 255, 0, 255).astype("uint8")
-                ssim_fark_8u = cv2.GaussianBlur(ssim_fark_8u, (5, 5), 0)
+            for idx, (startX, startY, endX, endY) in enumerate(filtered_boxes, 1):
+                cv2.rectangle(result_img, (startX, startY), (endX, endY), (0, 0, 255), 2)
+                cv2.putText(result_img, f"Eksik #{idx}", (startX + 3, startY + 18), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 1)
 
-                _, thresh = cv2.threshold(ssim_fark_8u, fark_esigi, 255, cv2.THRESH_BINARY)
-                
-                # 6. raftan sonraki pikselleri sıfırla (yani kontrol etme / eksik sayma)
-                thresh[int(raf_yuksekligi * 6):, :] = 0
+            # 6. Raftan Sonrası İçin Kırmızı X İşaretleri Ekleme
+            kirmizi_x_baslangic_y = int(raf_yuksekligi * 6)
+            if kirmizi_x_baslangic_y < img_h:
+                overlay = result_img.copy()
+                cv2.rectangle(overlay, (0, kirmizi_x_baslangic_y), (img_w, img_h), (0, 0, 50), -1)
+                cv2.addWeighted(overlay, 0.3, result_img, 0.7, 0, result_img)
 
-                morph = cv2.morphologyEx(thresh, cv2.MORPH_CLOSE, np.ones((7, 15), np.uint8))
-                morph = cv2.morphologyEx(morph, cv2.MORPH_OPEN, np.ones((3, 3), np.uint8))
+                for y_pos in range(kirmizi_x_baslangic_y + int(raf_yuksekligi/2), img_h, int(raf_yuksekligi)):
+                    center_x = int(img_w / 2)
+                    cv2.putText(result_img, "X - KONTROL EDILMEDI", (center_x - 150, y_pos), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
+                    cv2.line(result_img, (center_x - 180, y_pos - 20), (center_x - 160, y_pos + 10), (0, 0, 255), 3)
 
-                contours, _ = cv2.findContours(morph.copy(), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-                boxes = []
+            ref_texts = [r[1].strip().lower() for r in ref_ocr_results if len(r[1].strip()) > 2]
 
-                for c in contours:
-                    if cv2.contourArea(c) > min_area_val:
-                        x, y, w, h = cv2.boundingRect(c)
-                        # Sadece ilk 6 raf içindeki kutuları dikkate al
-                        if y + h <= int(raf_yuksekligi * 6):
-                            if (img_w * 0.01 < x < img_w * 0.99) and (img_h * 0.02 < y < img_h * 0.98):
-                                boxes.append([x, y, x + w, y + h])
+            for (c_box, c_text, c_prob) in curr_ocr_results:
+                clean_c_text = c_text.strip().lower()
+                if len(clean_c_text) > 2:
+                    box_y_orta = sum([pt[1] for pt in c_box]) / 4.0
+                    if box_y_orta > (raf_yuksekligi * 6):
+                        continue
 
-                def non_max_suppression(boxes, overlapThresh=0.15):
-                    if not boxes:
-                        return []
-                    boxes = np.array(boxes)
-                    pick = []
-                    x1, y1, x2, y2 = boxes[:, 0], boxes[:, 1], boxes[:, 2], boxes[:, 3]
-                    area = (x2 - x1 + 1) * (y2 - y1 + 1)
-                    idxs = np.argsort(y2)
-                    while len(idxs) > 0:
-                        last = len(idxs) - 1
-                        i = idxs[last]
-                        pick.append(i)
-                        xx1 = np.maximum(x1[i], x1[idxs[:last]])
-                        yy1 = np.maximum(y1[i], y1[idxs[:last]])
-                        xx2 = np.minimum(x2[i], x2[idxs[:last]])
-                        yy2 = np.minimum(y2[i], y2[idxs[:last]])
-                        w = np.maximum(0, xx2 - xx1 + 1)
-                        h = np.maximum(0, yy2 - yy1 + 1)
-                        overlap = (w * h) / area[idxs[:last]]
-                        idxs = np.delete(idxs, np.concatenate(([last], np.where(overlap > overlapThresh)[0])))
-                    return boxes[pick].astype("int")
+                    eslesti = metin_eslesiyor_mu(clean_c_text, ref_texts, esik=etiket_benzerlik_esigi)
 
-                filtered_boxes = non_max_suppression(boxes)
+                    if not eslesti:
+                        mismatch_details.append(c_text)
+                        pts = np.array(c_box, dtype=np.int32)
+                        cv2.polylines(result_img, [pts], isClosed=True, color=(255, 0, 0), thickness=2)
+                        pt_x = int(c_box[0][0])
+                        pt_y = int(c_box[0][1] - 5)
+                        cv2.putText(result_img, "Etiket Uyumsuz", (pt_x, max(15, pt_y)), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 0, 0), 1)
 
-                # --- EasyOCR ile Etiket Karşılaştırma ---
-                ref_ocr_results = reader.readtext(ref_img)
-                curr_ocr_results = reader.readtext(curr_img)
+            cv2.rectangle(result_img, (0, 0), (img_w, 100), (0, 0, 0), -1)
+            cv2.putText(result_img, f"Bayi: {secilen_bayi_adi}", (15, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
+            cv2.putText(result_img, f"Eksik: {eksik_sayisi} | 6 Raf Kontrol Edildi", (15, 70), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 255, 0), 2)
 
-                mismatch_details = []
-                result_img = curr_img.copy()
-                eksik_sayisi = len(filtered_boxes)
-                hesaplanan_yuzde = max(0.0, 100.0 - ((eksik_sayisi / max(1, ideal_urun_sayisi)) * 100.0))
-
-                for idx, (startX, startY, endX, endY) in enumerate(filtered_boxes, 1):
-                    cv2.rectangle(result_img, (startX, startY), (endX, endY), (0, 0, 255), 2)
-                    cv2.putText(result_img, f"Eksik #{idx}", (startX + 3, startY + 18), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 1)
-
-                # 6. Raftan Sonrası İçin Kırmızı X İşaretleri Ekleme
-                # Görselin 6. raf sonrasındaki yüksekliğini tarayıp her raf aralığına veya belirli aralıklarla X koyalım
-                kirmizi_x_baslangic_y = int(raf_yuksekligi * 6)
-                if kirmizi_x_baslangic_y < img_h:
-                    # 6. raftan sonraki alanı hafifçe karartıp üzerine uyarı X'leri koyalım
-                    overlay = result_img.copy()
-                    cv2.rectangle(overlay, (0, kirmizi_x_baslangic_y), (img_w, img_h), (0, 0, 50), -1)
-                    cv2.addWeighted(overlay, 0.3, result_img, 0.7, 0, result_img)
-
-                    # Her bir kontrol dışı kalan potansiyel raf seviyesine büyük kırmızı X yerleştir
-                    for y_pos in range(kirmizi_x_baslangic_y + int(raf_yuksekligi/2), img_h, int(raf_yuksekligi)):
-                        # X işareti çizimi (iki çapraz çizgi)
-                        center_x = int(img_w / 2)
-                        cv2.putText(result_img, "X - KONTROL EDILMEDI", (center_x - 150, y_pos), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
-                        cv2.line(result_img, (center_x - 180, y_pos - 20), (center_x - 160, y_pos + 10), (0, 0, 255), 3)
-
-                ref_texts = [r[1].strip().lower() for r in ref_ocr_results if len(r[1].strip()) > 2]
-
-                for (c_box, c_text, c_prob) in curr_ocr_results:
-                    clean_c_text = c_text.strip().lower()
-                    if len(clean_c_text) > 2:
-                        # 6. raf altındaki metinleri OCR taramasına dahil etme
-                        box_y_orta = sum([pt[1] for pt in c_box]) / 4.0
-                        if box_y_orta > (raf_yuksekligi * 6):
-                            continue
-
-                        eslesti = metin_eslesiyor_mu(clean_c_text, ref_texts, esik=etiket_benzerlik_esigi)
-
-                        if not eslesti:
-                            mismatch_details.append(c_text)
-                            pts = np.array(c_box, dtype=np.int32)
-                            cv2.polylines(result_img, [pts], isClosed=True, color=(255, 0, 0), thickness=2)
-                            pt_x = int(c_box[0][0])
-                            pt_y = int(c_box[0][1] - 5)
-                            cv2.putText(result_img, "Etiket Uyumsuz", (pt_x, max(15, pt_y)), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 0, 0), 1)
-
-                cv2.rectangle(result_img, (0, 0), (img_w, 100), (0, 0, 0), -1)
-                cv2.putText(result_img, f"Bayi: {secilen_bayi_adi}", (15, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
-                cv2.putText(result_img, f"Eksik: {eksik_sayisi} | 6 Raf Kontrol Edildi", (15, 70), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 255, 0), 2)
-
-                st.session_state.result_img = result_img
-                st.session_state.eksik_sayisi = eksik_sayisi
-                st.session_state.raf_yuzdesi = hesaplanan_yuzde
-                st.session_state.ocr_raporu = mismatch_details
-                st.session_state.analiz_yapildi = True
+            st.session_state.result_img = result_img
+            st.session_state.eksik_sayisi = eksik_sayisi
+            st.session_state.raf_yuzdesi = hesaplanan_yuzde
+            st.session_state.ocr_raporu = mismatch_details
+            st.session_state.analiz_yapildi = True
 
     if st.session_state.analiz_yapildi and st.session_state.result_img is not None:
         st.subheader("Tespit Edilen Eksikler ve Etiket (OCR) Karşılaştırma Raporu")

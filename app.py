@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """
 SIGARA STANDI PLANOGRAM DENETİM SİSTEMİ
-Gelişmiş Detay ve Sadeleştirilmiş Arayüz Sürümü
+Sadeleştirilmiş Sonuç Sürümü
 
 Kurulum:
     pip install streamlit opencv-python-headless numpy requests pillow
@@ -604,7 +604,7 @@ def analyze_planogram_grid_free(reference, field):
     cv2.rectangle(result_img, (0, 0), (w, header_height), (18, 18, 18), -1)
 
     header1 = f"TESPİT EDİLEN TOPLAM DEĞİŞİM/FARK: {fark_sayisi}"
-    header2 = f"Denetim Tamamlandı | Yöntem: Dinamik Kontur Analizi"
+    header2 = "Denetim Tamamlandı | Yöntem: Dinamik Kontur Analizi"
 
     cv2.putText(result_img, header1, (14, 29), cv2.FONT_HERSHEY_SIMPLEX, 0.72, (255, 255, 255), 2, cv2.LINE_AA)
     cv2.putText(result_img, header2, (14, 57), cv2.FONT_HERSHEY_SIMPLEX, 0.52, (200, 200, 200), 1, cv2.LINE_AA)
@@ -918,7 +918,7 @@ if st.button(
 
 
 # =========================================================
-# SONUÇ EKRANI & AÇILIM LİSTESİ
+# SONUÇ EKRANI
 # =========================================================
 if (
     st.session_state.result_img is not None
@@ -931,7 +931,7 @@ if (
 
     st.subheader("3. Analiz Sonucu")
 
-    # ORB/RANSAC kaldırıldı, tek net metrik alanı bırakıldı
+    # Sadece sade toplam fark metrik kutusu kalacak şekilde güncellendi
     st.metric(
         "🔴 TESPİT EDİLEN TOPLAM FARK",
         fark_sayisi,
@@ -958,44 +958,6 @@ if (
             mime="image/jpeg",
             use_container_width=True,
         )
-
-    # TOPLAM FARK AÇILIMI GÖSTER (Detaylı Liste & Crop Kırpma Görselleri)
-    st.divider()
-    st.subheader("📋 Tespit Edilen Farkların Detay Açılımı")
-
-    if fark_sayisi > 0 and st.session_state.results:
-        # Tablo / Expander görünümü
-        for item in st.session_state.results:
-            fid = item["id"]
-            fx, fy, fw, fh = item["x"], item["y"], item["w"], item["h"]
-            
-            with st.expander(f"🔍 Fark #{fid} Detayı (Konum: X={fx}, Y={fy})"):
-                col_info, col_crop = st.columns([1, 1])
-                
-                with col_info:
-                    st.write(f"**Fark ID:** #{fid}")
-                    st.write(f"**Koordinatlar:** X: {fx}, Y: {fy}")
-                    st.write(f"**Boyutlar:** Genişlik: {fw}px, Yükseklik: {fh}px")
-                    st.write(f"**Alan Büyüklüğü:** {int(item['alan']) * 0.001:.2f} birim")
-
-                with col_crop:
-                    # Ana işaretli veya orijinal görsel üzerinden ilgili fark bölgesini kesip (crop) göster
-                    h_img, w_img = st.session_state.result_img.shape[:2]
-                    # Güvenli kırpma sınırları
-                    pad = 10
-                    ymin, ymax = max(0, fy - pad), min(h_img, fy + fh + pad)
-                    xmin, xmax = max(0, fx - pad), min(w_img, fx + fw + pad)
-                    
-                    cropped_region = st.session_state.result_img[ymin:ymax, xmin:xmax]
-                    if cropped_region.size > 0:
-                        st.image(
-                            cropped_region,
-                            channels="BGR",
-                            caption=f"Fark #{fid} Yakın Plan Görünümü",
-                            use_container_width=True
-                        )
-    else:
-        st.info("Harika! Hiçbir fark/eksik tespit edilmedi.")
 
 else:
     st.info(

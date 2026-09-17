@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """
 SIGARA STANDI PLANOGRAM DENETİM SİSTEMİ
-Grid-Free (Izgarasız) Yüksek Hassasiyetli Dinamik Kontur Sürümü
+Dengeli ve Gürültü Filtreli Dinamik Kontur Sürümü
 
 Kurulum:
     pip install streamlit opencv-python-headless numpy requests pillow
@@ -523,12 +523,12 @@ def align_images(reference, target):
 
 
 # =========================================================
-# GRID-FREE (IZGARASIZ) YÜKSEK HASSASİYETLİ DİNAMİK KONTUR ANALİZİ
+# DENGELİ KONTUR ANALİZİ (GÜRÜLTÜ FİLTRELİ)
 # =========================================================
 def analyze_planogram_grid_free(reference, field):
     """
-    Küçük etiket eksikliklerini ve detayları kaçırmamak için 
-    hassasiyeti artırılmış dinamik kontur analizi.
+    Aşırı gürültüyü (yansıma ve gölgeleri) eleyen, 
+    sadece gerçek eksiklikleri ve etiket yokluklarını net yakalayan dengeli sürüm.
     """
     h, w = reference.shape[:2]
 
@@ -541,54 +541,22 @@ def analyze_planogram_grid_free(reference, field):
         align_images(reference, field)
     )
 
-    # Gri tonlamaya çevir ve fark haritası çıkar
-    ref_gray = cv2.cvtColor(
-        reference,
-        cv2.COLOR_BGR2GRAY,
-    )
-    tar_gray = cv2.cvtColor(
-        aligned,
-        cv2.COLOR_BGR2GRAY,
-    )
+    # Gri tonlamaya çevir
+    ref_gray = cv2.cvtColor(reference, cv2.COLOR_BGR2GRAY)
+    tar_gray = cv2.cvtColor(aligned, cv2.COLOR_BGR2GRAY)
 
-    # Gürültüyü azaltmak için hafif bulanıklaştır
-    ref_gray = cv2.GaussianBlur(
-        ref_gray,
-        (3, 3),
-        0,
-    )
-    tar_gray = cv2.GaussianBlur(
-        tar_gray,
-        (3, 3),
-        0,
-    )
+    # Hafif bulanıklaştırma ile piksel bazlı küçük parlamaları bastır
+    ref_gray = cv2.GaussianBlur(ref_gray, (5, 5), 0)
+    tar_gray = cv2.GaussianBlur(tar_gray, (5, 5), 0)
 
-    # Mutlak fark (Eşik değeri 20'ye düşürüldü - küçük farklar yakalanır)
+    # Mutlak fark (Eşik değeri 30 yapılarak ışık oyunları ve gölgeler elenir)
     diff = cv2.absdiff(ref_gray, tar_gray)
-    _, thresh = cv2.threshold(
-        diff,
-        20,
-        255,
-        cv2.THRESH_BINARY,
-    )
+    _, thresh = cv2.threshold(diff, 30, 255, cv2.THRESH_BINARY)
 
-    # Küçük etiketlerin silinmemesi için kernel küçültüldü ve iterasyon azaltıldı
-    kernel = cv2.getStructuringElement(
-        cv2.MORPH_RECT,
-        (5, 5),
-    )
-    thresh = cv2.morphologyEx(
-        thresh,
-        cv2.MORPH_CLOSE,
-        kernel,
-        iterations=1,
-    )
-    thresh = cv2.morphologyEx(
-        thresh,
-        cv2.MORPH_OPEN,
-        kernel,
-        iterations=1,
-    )
+    # Morfolojik kapanma ile etiket ve ürün alanlarındaki boşluklar bütünleştirilir
+    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (7, 7))
+    thresh = cv2.morphologyEx(thresh, cv2.MORPH_CLOSE, kernel, iterations=2)
+    thresh = cv2.morphologyEx(thresh, cv2.MORPH_OPEN, kernel, iterations=1)
 
     # Konturları bul
     contours, _ = cv2.findContours(
@@ -604,15 +572,14 @@ def analyze_planogram_grid_free(reference, field):
     for cnt in contours:
         area = cv2.contourArea(cnt)
         
-        # ETİKET VEYA KÜÇÜK DETAY FİLTRESİ: 
-        # Alan filtresi çok küçük etiketleri kaçırmayacak şekilde düşürüldü (0.00005)
-        if area < (w * h * 0.00005):
+        # GÜRÜLTÜ FİLTRESİ: Çok küçük yansımalar ve devasa genel alan kaymaları elenir.
+        if area < (w * h * 0.0002) or area > (w * h * 0.15):
             continue
 
         x, y, bw, bh = cv2.boundingRect(cnt)
         fark_sayisi += 1
 
-        # Kırmızı çerçeve çiz
+        # Kırmızı çerçeve çiz (Daha ince ve net çizgi)
         cv2.rectangle(
             result_img,
             (x, y),
@@ -646,47 +613,14 @@ def analyze_planogram_grid_free(reference, field):
         )
 
     # Üst bilgi şeridi
-    header_height = max(
-        72,
-        int(h * 0.055),
-    )
-    cv2.rectangle(
-        result_img,
-        (0, 0),
-        (w, header_height),
-        (18, 18, 18),
-        -1,
-    )
+    header_height = max(72, int(h * 0.055))
+    cv2.rectangle(result_img, (0, 0), (w, header_height), (18, 18, 18), -1)
 
-    header1 = (
-        f"TESPİT EDİLEN TOPLAM DEĞİŞİM/FARK: {fark_sayisi}"
-    )
-    header2 = (
-        f"Hizalama: {method} | "
-        f"Inlier: {inliers} | "
-        "Yöntem: Yüksek Hassasiyetli Kontur Analizi"
-    )
+    header1 = f"TESPİT EDİLEN TOPLAM DEĞİŞİM/FARK: {fark_sayisi}"
+    header2 = f"Hizalama: {method} | Inlier: {inliers} | Yöntem: Dengeli Kontur Analizi"
 
-    cv2.putText(
-        result_img,
-        header1,
-        (14, 29),
-        cv2.FONT_HERSHEY_SIMPLEX,
-        0.72,
-        (255, 255, 255),
-        2,
-        cv2.LINE_AA,
-    )
-    cv2.putText(
-        result_img,
-        header2,
-        (14, 57),
-        cv2.FONT_HERSHEY_SIMPLEX,
-        0.52,
-        (200, 200, 200),
-        1,
-        cv2.LINE_AA,
-    )
+    cv2.putText(result_img, header1, (14, 29), cv2.FONT_HERSHEY_SIMPLEX, 0.72, (255, 255, 255), 2, cv2.LINE_AA)
+    cv2.putText(result_img, header2, (14, 57), cv2.FONT_HERSHEY_SIMPLEX, 0.52, (200, 200, 200), 1, cv2.LINE_AA)
 
     summary = {
         "fark": fark_sayisi,
@@ -721,7 +655,7 @@ def build_report(
         ),
         "",
         (
-            "Yöntem: Yüksek Hassasiyetli Dinamik Kontur "
+            "Yöntem: Dengeli Dinamik Kontur "
             "Fark Analizi"
         ),
         f"Toplam Tespit Edilen Fark: {summary['fark']}",
@@ -804,10 +738,8 @@ with st.sidebar:
     st.header("⚙️ Denetim Ayarları")
 
     st.caption(
-        "Sistem yüksek hassasiyetli dinamik "
-        "kontur analizi ile çalışmaktadır. "
-        "Etiketler ve küçük eksikler dahil "
-        "otomatik tespit edilir."
+        "Sistem parlamaları ve gölgeleri filtreleyen "
+        "dengeli dinamik kontur analizi ile çalışmaktadır."
     )
 
     if st.button(
@@ -1021,7 +953,7 @@ if st.button(
     st.session_state.report = ""
 
     with st.spinner(
-        "Fotoğraflar hizalanıyor ve yüksek hassasiyetle "
+        "Fotoğraflar hizalanıyor ve dengeli "
         "fark analizi yapılıyor..."
     ):
         result_img, results, summary = (

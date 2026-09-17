@@ -15,7 +15,6 @@ Yandex klasör yapısı için mevcut public key korunmuştur.
 import hashlib
 import re
 import urllib.parse
-from difflib import SequenceMatcher
 
 import cv2
 import numpy as np
@@ -56,13 +55,6 @@ DEFAULT_COLS = 11
 
 # Denetim yalnızca ilk N rafı kapsar (talep: sadece ilk 6 raf kontrol edilecek).
 ANALYZE_ROW_LIMIT = 6
-
-# Her slotun alt kısmındaki ürün etiketinin (fiyat/isim etiketi) yaklaşık
-# yükseklik oranı. Etiket-ürün eşleşme kontrolü bu bölge üzerinden yapılır.
-LABEL_HEIGHT_FRACTION = 0.18
-
-# Etiket OCR metni ile ürün paketi OCR metni arasındaki benzerlik eşiği.
-LABEL_MATCH_RATIO_THRESHOLD = 0.45
 
 # Fark karar eşikleri.
 DIFF_SCORE_THRESHOLD = 0.36
@@ -786,76 +778,6 @@ def crop_slot(
     return a
 
 
-def crop_label_region(
-    img,
-    box,
-    frac=LABEL_HEIGHT_FRACTION,
-    x_pad=0.05,
-):
-    """
-    Slotun alt kısmındaki etiket (ürün adı yazan küçük etiket) bölgesini
-    kırpar. Koordinatları (çizim için) da birlikte döndürür.
-    """
-    _, _, x1, y1, x2, y2 = box
-
-    width = x2 - x1
-    height = y2 - y1
-
-    label_h = max(
-        6,
-        int(round(height * frac)),
-    )
-
-    px = max(
-        2,
-        int(width * x_pad),
-    )
-
-    ly1 = max(y1, y2 - label_h)
-    lx1 = x1 + px
-    lx2 = x2 - px
-
-    region = img[ly1:y2, lx1:lx2]
-
-    return region, (lx1, ly1, lx2, y2)
-
-
-def crop_product_region(
-    img,
-    box,
-    frac=LABEL_HEIGHT_FRACTION,
-    x_pad=0.04,
-    y_pad_top=0.08,
-):
-    """
-    Slotun etiketin üstünde kalan, ürün paketinin göründüğü bölgesini kırpar.
-    """
-    _, _, x1, y1, x2, y2 = box
-
-    width = x2 - x1
-    height = y2 - y1
-
-    label_h = max(
-        6,
-        int(round(height * frac)),
-    )
-
-    px = max(
-        2,
-        int(width * x_pad),
-    )
-
-    py_top = max(
-        2,
-        int(height * y_pad_top),
-    )
-
-    py1 = y1 + py_top
-    py2 = max(py1 + 4, y2 - label_h)
-
-    return img[py1:py2, x1 + px:x2 - px]
-
-
 # =========================================================
 # SLOT METRİKLERİ
 # =========================================================
@@ -1338,8 +1260,6 @@ def analyze_planogram(
 ):
     h, w = reference.shape[:2]
 
-    ocr_available, ocr_error = check_tesseract_available()
-
     field = cv2.resize(
         field,
         (w, h),
@@ -1439,66 +1359,6 @@ def analyze_planogram(
             cv2.LINE_AA,
         )
 
-        # -------------------------------------------------
-        # ÜRÜN ADI <-> ETİKET ADI EŞLEŞME KONTROLÜ
-        # Saha fotoğrafındaki her slotta, üstteki paket görseli
-        # ile altındaki fiyat/isim etiketinin OCR metinleri
-        # karşılaştırılır. Uyumluysa etiket yeşil, uyumsuzsa
-        # kırmızı çerçeve içine alınır.
-        # -------------------------------------------------
-        label_region, label_coords = crop_label_region(
-            aligned,
-            box,
-        )
-
-        if ocr_available:
-            product_region = crop_product_region(
-                aligned,
-                box,
-            )
-
-            product_text = ocr_text_raw(
-                product_region,
-                psm="6",
-            )
-
-            label_text = ocr_text_raw(
-                label_region,
-                psm="7",
-            )
-        else:
-            product_text = ""
-            label_text = ""
-
-        etiket_uyum = label_matches_product(
-            product_text,
-            label_text,
-        )
-
-        metrics["etiket_urun_metni"] = product_text
-        metrics["etiket_metni"] = label_text
-        metrics["etiket_uyumlu"] = etiket_uyum
-
-        lx1, ly1, lx2, ly2 = label_coords
-
-        if etiket_uyum is True:
-            label_color = (0, 200, 0)
-            label_thickness = 3
-        elif etiket_uyum is False:
-            label_color = (0, 0, 255)
-            label_thickness = 3
-        else:
-            label_color = (150, 150, 150)
-            label_thickness = 1
-
-        cv2.rectangle(
-            result_img,
-            (lx1, ly1),
-            (lx2, ly2),
-            label_color,
-            label_thickness,
-        )
-
     fark = sum(
         1
         for x in results
@@ -1515,18 +1375,6 @@ def analyze_planogram(
         1
         for x in results
         if x["durum"] == "UYUMLU"
-    )
-
-    etiket_hatali = sum(
-        1
-        for x in results
-        if x.get("etiket_uyumlu") is False
-    )
-
-    etiket_belirsiz = sum(
-        1
-        for x in results
-        if x.get("etiket_uyumlu") is None
     )
 
     header_height = max(
@@ -1551,8 +1399,6 @@ def analyze_planogram(
     header2 = (
         f"Hizalama: {method} | "
         f"Inlier: {inliers} | "
-        f"Etiket Hatali: {etiket_hatali} | "
-        f"Etiket Belirsiz: {etiket_belirsiz} | "
         f"Kontrol edilen raf: ilk {max_check_rows}"
     )
 
@@ -1585,176 +1431,12 @@ def analyze_planogram(
             "fark": fark,
             "supheli": supheli,
             "uyumlu": uyumlu,
-            "etiket_hatali": etiket_hatali,
-            "etiket_belirsiz": etiket_belirsiz,
             "kontrol_edilen_raf": max_check_rows,
-            "ocr_available": ocr_available,
-            "ocr_error": ocr_error,
             "hizalama_ok": aligned_ok,
             "hizalama": method,
             "inliers": inliers,
         },
     )
-
-
-# =========================================================
-# OCR - YARDIMCI
-# =========================================================
-def ocr_brands(img):
-    try:
-        import pytesseract
-    except Exception:
-        return []
-
-    try:
-        gray = cv2.cvtColor(
-            img,
-            cv2.COLOR_BGR2GRAY,
-        )
-
-        gray = cv2.resize(
-            gray,
-            None,
-            fx=1.5,
-            fy=1.5,
-            interpolation=cv2.INTER_CUBIC,
-        )
-
-        clahe = cv2.createCLAHE(
-            clipLimit=2.5,
-            tileGridSize=(8, 8),
-        )
-
-        gray = clahe.apply(gray)
-
-        _, binary = cv2.threshold(
-            gray,
-            0,
-            255,
-            cv2.THRESH_BINARY
-            + cv2.THRESH_OTSU,
-        )
-
-        text = pytesseract.image_to_string(
-            binary,
-            config="--oem 3 --psm 11",
-        ).upper()
-
-        found = []
-
-        for brand in BRANDS:
-            if (
-                brand in text
-                and brand not in found
-            ):
-                found.append(brand)
-
-        return found
-
-    except Exception:
-        return []
-
-
-def check_tesseract_available():
-    """
-    pytesseract kütüphanesi kurulu olsa bile, sunucuda gerçek
-    tesseract-ocr çalıştırılabilir dosyası bulunmazsa OCR sessizce
-    boş sonuç döner ve tüm etiket kontrolleri 'BELİRSİZ' çıkar.
-    Bu fonksiyon motorun fiilen çalışıp çalışmadığını netleştirir.
-    """
-    try:
-        import pytesseract
-
-        pytesseract.get_tesseract_version()
-        return True, None
-
-    except Exception as exc:
-        return False, str(exc)
-
-
-def ocr_text_raw(img_region, psm="7"):
-    """
-    Küçük bir bölgeden (etiket ya da ürün paketi) ham, normalize edilmiş
-    metin okur. pytesseract kurulu değilse ya da bölge okunamıyorsa
-    boş string döner (okunamadı anlamına gelir).
-    """
-    try:
-        import pytesseract
-    except Exception:
-        return ""
-
-    if img_region is None or img_region.size == 0:
-        return ""
-
-    try:
-        gray = cv2.cvtColor(
-            img_region,
-            cv2.COLOR_BGR2GRAY,
-        )
-
-        gray = cv2.resize(
-            gray,
-            None,
-            fx=2.0,
-            fy=2.0,
-            interpolation=cv2.INTER_CUBIC,
-        )
-
-        clahe = cv2.createCLAHE(
-            clipLimit=2.5,
-            tileGridSize=(8, 8),
-        )
-
-        gray = clahe.apply(gray)
-
-        _, binary = cv2.threshold(
-            gray,
-            0,
-            255,
-            cv2.THRESH_BINARY
-            + cv2.THRESH_OTSU,
-        )
-
-        text = pytesseract.image_to_string(
-            binary,
-            config=f"--oem 3 --psm {psm}",
-        )
-
-        return normalize_text(text)
-
-    except Exception:
-        return ""
-
-
-def label_matches_product(product_text, label_text):
-    """
-    Ürün paketi üzerindeki (OCR) metin ile altındaki etiket metnini
-    karşılaştırır.
-
-    Dönüş:
-        True  -> eşleşiyor (yeşil çerçeve)
-        False -> eşleşmiyor (kırmızı çerçeve)
-        None  -> ikisinden biri okunamadı, karar verilemedi (gri çerçeve)
-    """
-    product_text = (product_text or "").strip()
-    label_text = (label_text or "").strip()
-
-    if not product_text or not label_text:
-        return None
-
-    if (
-        product_text in label_text
-        or label_text in product_text
-    ):
-        return True
-
-    ratio = SequenceMatcher(
-        None,
-        product_text,
-        label_text,
-    ).ratio()
-
-    return ratio >= LABEL_MATCH_RATIO_THRESHOLD
 
 
 # =========================================================
@@ -1784,8 +1466,6 @@ def build_report(
         f"FARK: {summary['fark']}",
         f"ŞÜPHELİ: {summary['supheli']}",
         f"UYUMLU: {summary['uyumlu']}",
-        f"ETİKET HATALI: {summary.get('etiket_hatali', 0)}",
-        f"ETİKET BELİRSİZ: {summary.get('etiket_belirsiz', 0)}",
         f"Tanımlı kapasite: {capacity}",
         (
             f"Hizalama: {summary['hizalama']} "
@@ -1798,16 +1478,6 @@ def build_report(
     for item in results:
         # .get + safe_float kullanıldığı için eski sonuç
         # kayıtları da rapor ekranını bozmaz.
-        etiket_durum = (
-            "UYUMLU"
-            if item.get("etiket_uyumlu") is True
-            else (
-                "HATALI"
-                if item.get("etiket_uyumlu") is False
-                else "BELİRSİZ"
-            )
-        )
-
         lines.append(
             f"R{item.get('raf', 0)}/"
             f"S{item.get('slot', 0)} | "
@@ -1816,8 +1486,7 @@ def build_report(
             f"Yapı=%{safe_float(item.get('ssim')) * 100:.1f} | "
             f"Renk=%{safe_float(item.get('renk')) * 100:.1f} | "
             f"Kenar=%{safe_float(item.get('kenar')) * 100:.1f} | "
-            f"ORB=%{safe_float(item.get('orb')) * 100:.1f} | "
-            f"Etiket={etiket_durum}"
+            f"ORB=%{safe_float(item.get('orb')) * 100:.1f}"
         )
 
     return "\n".join(lines)
@@ -1913,9 +1582,7 @@ with st.sidebar:
         "Varsayılan geometri: 7 raf × 11 slot = 77. "
         "Slot sayısı gerçek SKU/stok adedi değildir. "
         f"Denetim, girilen raf sayısı ne olursa olsun yalnızca "
-        f"ilk {ANALYZE_ROW_LIMIT} rafı kapsar; her slotta ayrıca "
-        "ürün paketi ile altındaki etiketin adı karşılaştırılır "
-        "(yeşil çerçeve = uyumlu, kırmızı çerçeve = uyumsuz etiket)."
+        f"ilk {ANALYZE_ROW_LIMIT} rafı kapsar."
     )
 
     if st.button(
@@ -2201,10 +1868,6 @@ if (
         summary.get("uyumlu", 0)
     )
 
-    etiket_hatali = int(
-        summary.get("etiket_hatali", 0)
-    )
-
     uyum_orani = (
         100.0 * uyumlu / total
     )
@@ -2214,7 +1877,7 @@ if (
         f"(ilk {summary.get('kontrol_edilen_raf', ANALYZE_ROW_LIMIT)} raf)"
     )
 
-    m1, m2, m3, m4, m5 = st.columns(5)
+    m1, m2, m3, m4 = st.columns(4)
 
     m1.metric(
         "🔴 FARK",
@@ -2232,11 +1895,6 @@ if (
     )
 
     m4.metric(
-        "🏷️ Etiket Hatalı",
-        etiket_hatali,
-    )
-
-    m5.metric(
         "📊 Uyum Oranı",
         f"%{uyum_orani:.1f}",
     )
@@ -2254,16 +1912,6 @@ if (
             "Tam geometrik hizalama "
             "doğrulanamadı. Analiz ölçek "
             "eşitleme üzerinden yapıldı."
-        )
-
-    if not summary.get("ocr_available", True):
-        st.warning(
-            "⚠️ OCR motoru (tesseract) bu ortamda çalışmıyor, "
-            "bu yüzden tüm slotlar 'Etiket Belirsiz' olarak "
-            "işaretlendi; etiket-ürün eşleşme kontrolü şu an "
-            "devre dışı. Çözüm: sunucuya (Streamlit Cloud) "
-            "`packages.txt` dosyası ile `tesseract-ocr` paketini "
-            "ekleyip yeniden dağıtın."
         )
 
     st.image(

@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """
 SIGARA STANDI PLANOGRAM DENETİM SİSTEMİ
-Sadeleştirilmiş Sonuç Sürümü
+Gelişmiş Etiket ve Paket Sayımı Sürümü
 
 Kurulum:
     pip install streamlit opencv-python-headless numpy requests pillow
@@ -559,6 +559,7 @@ def analyze_planogram_grid_free(reference, field):
     result_img = aligned.copy()
     results = []
     fark_sayisi = 0
+    paket_eksigi_sayisi = 0
 
     for cnt in contours:
         area = cv2.contourArea(cnt)
@@ -568,6 +569,14 @@ def analyze_planogram_grid_free(reference, field):
         x, y, bw, bh = cv2.boundingRect(cnt)
         fark_sayisi += 1
 
+        # Boyut oranına göre sigara paketi mi yoksa genel etiket/alan değişimi mi olduğunu ayırt ediyoruz
+        aspect_ratio = float(bw) / max(1, bh)
+        if 0.3 < aspect_ratio < 1.8 and area < (w * h * 0.02):
+            paket_eksigi_sayisi += 1
+            etiket_turu = f"PAKET #{paket_eksigi_sayisi}"
+        else:
+            etiket_turu = f"FARK #{fark_sayisi}"
+
         cv2.rectangle(
             result_img,
             (x, y),
@@ -576,10 +585,9 @@ def analyze_planogram_grid_free(reference, field):
             2,
         )
 
-        label = f"FARK #{fark_sayisi}"
         cv2.putText(
             result_img,
-            label,
+            etiket_turu,
             (x, max(15, y - 6)),
             cv2.FONT_HERSHEY_SIMPLEX,
             0.4,
@@ -600,17 +608,19 @@ def analyze_planogram_grid_free(reference, field):
             }
         )
 
+    # Üst siyah başlık alanı
     header_height = max(72, int(h * 0.055))
     cv2.rectangle(result_img, (0, 0), (w, header_height), (18, 18, 18), -1)
 
-    header1 = f"TESPİT EDİLEN TOPLAM DEĞİŞİM/FARK: {fark_sayisi}"
-    header2 = "Denetim Tamamlandı | Yöntem: Dinamik Kontur Analizi"
+    header1 = f"EKSİK SİGARA PAKETİ: {paket_eksigi_sayisi} Adet"
+    header2 = f"TOPLAM TESPİT EDİLEN ETİKET/FARK SAYISI: {fark_sayisi} Adet"
 
-    cv2.putText(result_img, header1, (14, 29), cv2.FONT_HERSHEY_SIMPLEX, 0.72, (255, 255, 255), 2, cv2.LINE_AA)
+    cv2.putText(result_img, header1, (14, 29), cv2.FONT_HERSHEY_SIMPLEX, 0.65, (0, 100, 255), 2, cv2.LINE_AA)
     cv2.putText(result_img, header2, (14, 57), cv2.FONT_HERSHEY_SIMPLEX, 0.52, (200, 200, 200), 1, cv2.LINE_AA)
 
     summary = {
         "fark": fark_sayisi,
+        "paket_eksigi": paket_eksigi_sayisi,
         "supheli": 0,
         "uyumlu": 0,
         "hizalama_ok": aligned_ok,
@@ -641,7 +651,8 @@ def build_report(
             )
         ),
         "",
-        "Toplam Tespit Edilen Fark: " + str(summary['fark']),
+        "Eksik Sigara Paketi Sayısı: " + str(summary.get('paket_eksigi', 0)),
+        "Toplam Tespit Edilen Etiket/Fark: " + str(summary['fark']),
         "",
         "--- FARK BÖLGELERİ ---",
     ]
@@ -931,7 +942,6 @@ if (
 
     st.subheader("3. Analiz Sonucu")
 
-    # Sadece sade toplam fark metrik kutusu kalacak şekilde güncellendi
     st.metric(
         "🔴 TESPİT EDİLEN TOPLAM FARK",
         fark_sayisi,

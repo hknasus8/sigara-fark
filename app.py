@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """
 SIGARA STANDI PLANOGRAM DENETİM SİSTEMİ
-Dengeli ve Gürültü Filtreli Dinamik Kontur Sürümü
+Gelişmiş Detay ve Sadeleştirilmiş Arayüz Sürümü
 
 Kurulum:
     pip install streamlit opencv-python-headless numpy requests pillow
@@ -526,10 +526,6 @@ def align_images(reference, target):
 # DENGELİ KONTUR ANALİZİ (GÜRÜLTÜ FİLTRELİ)
 # =========================================================
 def analyze_planogram_grid_free(reference, field):
-    """
-    Aşırı gürültüyü (yansıma ve gölgeleri) eleyen, 
-    sadece gerçek eksiklikleri ve etiket yokluklarını net yakalayan dengeli sürüm.
-    """
     h, w = reference.shape[:2]
 
     field = cv2.resize(
@@ -541,24 +537,19 @@ def analyze_planogram_grid_free(reference, field):
         align_images(reference, field)
     )
 
-    # Gri tonlamaya çevir
     ref_gray = cv2.cvtColor(reference, cv2.COLOR_BGR2GRAY)
     tar_gray = cv2.cvtColor(aligned, cv2.COLOR_BGR2GRAY)
 
-    # Hafif bulanıklaştırma ile piksel bazlı küçük parlamaları bastır
     ref_gray = cv2.GaussianBlur(ref_gray, (5, 5), 0)
     tar_gray = cv2.GaussianBlur(tar_gray, (5, 5), 0)
 
-    # Mutlak fark (Eşik değeri 30 yapılarak ışık oyunları ve gölgeler elenir)
     diff = cv2.absdiff(ref_gray, tar_gray)
     _, thresh = cv2.threshold(diff, 30, 255, cv2.THRESH_BINARY)
 
-    # Morfolojik kapanma ile etiket ve ürün alanlarındaki boşluklar bütünleştirilir
     kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (7, 7))
     thresh = cv2.morphologyEx(thresh, cv2.MORPH_CLOSE, kernel, iterations=2)
     thresh = cv2.morphologyEx(thresh, cv2.MORPH_OPEN, kernel, iterations=1)
 
-    # Konturları bul
     contours, _ = cv2.findContours(
         thresh,
         cv2.RETR_EXTERNAL,
@@ -571,15 +562,12 @@ def analyze_planogram_grid_free(reference, field):
 
     for cnt in contours:
         area = cv2.contourArea(cnt)
-        
-        # GÜRÜLTÜ FİLTRESİ: Çok küçük yansımalar ve devasa genel alan kaymaları elenir.
         if area < (w * h * 0.0002) or area > (w * h * 0.15):
             continue
 
         x, y, bw, bh = cv2.boundingRect(cnt)
         fark_sayisi += 1
 
-        # Kırmızı çerçeve çiz (Daha ince ve net çizgi)
         cv2.rectangle(
             result_img,
             (x, y),
@@ -612,12 +600,11 @@ def analyze_planogram_grid_free(reference, field):
             }
         )
 
-    # Üst bilgi şeridi
     header_height = max(72, int(h * 0.055))
     cv2.rectangle(result_img, (0, 0), (w, header_height), (18, 18, 18), -1)
 
     header1 = f"TESPİT EDİLEN TOPLAM DEĞİŞİM/FARK: {fark_sayisi}"
-    header2 = f"Hizalama: {method} | Inlier: {inliers} | Yöntem: Dengeli Kontur Analizi"
+    header2 = f"Denetim Tamamlandı | Yöntem: Dinamik Kontur Analizi"
 
     cv2.putText(result_img, header1, (14, 29), cv2.FONT_HERSHEY_SIMPLEX, 0.72, (255, 255, 255), 2, cv2.LINE_AA)
     cv2.putText(result_img, header2, (14, 57), cv2.FONT_HERSHEY_SIMPLEX, 0.52, (200, 200, 200), 1, cv2.LINE_AA)
@@ -654,15 +641,7 @@ def build_report(
             )
         ),
         "",
-        (
-            "Yöntem: Dengeli Dinamik Kontur "
-            "Fark Analizi"
-        ),
-        f"Toplam Tespit Edilen Fark: {summary['fark']}",
-        (
-            f"Hizalama: {summary['hizalama']} "
-            f"/ inlier={summary['inliers']}"
-        ),
+        "Toplam Tespit Edilen Fark: " + str(summary['fark']),
         "",
         "--- FARK BÖLGELERİ ---",
     ]
@@ -736,11 +715,6 @@ if not st.session_state.authenticated:
 # =========================================================
 with st.sidebar:
     st.header("⚙️ Denetim Ayarları")
-
-    st.caption(
-        "Sistem parlamaları ve gölgeleri filtreleyen "
-        "dengeli dinamik kontur analizi ile çalışmaktadır."
-    )
 
     if st.button(
         "🔄 Önbelleği Temizle",
@@ -831,12 +805,6 @@ if dealer_name:
             dealer_path = dealer["path"]
             break
 
-if dealer_error:
-    st.warning(
-        "Bayi listesi: "
-        + str(dealer_error)
-    )
-
 
 # =========================================================
 # GÖRSEL YÜKLEME VE GÖRÜNTÜLEME
@@ -855,27 +823,17 @@ if dealer_path:
                 dealer_path,
             )
         )
-    if ref_error:
-        st.warning(ref_error)
 
 u1, u2 = st.columns(2)
 
 with u1:
     st.markdown(
-        "**Orijinal Referans Fotoğrafı Getirildi**"
-        if ref_img is not None
-        else "**Orijinal Referans Fotoğrafı**"
+        "**Orijinal Referans Fotoğrafı**"
     )
-
     if ref_img is None:
         ref_upload = st.file_uploader(
-            "İsterseniz referans fotoğrafını elle yükleyin",
-            type=[
-                "jpg",
-                "jpeg",
-                "png",
-                "webp",
-            ],
+            "İsterseniz elle yükleyin",
+            type=["jpg", "jpeg", "png", "webp"],
             key="ref_upload",
         )
         if ref_upload is not None:
@@ -890,27 +848,15 @@ with u1:
             use_container_width=True,
         )
     else:
-        st.info(
-            "Şehir + bayi seçin veya "
-            "referans görseli yükleyin."
-        )
+        st.info("Şehir/bayi seçin veya görsel yükleyin.")
 
 with u2:
-    st.markdown(
-        "**Saha'dan Gelen Fotoğraf**"
-    )
-
+    st.markdown("**Saha'dan Gelen Fotoğraf**")
     field_upload = st.file_uploader(
         "Saha fotoğrafını yükleyin",
-        type=[
-            "jpg",
-            "jpeg",
-            "png",
-            "webp",
-        ],
+        type=["jpg", "jpeg", "png", "webp"],
         key="field_upload",
     )
-
     field_img = (
         prepare_image(
             decode_uploaded(field_upload)
@@ -926,9 +872,7 @@ with u2:
             use_container_width=True,
         )
     else:
-        st.info(
-            "Sahadan gelen fotoğrafı yükleyin."
-        )
+        st.info("Sahadan gelen fotoğrafı yükleyin.")
 
 
 # =========================================================
@@ -952,17 +896,13 @@ if st.button(
     st.session_state.summary = None
     st.session_state.report = ""
 
-    with st.spinner(
-        "Fotoğraflar hizalanıyor ve dengeli "
-        "fark analizi yapılıyor..."
-    ):
+    with st.spinner("Analiz yapılıyor..."):
         result_img, results, summary = (
             analyze_planogram_grid_free(
                 ref_img,
                 field_img,
             )
         )
-
         report = build_report(
             dealer_name or "Manuel",
             results,
@@ -978,7 +918,7 @@ if st.button(
 
 
 # =========================================================
-# SONUÇ EKRANI
+# SONUÇ EKRANI & AÇILIM LİSTESİ
 # =========================================================
 if (
     st.session_state.result_img is not None
@@ -991,27 +931,11 @@ if (
 
     st.subheader("3. Analiz Sonucu")
 
-    m1, m2 = st.columns(2)
-    m1.metric(
+    # ORB/RANSAC kaldırıldı, tek net metrik alanı bırakıldı
+    st.metric(
         "🔴 TESPİT EDİLEN TOPLAM FARK",
         fark_sayisi,
     )
-    m2.metric(
-        "📐 Hizalama Yöntemi",
-        summary.get("hizalama"),
-    )
-
-    if summary.get("hizalama_ok"):
-        st.success(
-            "Fotoğraf hizalaması başarıyla "
-            f"tamamlandı (inlier={summary.get('inliers')})."
-        )
-    else:
-        st.warning(
-            "Tam geometrik hizalama "
-            "doğrulanamadı. Ölçek eşitleme "
-            "kullanıldı."
-        )
 
     st.image(
         st.session_state.result_img,
@@ -1023,7 +947,6 @@ if (
         ".jpg",
         st.session_state.result_img,
     )
-
     if ok:
         st.download_button(
             "📥 İşaretli Denetim Görselini İndir",
@@ -1036,14 +959,49 @@ if (
             use_container_width=True,
         )
 
+    # TOPLAM FARK AÇILIMI GÖSTER (Detaylı Liste & Crop Kırpma Görselleri)
+    st.divider()
+    st.subheader("📋 Tespit Edilen Farkların Detay Açılımı")
+
+    if fark_sayisi > 0 and st.session_state.results:
+        # Tablo / Expander görünümü
+        for item in st.session_state.results:
+            fid = item["id"]
+            fx, fy, fw, fh = item["x"], item["y"], item["w"], item["h"]
+            
+            with st.expander(f"🔍 Fark #{fid} Detayı (Konum: X={fx}, Y={fy})"):
+                col_info, col_crop = st.columns([1, 1])
+                
+                with col_info:
+                    st.write(f"**Fark ID:** #{fid}")
+                    st.write(f"**Koordinatlar:** X: {fx}, Y: {fy}")
+                    st.write(f"**Boyutlar:** Genişlik: {fw}px, Yükseklik: {fh}px")
+                    st.write(f"**Alan Büyüklüğü:** {int(item['alan']) * 0.001:.2f} birim")
+
+                with col_crop:
+                    # Ana işaretli veya orijinal görsel üzerinden ilgili fark bölgesini kesip (crop) göster
+                    h_img, w_img = st.session_state.result_img.shape[:2]
+                    # Güvenli kırpma sınırları
+                    pad = 10
+                    ymin, ymax = max(0, fy - pad), min(h_img, fy + fh + pad)
+                    xmin, xmax = max(0, fx - pad), min(w_img, fx + fw + pad)
+                    
+                    cropped_region = st.session_state.result_img[ymin:ymax, xmin:xmax]
+                    if cropped_region.size > 0:
+                        st.image(
+                            cropped_region,
+                            channels="BGR",
+                            caption=f"Fark #{fid} Yakın Plan Görünümü",
+                            use_container_width=True
+                        )
+    else:
+        st.info("Harika! Hiçbir fark/eksik tespit edilmedi.")
+
 else:
     st.info(
-        "Analiz için referans planogram ve "
-        "saha fotoğrafını yükleyin. Ardından "
-        "'KONTROLE BAŞLA' "
-        "düğmesine basın."
+        "Analiz için referans ve saha fotoğrafını yükleyin, "
+        "ardından 'KONTROLE BAŞLA' düğmesine basın."
     )
-
 
 st.markdown(
     """

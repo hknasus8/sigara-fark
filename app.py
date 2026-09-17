@@ -563,13 +563,13 @@ def analyze_planogram_grid_free(reference, field):
 
     for cnt in contours:
         area = cv2.contourArea(cnt)
-        # Gürültülerin elenmesi ve gerçek sayıyla eşleşmesi için alt sınır artırıldı (0.0005)
-        if area < (w * h * 0.0005) or area > (w * h * 0.15):
+        if area < (w * h * 0.0002) or area > (w * h * 0.15):
             continue
 
         x, y, bw, bh = cv2.boundingRect(cnt)
         fark_sayisi += 1
 
+        # Boyut oranına göre sigara paketi mi yoksa genel etiket/alan değişimi mi olduğunu ayırt ediyoruz
         aspect_ratio = float(bw) / max(1, bh)
         if 0.3 < aspect_ratio < 1.8 and area < (w * h * 0.02):
             paket_eksigi_sayisi += 1

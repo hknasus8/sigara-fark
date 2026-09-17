@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-SIGARA STANDI PLANOGRAM DENETİM SİSTEMİ
+ÖZÇELİK STAND KONTROL UYGULAMASI
 Gelişmiş Etiket ve Paket Sayımı Sürümü
 
 Kurulum:
@@ -13,6 +13,7 @@ Streamlit Cloud Secrets:
 import hashlib
 import re
 import urllib.parse
+from PIL import Image
 
 import cv2
 import numpy as np
@@ -24,7 +25,7 @@ import streamlit as st
 # SAYFA YAPILANDIRMASI
 # =========================================================
 st.set_page_config(
-    page_title="Sigara Standı Denetim Sistemi",
+    page_title="Özçelik Stand Kontrol Uygulaması",
     page_icon="📊",
     layout="wide",
     initial_sidebar_state="expanded",
@@ -569,7 +570,6 @@ def analyze_planogram_grid_free(reference, field):
         x, y, bw, bh = cv2.boundingRect(cnt)
         fark_sayisi += 1
 
-        # Boyut oranına göre sigara paketi mi yoksa genel etiket/alan değişimi mi olduğunu ayırt ediyoruz
         aspect_ratio = float(bw) / max(1, bh)
         if 0.3 < aspect_ratio < 1.8 and area < (w * h * 0.02):
             paket_eksigi_sayisi += 1
@@ -608,7 +608,6 @@ def analyze_planogram_grid_free(reference, field):
             }
         )
 
-    # Üst siyah başlık alanı
     header_height = max(72, int(h * 0.055))
     cv2.rectangle(result_img, (0, 0), (w, header_height), (18, 18, 18), -1)
 
@@ -642,7 +641,7 @@ def build_report(
     from datetime import datetime
 
     lines = [
-        "=== SİGARA STANDI PLANOGRAM DENETİM RAPORU ===",
+        "=== ÖZÇELİK STAND KONTROL RAPORU ===",
         f"Bayi: {dealer}",
         (
             "Tarih: "
@@ -696,8 +695,16 @@ if "app_password" not in st.secrets:
 
 if not st.session_state.authenticated:
     st.title(
-        "🔐 Kurumsal Planogram Denetim Sistemi"
+        "🔐 Özçelik Stand Kontrol Uygulaması"
     )
+    
+    # Logo gösterimi
+    try:
+        logo_img = Image.open("logo.jpg")
+        st.image(logo_img, width=250)
+    except Exception:
+        pass
+
     st.caption("Güvenli giriş")
 
     password = st.text_input(
@@ -758,7 +765,7 @@ with st.sidebar:
 # ANA EKRAN & LOKASYON SEÇİMİ
 # =========================================================
 st.title(
-    "📊 SİGARA STANDI DENETİM SİSTEMİ"
+    "📊 ÖZÇELİK STAND KONTROL UYGULAMASI"
 )
 
 st.subheader("1. Şehir ve Bayi Seçiniz")
@@ -936,16 +943,6 @@ if (
     and st.session_state.summary
 ):
     summary = st.session_state.summary
-    fark_sayisi = int(
-        summary.get("fark", 0)
-    )
-
-    st.subheader("3. Analiz Sonucu")
-
-    st.metric(
-        "🔴 TESPİT EDİLEN TOPLAM FARK",
-        fark_sayisi,
-    )
 
     st.image(
         st.session_state.result_img,

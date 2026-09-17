@@ -619,6 +619,8 @@ def analyze_planogram_grid_free(reference, field):
             }
         )
 
+    # Üst siyah bilgi şeridi kaldırıldı (Görsel üzerinde artık şerit çizilmiyor)
+
     summary = {
         "fark": fark_sayisi,
         "paket_eksigi": paket_eksigi_sayisi,
@@ -931,7 +933,7 @@ if st.button(
 
 
 # =========================================================
-# SONUÇ EKRANI
+# SONUÇ EKRANI (METRİKLER TAMAMEN KALDIRILDI)
 # =========================================================
 if (
     st.session_state.result_img is not None

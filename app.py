@@ -608,15 +608,6 @@ def analyze_planogram_grid_free(reference, field):
             }
         )
 
-    header_height = max(72, int(h * 0.055))
-    cv2.rectangle(result_img, (0, 0), (w, header_height), (18, 18, 18), -1)
-
-    header1 = f"EKSİK SİGARA PAKETİ: {paket_eksigi_sayisi} Adet"
-    header2 = f"TOPLAM TESPİT EDİLEN ETİKET/FARK SAYISI: {fark_sayisi} Adet"
-
-    cv2.putText(result_img, header1, (14, 29), cv2.FONT_HERSHEY_SIMPLEX, 0.65, (0, 100, 255), 2, cv2.LINE_AA)
-    cv2.putText(result_img, header2, (14, 57), cv2.FONT_HERSHEY_SIMPLEX, 0.52, (200, 200, 200), 1, cv2.LINE_AA)
-
     summary = {
         "fark": fark_sayisi,
         "paket_eksigi": paket_eksigi_sayisi,
@@ -698,7 +689,6 @@ if not st.session_state.authenticated:
         "🔐 Özçelik Stand Kontrol Uygulaması"
     )
     
-    # Logo gösterimi
     try:
         logo_img = Image.open("logo.jpg")
         st.image(logo_img, width=250)

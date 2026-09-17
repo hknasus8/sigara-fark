@@ -1321,10 +1321,10 @@ def analyze_planogram(
 
         results.append(metrics)
 
-        # Yalnızca "FARK" tespit edilen alanlar kırmızı çerçeve ile işaretlenir (yeşil gridler kaldırıldı)
-        if metrics["durum"] == "FARK":
-            color = (0, 0, 255)
-            thickness = 4
+        # GÜNCELLENDİ: Hem "FARK" hem de "ŞÜPHELİ" (tüm tespit edilen değişimler) KIRMIZI çerçeve içine alınır.
+        if metrics["durum"] in ["FARK", "ŞÜPHELİ"]:
+            color = (0, 0, 255)  # Kırmızı
+            thickness = 3
 
             cv2.rectangle(
                 result_img,

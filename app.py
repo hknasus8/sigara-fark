@@ -829,7 +829,7 @@ if dealer_name:
 # GÖRSEL YÜKLEME VE GÖRÜNTÜLEME
 # =========================================================
 st.divider()
-st.subheader("2. Görseller")
+st.subheader("2. Orjinal Referans Fotoğraf")
 
 ref_img = None
 if dealer_path:

@@ -943,17 +943,18 @@ if st.button(
 
 
 # =========================================================
-# SONUÇ EKRANI
+# SONUÇ EKRANI (DÜZELTİLMİŞ)
 # =========================================================
 if (
     st.session_state.result_img is not None
     and st.session_state.summary
 ):
     summary = st.session_state.summary
-    toplam_degisiklik = int(
-        summary.get("paket_eksigi", 0)
-        + summary.get("etiket_degisikligi", 0)
-    )
+    
+    # Doğru toplam hesaplaması (Eksik paketler + Etiket farkları)
+    paket_sayisi = int(summary.get("paket_eksigi", 0))
+    etiket_sayisi = int(summary.get("etiket_degisikligi", 0))
+    toplam_degisiklik = paket_sayisi + etiket_sayisi
 
     st.subheader("3. Analiz Sonucu")
 

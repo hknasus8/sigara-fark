@@ -619,12 +619,7 @@ def analyze_planogram_grid_free(reference, field):
             }
         )
 
-    # Üst siyah bilgi şeridi (Sadece paket ve etiket sayıları gösterilir, toplam fark gösterilmez)
-    header_height = max(50, int(h * 0.04))
-    cv2.rectangle(result_img, (0, 0), (w, header_height), (18, 18, 18), -1)
-
-    header1 = f"EKSİK PAKET: {paket_eksigi_sayisi} Adet   |   ETİKET FARKI: {etiket_degisikligi_sayisi} Adet"
-    cv2.putText(result_img, header1, (14, 32), cv2.FONT_HERSHEY_SIMPLEX, 0.58, (0, 165, 255), 2, cv2.LINE_AA)
+    # Üst siyah bilgi şeridi kaldırıldı (Görsel üzerinde artık şerit çizilmiyor)
 
     summary = {
         "fark": fark_sayisi,
@@ -938,23 +933,13 @@ if st.button(
 
 
 # =========================================================
-# SONUÇ EKRANI (TOPLAM FARK METRİĞİ KALDIRILDI)
+# SONUÇ EKRANI (METRİKLER TAMAMEN KALDIRILDI)
 # =========================================================
 if (
     st.session_state.result_img is not None
     and st.session_state.summary
 ):
-    summary = st.session_state.summary
-
     st.subheader("3. Analiz Sonucu")
-
-    # Toplam fark metrik kutusu tamamen kaldırıldı. 
-    # İstiyorsanız alt alta paket eksikliği ve etiket farkını ayrı metrikler olarak gösterebiliriz:
-    col_m1, col_m2 = st.columns(2)
-    with col_m1:
-        st.metric("📦 EKSİK PAKET SAYISI", int(summary.get("paket_eksigi", 0)))
-    with col_m2:
-        st.metric("🏷️ ETİKET FARKI SAYISI", int(summary.get("etiket_degisikligi", 0)))
 
     st.image(
         st.session_state.result_img,

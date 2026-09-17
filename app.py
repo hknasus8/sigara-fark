@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """
 SIGARA STANDI PLANOGRAM DENETİM SİSTEMİ
-Grid-Free (Izgarasız) Dinamik Kontur Sürümü
+Grid-Free (Izgarasız) Yüksek Hassasiyetli Dinamik Kontur Sürümü
 
 Kurulum:
     pip install streamlit opencv-python-headless numpy requests pillow
@@ -523,12 +523,12 @@ def align_images(reference, target):
 
 
 # =========================================================
-# GRID-FREE (IZGARASIZ) DİNAMİK KONTUR ANALİZİ
+# GRID-FREE (IZGARASIZ) YÜKSEK HASSASİYETLİ DİNAMİK KONTUR ANALİZİ
 # =========================================================
 def analyze_planogram_grid_free(reference, field):
     """
-    Sabit ızgaralara bağımlı kalmadan, iki görsel arasındaki 
-    yapısal farkları kontur tabanlı otomatik tespit eder.
+    Küçük etiket eksikliklerini ve detayları kaçırmamak için 
+    hassasiyeti artırılmış dinamik kontur analizi.
     """
     h, w = reference.shape[:2]
 
@@ -551,37 +551,37 @@ def analyze_planogram_grid_free(reference, field):
         cv2.COLOR_BGR2GRAY,
     )
 
-    # Gürültüyü azaltmak için bulanıklaştır
+    # Gürültüyü azaltmak için hafif bulanıklaştır
     ref_gray = cv2.GaussianBlur(
         ref_gray,
-        (5, 5),
+        (3, 3),
         0,
     )
     tar_gray = cv2.GaussianBlur(
         tar_gray,
-        (5, 5),
+        (3, 3),
         0,
     )
 
-    # Mutlak fark
+    # Mutlak fark (Eşik değeri 20'ye düşürüldü - küçük farklar yakalanır)
     diff = cv2.absdiff(ref_gray, tar_gray)
     _, thresh = cv2.threshold(
         diff,
-        30,
+        20,
         255,
         cv2.THRESH_BINARY,
     )
 
-    # Morfolojik işlemler ile küçük pürüzleri temizle, blokları birleştir
+    # Küçük etiketlerin silinmemesi için kernel küçültüldü ve iterasyon azaltıldı
     kernel = cv2.getStructuringElement(
         cv2.MORPH_RECT,
-        (9, 9),
+        (5, 5),
     )
     thresh = cv2.morphologyEx(
         thresh,
         cv2.MORPH_CLOSE,
         kernel,
-        iterations=2,
+        iterations=1,
     )
     thresh = cv2.morphologyEx(
         thresh,
@@ -603,8 +603,10 @@ def analyze_planogram_grid_free(reference, field):
 
     for cnt in contours:
         area = cv2.contourArea(cnt)
-        # Çok küçük, önemsiz gürültüleri ele
-        if area < (w * h * 0.0004):
+        
+        # ETİKET VEYA KÜÇÜK DETAY FİLTRESİ: 
+        # Alan filtresi çok küçük etiketleri kaçırmayacak şekilde düşürüldü (0.00005)
+        if area < (w * h * 0.00005):
             continue
 
         x, y, bw, bh = cv2.boundingRect(cnt)
@@ -616,18 +618,18 @@ def analyze_planogram_grid_free(reference, field):
             (x, y),
             (x + bw, y + bh),
             (0, 0, 255),
-            3,
+            2,
         )
 
         label = f"FARK #{fark_sayisi}"
         cv2.putText(
             result_img,
             label,
-            (x, max(15, y - 8)),
+            (x, max(15, y - 6)),
             cv2.FONT_HERSHEY_SIMPLEX,
-            0.45,
+            0.4,
             (0, 0, 255),
-            2,
+            1,
             cv2.LINE_AA,
         )
 
@@ -662,7 +664,7 @@ def analyze_planogram_grid_free(reference, field):
     header2 = (
         f"Hizalama: {method} | "
         f"Inlier: {inliers} | "
-        "Yöntem: Dinamik Kontur Analizi"
+        "Yöntem: Yüksek Hassasiyetli Kontur Analizi"
     )
 
     cv2.putText(
@@ -719,7 +721,7 @@ def build_report(
         ),
         "",
         (
-            "Yöntem: Dinamik Kontur (Grid-Free) "
+            "Yöntem: Yüksek Hassasiyetli Dinamik Kontur "
             "Fark Analizi"
         ),
         f"Toplam Tespit Edilen Fark: {summary['fark']}",
@@ -734,7 +736,7 @@ def build_report(
     for item in results:
         lines.append(
             f"Fark #{item.get('id')} | "
-            f"Konut: X={item.get('x')}, Y={item.get('y')} | "
+            f"Konum: X={item.get('x')}, Y={item.get('y')} | "
             f"Boyut: {item.get('w')}x{item.get('h')}"
         )
 
@@ -802,10 +804,10 @@ with st.sidebar:
     st.header("⚙️ Denetim Ayarları")
 
     st.caption(
-        "Sistem artık sabit ızgara (grid) yerine "
-        "doğrudan dinamik kontur analizi "
-        "kullanmaktadır. Raf/slot ayarına "
-        "gerek kalmamıştır."
+        "Sistem yüksek hassasiyetli dinamik "
+        "kontur analizi ile çalışmaktadır. "
+        "Etiketler ve küçük eksikler dahil "
+        "otomatik tespit edilir."
     )
 
     if st.button(
@@ -1019,8 +1021,8 @@ if st.button(
     st.session_state.report = ""
 
     with st.spinner(
-        "Fotoğraflar hizalanıyor ve "
-        "dinamik fark analizi yapılıyor..."
+        "Fotoğraflar hizalanıyor ve yüksek hassasiyetle "
+        "fark analizi yapılıyor..."
     ):
         result_img, results, summary = (
             analyze_planogram_grid_free(

@@ -565,7 +565,8 @@ def analyze_planogram_grid_free(reference, field):
     for cnt in contours:
         area = cv2.contourArea(cnt)
         
-        if area < (w * h * 0.0005) or area > (w * h * 0.15):
+        # Gürültü ve parlamaları elemek için güncellenen alan sınırları
+        if area < (w * h * 0.0004) or area > (w * h * 0.15):
             continue
 
         x, y, bw, bh = cv2.boundingRect(cnt)
@@ -577,8 +578,8 @@ def analyze_planogram_grid_free(reference, field):
             etiket_turu = f"PAKET #{paket_eksigi_sayisi}"
             box_color = (0, 0, 255)  # Kırmızı
 
-        # 2. Raf Altı Fiyat Etiketleri (Yatay şeritler - Hassas filtreleme)
-        elif aspect_ratio >= 2.2 and (w * h * 0.0015) < area < (w * h * 0.008):
+        # 2. Raf Altı Fiyat Etiketleri (Yatay şeritler - Hassas min/max alan filtreli)
+        elif aspect_ratio >= 1.8 and (w * h * 0.001) < area < (w * h * 0.015):
             etiket_degisikligi_sayisi += 1
             etiket_turu = f"ETİKET #{etiket_degisikligi_sayisi}"
             box_color = (0, 165, 255)  # Turuncu
@@ -620,12 +621,11 @@ def analyze_planogram_grid_free(reference, field):
         )
 
     # Üst siyah bilgi şeridi
-    toplam_tespit = paket_eksigi_sayisi + etiket_degisikligi_sayisi
     header_height = max(72, int(h * 0.055))
     cv2.rectangle(result_img, (0, 0), (w, header_height), (18, 18, 18), -1)
 
     header1 = f"EKSİK PAKET: {paket_eksigi_sayisi} | ETİKET FARKI: {etiket_degisikligi_sayisi}"
-    header2 = f"TOPLAM TESPİT: {toplam_tespit} Adet"
+    header2 = f"TOPLAM TESPİT: {paket_eksigi_sayisi + etiket_degisikligi_sayisi} Adet"
 
     cv2.putText(result_img, header1, (14, 29), cv2.FONT_HERSHEY_SIMPLEX, 0.58, (0, 165, 255), 2, cv2.LINE_AA)
     cv2.putText(result_img, header2, (14, 57), cv2.FONT_HERSHEY_SIMPLEX, 0.52, (200, 200, 200), 1, cv2.LINE_AA)

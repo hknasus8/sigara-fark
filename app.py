@@ -27,7 +27,7 @@ import streamlit as st
 # SAYFA
 # =========================================================
 st.set_page_config(
-    page_title="Sigara Standı Planogram Denetim Sistemi",
+    page_title="Sigara Standı Denetim Sistemi",
     page_icon="📊",
     layout="wide",
     initial_sidebar_state="expanded",
@@ -1338,6 +1338,8 @@ def analyze_planogram(
 ):
     h, w = reference.shape[:2]
 
+    ocr_available, ocr_error = check_tesseract_available()
+
     field = cv2.resize(
         field,
         (w, h),
@@ -1449,20 +1451,24 @@ def analyze_planogram(
             box,
         )
 
-        product_region = crop_product_region(
-            aligned,
-            box,
-        )
+        if ocr_available:
+            product_region = crop_product_region(
+                aligned,
+                box,
+            )
 
-        product_text = ocr_text_raw(
-            product_region,
-            psm="6",
-        )
+            product_text = ocr_text_raw(
+                product_region,
+                psm="6",
+            )
 
-        label_text = ocr_text_raw(
-            label_region,
-            psm="7",
-        )
+            label_text = ocr_text_raw(
+                label_region,
+                psm="7",
+            )
+        else:
+            product_text = ""
+            label_text = ""
 
         etiket_uyum = label_matches_product(
             product_text,
@@ -1582,6 +1588,8 @@ def analyze_planogram(
             "etiket_hatali": etiket_hatali,
             "etiket_belirsiz": etiket_belirsiz,
             "kontrol_edilen_raf": max_check_rows,
+            "ocr_available": ocr_available,
+            "ocr_error": ocr_error,
             "hizalama_ok": aligned_ok,
             "hizalama": method,
             "inliers": inliers,
@@ -1645,6 +1653,23 @@ def ocr_brands(img):
 
     except Exception:
         return []
+
+
+def check_tesseract_available():
+    """
+    pytesseract kütüphanesi kurulu olsa bile, sunucuda gerçek
+    tesseract-ocr çalıştırılabilir dosyası bulunmazsa OCR sessizce
+    boş sonuç döner ve tüm etiket kontrolleri 'BELİRSİZ' çıkar.
+    Bu fonksiyon motorun fiilen çalışıp çalışmadığını netleştirir.
+    """
+    try:
+        import pytesseract
+
+        pytesseract.get_tesseract_version()
+        return True, None
+
+    except Exception as exc:
+        return False, str(exc)
 
 
 def ocr_text_raw(img_region, psm="7"):
@@ -1925,12 +1950,7 @@ with st.sidebar:
 # BAŞLIK
 # =========================================================
 st.title(
-    "📊 SİGARA STANDI PLANOGRAM DENETİM SİSTEMİ"
-)
-
-st.caption(
-    "Referans planogram ↔ saha fotoğrafı "
-    "karşılaştırma motoru"
+    "📊 SİGARA STANDI DENETİM SİSTEMİ"
 )
 
 
@@ -2029,26 +2049,29 @@ u1, u2 = st.columns(2)
 
 with u1:
     st.markdown(
-        "**Orijinal Referans Fotoğrafını Yükleniyor**"
+        "**Orijinal Referans Fotoğrafı Getirildi**"
+        if ref_img is not None
+        else "**Orijinal Referans Fotoğrafı**"
     )
 
-    ref_upload = st.file_uploader(
-        "İsterseniz referans fotoğrafını elle yükleyin",
-        type=[
-            "jpg",
-            "jpeg",
-            "png",
-            "webp",
-        ],
-        key="ref_upload",
-    )
-
-    if ref_upload is not None:
-        ref_img = prepare_image(
-            decode_uploaded(
-                ref_upload
-            )
+    if ref_img is None:
+        ref_upload = st.file_uploader(
+            "İsterseniz referans fotoğrafını elle yükleyin",
+            type=[
+                "jpg",
+                "jpeg",
+                "png",
+                "webp",
+            ],
+            key="ref_upload",
         )
+
+        if ref_upload is not None:
+            ref_img = prepare_image(
+                decode_uploaded(
+                    ref_upload
+                )
+            )
 
     if ref_img is not None:
         st.image(
@@ -2233,257 +2256,19 @@ if (
             "eşitleme üzerinden yapıldı."
         )
 
+    if not summary.get("ocr_available", True):
+        st.warning(
+            "⚠️ OCR motoru (tesseract) bu ortamda çalışmıyor, "
+            "bu yüzden tüm slotlar 'Etiket Belirsiz' olarak "
+            "işaretlendi; etiket-ürün eşleşme kontrolü şu an "
+            "devre dışı. Çözüm: sunucuya (Streamlit Cloud) "
+            "`packages.txt` dosyası ile `tesseract-ocr` paketini "
+            "ekleyip yeniden dağıtın."
+        )
+
     st.image(
         st.session_state.result_img,
         channels="BGR",
-        use_container_width=True,
-    )
-
-
-    # =====================================================
-    # SLOT TABLOSU
-    # =====================================================
-    st.subheader(
-        "4. Slot Bazlı Detay"
-    )
-
-    table_data = []
-
-    for item in results:
-        table_data.append(
-            {
-                "Raf": item.get(
-                    "raf",
-                    0,
-                ),
-                "Slot": item.get(
-                    "slot",
-                    0,
-                ),
-                "Durum": item.get(
-                    "durum",
-                    "ŞÜPHELİ",
-                ),
-                "Fark Skoru %": round(
-                    safe_float(
-                        item.get(
-                            "score"
-                        )
-                    )
-                    * 100,
-                    1,
-                ),
-                "Yapı %": round(
-                    safe_float(
-                        item.get(
-                            "ssim"
-                        )
-                    )
-                    * 100,
-                    1,
-                ),
-                "Renk %": round(
-                    safe_float(
-                        item.get(
-                            "renk"
-                        )
-                    )
-                    * 100,
-                    1,
-                ),
-                "Kenar %": round(
-                    safe_float(
-                        item.get(
-                            "kenar"
-                        )
-                    )
-                    * 100,
-                    1,
-                ),
-                "ORB %": round(
-                    safe_float(
-                        item.get(
-                            "orb"
-                        )
-                    )
-                    * 100,
-                    1,
-                ),
-                "Etiket Durumu": (
-                    "🟢 UYUMLU"
-                    if item.get("etiket_uyumlu") is True
-                    else (
-                        "🔴 HATALI"
-                        if item.get("etiket_uyumlu") is False
-                        else "⚪ BELİRSİZ"
-                    )
-                ),
-                "Ürün OCR": item.get(
-                    "etiket_urun_metni",
-                    "",
-                ),
-                "Etiket OCR": item.get(
-                    "etiket_metni",
-                    "",
-                ),
-            }
-        )
-
-    st.dataframe(
-        table_data,
-        use_container_width=True,
-        hide_index=True,
-    )
-
-
-    # =====================================================
-    # RAF ÖZETİ
-    # =====================================================
-    st.subheader(
-        "5. Raf Özeti"
-    )
-
-    for row in range(
-        1,
-        int(rows) + 1,
-    ):
-        row_items = [
-            x
-            for x in results
-            if x.get("raf") == row
-        ]
-
-        if not row_items:
-            continue
-
-        row_fark = sum(
-            1
-            for x in row_items
-            if x.get("durum") == "FARK"
-        )
-
-        row_sup = sum(
-            1
-            for x in row_items
-            if x.get("durum")
-            == "ŞÜPHELİ"
-        )
-
-        row_ok = sum(
-            1
-            for x in row_items
-            if x.get("durum")
-            == "UYUMLU"
-        )
-
-        row_etiket_hata = sum(
-            1
-            for x in row_items
-            if x.get("etiket_uyumlu") is False
-        )
-
-        if row_fark or row_etiket_hata:
-            st.error(
-                f"Raf {row}: "
-                f"{row_fark} FARK | "
-                f"{row_sup} ŞÜPHELİ | "
-                f"{row_ok} UYUMLU | "
-                f"{row_etiket_hata} ETİKET HATALI"
-            )
-
-        elif row_sup:
-            st.warning(
-                f"Raf {row}: "
-                f"{row_fark} FARK | "
-                f"{row_sup} ŞÜPHELİ | "
-                f"{row_ok} UYUMLU | "
-                f"{row_etiket_hata} ETİKET HATALI"
-            )
-
-        else:
-            st.success(
-                f"Raf {row}: "
-                f"{row_fark} FARK | "
-                f"{row_sup} ŞÜPHELİ | "
-                f"{row_ok} UYUMLU | "
-                f"{row_etiket_hata} ETİKET HATALI"
-            )
-
-
-    # =====================================================
-    # OCR
-    # =====================================================
-    with st.expander(
-        "🔤 OCR Marka Kontrolü (yardımcı bilgi)"
-    ):
-        ref_brands = ocr_brands(
-            ref_img
-        )
-
-        field_brands = ocr_brands(
-            field_img
-        )
-
-        st.write(
-            "**Referans:**",
-            (
-                ", ".join(ref_brands)
-                if ref_brands
-                else "Okunamadı"
-            ),
-        )
-
-        st.write(
-            "**Saha:**",
-            (
-                ", ".join(field_brands)
-                if field_brands
-                else "Okunamadı"
-            ),
-        )
-
-        missing = [
-            x
-            for x in ref_brands
-            if x not in field_brands
-        ]
-
-        st.write(
-            "**Referansta olup sahada "
-            "OCR ile bulunamayan:**",
-            (
-                ", ".join(missing)
-                if missing
-                else "Yok"
-            ),
-        )
-
-
-    # =====================================================
-    # RAPOR
-    # =====================================================
-    st.subheader(
-        "6. Rapor"
-    )
-
-    st.text_area(
-        "Rapor",
-        st.session_state.report,
-        height=360,
-        key="report_view",
-    )
-
-    st.download_button(
-        "📥 TXT Raporu İndir",
-        data=(
-            st.session_state.report
-            .encode("utf-8")
-        ),
-        file_name=(
-            f"{(dealer_name or 'planogram').replace(' ', '_')}"
-            "_rapor.txt"
-        ),
-        mime="text/plain",
         use_container_width=True,
     )
 

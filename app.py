@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """
 ÖZÇELİK STAND KONTROL UYGULAMASI
-Gelişmiş Etiket ve Paket Sayımı Sürümü
+Gelişmiş Etiket ve Paket Sayımı Sürümü (İlk 6 Raf Modülü)
 
 Kurulum:
     pip install streamlit opencv-python-headless numpy requests pillow
@@ -524,7 +524,7 @@ def align_images(reference, target):
 
 
 # =========================================================
-# DENGELİ KONTUR ANALİZİ (GÜRÜLTÜ FİLTRELİ)
+# İLK 6 RAF MODÜLÜ İÇİN KONTUR ANALİZİ
 # =========================================================
 def analyze_planogram_grid_free(reference, field):
     h, w = reference.shape[:2]
@@ -538,6 +538,9 @@ def analyze_planogram_grid_free(reference, field):
         align_images(reference, field)
     )
 
+    # Sadece ilk 6 raf modülünü kapsayan üst bölgeyi maskeliyoruz (Y ekseninin ilk %65'lik kısmı)
+    roi_height_limit = int(h * 0.65)
+
     ref_gray = cv2.cvtColor(reference, cv2.COLOR_BGR2GRAY)
     tar_gray = cv2.cvtColor(aligned, cv2.COLOR_BGR2GRAY)
 
@@ -546,6 +549,9 @@ def analyze_planogram_grid_free(reference, field):
 
     diff = cv2.absdiff(ref_gray, tar_gray)
     _, thresh = cv2.threshold(diff, 30, 255, cv2.THRESH_BINARY)
+
+    # İlk 6 raf dışındaki alt kısımları tamamen yok say (sıfırla)
+    thresh[roi_height_limit:, :] = 0
 
     kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (7, 7))
     thresh = cv2.morphologyEx(thresh, cv2.MORPH_CLOSE, kernel, iterations=2)
@@ -568,6 +574,11 @@ def analyze_planogram_grid_free(reference, field):
             continue
 
         x, y, bw, bh = cv2.boundingRect(cnt)
+        
+        # Ek güvenlik önlemi: Belirlenen sınırın altındaki konturları atla
+        if y > roi_height_limit:
+            continue
+
         fark_sayisi += 1
 
         aspect_ratio = float(bw) / max(1, bh)
@@ -632,7 +643,7 @@ def build_report(
     from datetime import datetime
 
     lines = [
-        "=== ÖZÇELİK STAND KONTROL RAPORU ===",
+        "=== ÖZÇELİK STAND KONTROL RAPORU (İLK 6 RAF) ===",
         f"Bayi: {dealer}",
         (
             "Tarih: "
@@ -641,7 +652,7 @@ def build_report(
             )
         ),
         "",
-        "Eksik Sigara Paketi Sayısı: " + str(summary.get('paket_eksigi', 0)),
+        "Eksik Sigara Paketi Sayısı (İlk 6 Raf): " + str(summary.get('paket_eksigi', 0)),
         "Toplam Tespit Edilen Etiket/Fark: " + str(summary['fark']),
         "",
         "--- FARK BÖLGELERİ ---",
@@ -755,7 +766,7 @@ with st.sidebar:
 # ANA EKRAN & LOKASYON SEÇİMİ
 # =========================================================
 st.title(
-    "📊 ÖZÇELİK STAND KONTROL UYGULAMASI"
+    "📊 ÖZÇELİK STAND KONTROL UYGULAMASI (İLK 6 RAF)"
 )
 
 st.subheader("1. Şehir ve Bayi Seçiniz")
@@ -904,7 +915,7 @@ if st.button(
     st.session_state.summary = None
     st.session_state.report = ""
 
-    with st.spinner("Analiz yapılıyor..."):
+    with st.spinner("İlk 6 raf için analiz yapılıyor..."):
         result_img, results, summary = (
             analyze_planogram_grid_free(
                 ref_img,
@@ -950,7 +961,7 @@ if (
             data=encoded.tobytes(),
             file_name=(
                 f"{(dealer_name or 'planogram').replace(' ', '_')}"
-                "_denetim.jpg"
+                "_ilk6raf_denetim.jpg"
             ),
             mime="image/jpeg",
             use_container_width=True,

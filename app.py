@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """
 SIGARA STANDI PLANOGRAM DENETİM SİSTEMİ
-Gelişmiş Paket ve Fiyat Etiketi Denetim Sürümü
+Gelişmiş Etiket ve Paket Sayımı Sürümü
 
 Kurulum:
     pip install streamlit opencv-python-headless numpy requests pillow
@@ -523,7 +523,7 @@ def align_images(reference, target):
 
 
 # =========================================================
-# PAKET VE FİYAT ETİKETİ DUYARLI ANALİZ MOTORU
+# DENGELİ KONTUR ANALİZİ (GÜRÜLTÜ FİLTRELİ)
 # =========================================================
 def analyze_planogram_grid_free(reference, field):
     h, w = reference.shape[:2]
@@ -540,15 +540,13 @@ def analyze_planogram_grid_free(reference, field):
     ref_gray = cv2.cvtColor(reference, cv2.COLOR_BGR2GRAY)
     tar_gray = cv2.cvtColor(aligned, cv2.COLOR_BGR2GRAY)
 
-    # Etiketlerin kaybolmaması için hafifletilmiş blur (3x3)
-    ref_gray = cv2.GaussianBlur(ref_gray, (3, 3), 0)
-    tar_gray = cv2.GaussianBlur(tar_gray, (3, 3), 0)
+    ref_gray = cv2.GaussianBlur(ref_gray, (5, 5), 0)
+    tar_gray = cv2.GaussianBlur(tar_gray, (5, 5), 0)
 
     diff = cv2.absdiff(ref_gray, tar_gray)
-    _, thresh = cv2.threshold(diff, 25, 255, cv2.THRESH_BINARY)
+    _, thresh = cv2.threshold(diff, 30, 255, cv2.THRESH_BINARY)
 
-    # İnce etiket çizgilerinin yok olmaması için çekirdek boyutu küçültüldü
-    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (5, 5))
+    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (7, 7))
     thresh = cv2.morphologyEx(thresh, cv2.MORPH_CLOSE, kernel, iterations=2)
     thresh = cv2.morphologyEx(thresh, cv2.MORPH_OPEN, kernel, iterations=1)
 
@@ -562,42 +560,28 @@ def analyze_planogram_grid_free(reference, field):
     results = []
     fark_sayisi = 0
     paket_eksigi_sayisi = 0
-    etiket_degisikligi_sayisi = 0
 
     for cnt in contours:
         area = cv2.contourArea(cnt)
-        # Çok küçük gürültüleri ele, ancak ince fiyat etiketlerini kaçırma (0.0002 alt limit)
-        if area < (w * h * 0.0002) or area > (w * h * 0.15):
+        # Gürültülerin elenmesi ve gerçek sayıyla eşleşmesi için alt sınır artırıldı (0.0005)
+        if area < (w * h * 0.0005) or area > (w * h * 0.15):
             continue
 
         x, y, bw, bh = cv2.boundingRect(cnt)
-        aspect_ratio = float(bw) / max(1, bh)
+        fark_sayisi += 1
 
-        # 1. Durum: Sigara Paketi Eksikleri (Dikine / Karemsi alanlar)
+        aspect_ratio = float(bw) / max(1, bh)
         if 0.3 < aspect_ratio < 1.8 and area < (w * h * 0.02):
             paket_eksigi_sayisi += 1
             etiket_turu = f"PAKET #{paket_eksigi_sayisi}"
-            box_color = (0, 0, 255)  # Kırmızı
-
-        # 2. Durum: Raf Altı Fiyat Etiketleri (Yatay ince şeritler)
-        elif aspect_ratio >= 1.8 and area < (w * h * 0.015):
-            etiket_degisikligi_sayisi += 1
-            etiket_turu = f"ETİKET #{etiket_degisikligi_sayisi}"
-            box_color = (0, 165, 255)  # Turuncu
-
-        # 3. Durum: Diğer Genel Alan/Planogram Farkları
         else:
-            fark_sayisi += 1
             etiket_turu = f"FARK #{fark_sayisi}"
-            box_color = (255, 0, 0)  # Mavi
-
-        toplam_isaret = paket_eksigi_sayisi + etiket_degisikligi_sayisi + fark_sayisi
 
         cv2.rectangle(
             result_img,
             (x, y),
             (x + bw, y + bh),
-            box_color,
+            (0, 0, 255),
             2,
         )
 
@@ -607,15 +591,15 @@ def analyze_planogram_grid_free(reference, field):
             (x, max(15, y - 6)),
             cv2.FONT_HERSHEY_SIMPLEX,
             0.4,
-            box_color,
+            (0, 0, 255),
             1,
             cv2.LINE_AA,
         )
 
         results.append(
             {
-                "id": toplam_isaret,
-                "durum": etiket_turu,
+                "id": fark_sayisi,
+                "durum": "FARK",
                 "x": x,
                 "y": y,
                 "w": bw,
@@ -624,20 +608,19 @@ def analyze_planogram_grid_free(reference, field):
             }
         )
 
-    # Üst siyah bilgi şeridi (Genişletilmiş özet)
+    # Üst siyah başlık alanı
     header_height = max(72, int(h * 0.055))
     cv2.rectangle(result_img, (0, 0), (w, header_height), (18, 18, 18), -1)
 
-    header1 = f"EKSİK PAKET: {paket_eksigi_sayisi} | ETİKET FARKI: {etiket_degisikligi_sayisi}"
-    header2 = f"TOPLAM TESPİT: {paket_eksigi_sayisi + etiket_degisikligi_sayisi + fark_sayisi} Adet"
+    header1 = f"EKSİK SİGARA PAKETİ: {paket_eksigi_sayisi} Adet"
+    header2 = f"TOPLAM TESPİT EDİLEN ETİKET/FARK SAYISI: {fark_sayisi} Adet"
 
-    cv2.putText(result_img, header1, (14, 29), cv2.FONT_HERSHEY_SIMPLEX, 0.58, (0, 165, 255), 2, cv2.LINE_AA)
+    cv2.putText(result_img, header1, (14, 29), cv2.FONT_HERSHEY_SIMPLEX, 0.65, (0, 100, 255), 2, cv2.LINE_AA)
     cv2.putText(result_img, header2, (14, 57), cv2.FONT_HERSHEY_SIMPLEX, 0.52, (200, 200, 200), 1, cv2.LINE_AA)
 
     summary = {
         "fark": fark_sayisi,
         "paket_eksigi": paket_eksigi_sayisi,
-        "etiket_degisikligi": etiket_degisikligi_sayisi,
         "supheli": 0,
         "uyumlu": 0,
         "hizalama_ok": aligned_ok,
@@ -669,15 +652,14 @@ def build_report(
         ),
         "",
         "Eksik Sigara Paketi Sayısı: " + str(summary.get('paket_eksigi', 0)),
-        "Fiyat Etiketi Fark Sayısı: " + str(summary.get('etiket_degisikligi', 0)),
-        "Toplam Tespit Edilen Fark: " + str(summary.get('fark', 0) + summary.get('paket_eksigi', 0) + summary.get('etiket_degisikligi', 0)),
+        "Toplam Tespit Edilen Etiket/Fark: " + str(summary['fark']),
         "",
-        "--- TESPİT DETAYLARI ---",
+        "--- FARK BÖLGELERİ ---",
     ]
 
     for item in results:
         lines.append(
-            f"Tür: {item.get('durum')} | "
+            f"Fark #{item.get('id')} | "
             f"Konum: X={item.get('x')}, Y={item.get('y')} | "
             f"Boyut: {item.get('w')}x{item.get('h')}"
         )
@@ -954,17 +936,15 @@ if (
     and st.session_state.summary
 ):
     summary = st.session_state.summary
-    toplam_fark = int(
+    fark_sayisi = int(
         summary.get("fark", 0)
-        + summary.get("paket_eksigi", 0)
-        + summary.get("etiket_degisikligi", 0)
     )
 
     st.subheader("3. Analiz Sonucu")
 
     st.metric(
-        "🔴 TOPLAM TESPİT EDİLEN DEĞİŞİKLİK",
-        toplam_fark,
+        "🔴 TESPİT EDİLEN TOPLAM FARK",
+        fark_sayisi,
     )
 
     st.image(

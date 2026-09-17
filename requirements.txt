@@ -1,10 +1,6 @@
 streamlit
 opencv-python-headless
 numpy
-pandas
-openpyxl
 requests
-Pillow
-torch
-torchvision
-easyocr
+pillow
+pytesseract

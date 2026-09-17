@@ -1286,8 +1286,6 @@ def analyze_planogram(
     for box in boxes:
         row, col, x1, y1, x2, y2 = box
 
-        # Talep gereği yalnızca ilk N raf denetlenir; alt raflar
-        # görsele işlenmeden (çerçevesiz) bırakılır.
         if max_check_rows and row > max_check_rows:
             continue
 
@@ -1323,41 +1321,34 @@ def analyze_planogram(
 
         results.append(metrics)
 
+        # Yalnızca "FARK" tespit edilen alanlar kırmızı çerçeve ile işaretlenir (yeşil gridler kaldırıldı)
         if metrics["durum"] == "FARK":
             color = (0, 0, 255)
             thickness = 4
 
-        elif metrics["durum"] == "ŞÜPHELİ":
-            color = (0, 165, 255)
-            thickness = 3
+            cv2.rectangle(
+                result_img,
+                (x1 + 2, y1 + 2),
+                (x2 - 2, y2 - 2),
+                color,
+                thickness,
+            )
 
-        else:
-            color = (0, 180, 0)
-            thickness = 2
+            label = (
+                f"R{row}/S{col} "
+                f"%{metrics['score'] * 100:.0f}"
+            )
 
-        cv2.rectangle(
-            result_img,
-            (x1 + 2, y1 + 2),
-            (x2 - 2, y2 - 2),
-            color,
-            thickness,
-        )
-
-        label = (
-            f"R{row}/S{col} "
-            f"%{metrics['score'] * 100:.0f}"
-        )
-
-        cv2.putText(
-            result_img,
-            label,
-            (x1 + 6, y1 + 20),
-            cv2.FONT_HERSHEY_SIMPLEX,
-            0.38,
-            color,
-            1,
-            cv2.LINE_AA,
-        )
+            cv2.putText(
+                result_img,
+                label,
+                (x1 + 6, y1 + 20),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.38,
+                color,
+                1,
+                cv2.LINE_AA,
+            )
 
     fark = sum(
         1
@@ -1476,8 +1467,6 @@ def build_report(
     ]
 
     for item in results:
-        # .get + safe_float kullanıldığı için eski sonuç
-        # kayıtları da rapor ekranını bozmaz.
         lines.append(
             f"R{item.get('raf', 0)}/"
             f"S{item.get('slot', 0)} | "
@@ -1806,7 +1795,6 @@ if st.button(
     use_container_width=True,
     disabled=not ready,
 ):
-    # Eski analiz kayıtlarını tamamen temizle.
     st.session_state.result_img = None
     st.session_state.results = []
     st.session_state.summary = None

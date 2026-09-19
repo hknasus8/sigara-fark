@@ -11,6 +11,7 @@ Streamlit Cloud Secrets:
 """
 
 import hashlib
+import hmac
 import re
 import urllib.parse
 from PIL import Image
@@ -362,11 +363,12 @@ def gray_normalize(img):
 
 def orb_align(reference, target):
     h, w = reference.shape[:2]
-    target = cv2.resize(
-        target,
-        (w, h),
-        interpolation=cv2.INTER_AREA,
-    )
+    if target.shape[:2] != (h, w):
+        target = cv2.resize(
+            target,
+            (w, h),
+            interpolation=cv2.INTER_AREA,
+        )
     ref_gray = gray_normalize(reference)
     tar_gray = gray_normalize(target)
 
@@ -446,11 +448,12 @@ def orb_align(reference, target):
 
 def ecc_align(reference, target):
     h, w = reference.shape[:2]
-    target = cv2.resize(
-        target,
-        (w, h),
-        interpolation=cv2.INTER_AREA,
-    )
+    if target.shape[:2] != (h, w):
+        target = cv2.resize(
+            target,
+            (w, h),
+            interpolation=cv2.INTER_AREA,
+        )
     ref_gray = (
         cv2.cvtColor(
             reference,
@@ -718,8 +721,9 @@ if not st.session_state.authenticated:
         type="primary",
         use_container_width=True,
     ):
-        if password == str(
-            st.secrets["app_password"]
+        if hmac.compare_digest(
+            password,
+            str(st.secrets["app_password"]),
         ):
             st.session_state.authenticated = True
             st.rerun()
@@ -736,19 +740,32 @@ with st.sidebar:
     st.header("⚙️ Denetim Ayarları")
 
     if st.button(
-        "🔄 Önbelleği Temizle",
+        "🔄 Yandex Önbelleğini Yenile",
         use_container_width=True,
+        help=(
+            "Yandex Disk'ten çekilen şehir, bayi ve "
+            "referans fotoğraf listelerini yeniden yükler."
+        ),
     ):
-        yandex_root_items.clear()
-        yandex_list_dir.clear()
-        get_cities.clear()
-        get_dealers.clear()
-        get_reference_image.clear()
+        try:
+            yandex_root_items.clear()
+            yandex_list_dir.clear()
+            get_cities.clear()
+            get_dealers.clear()
+            get_reference_image.clear()
+        except Exception:
+            # Tek tek temizleme başarısız olursa, tüm
+            # @st.cache_data önbelleğini temizleyerek devam et.
+            st.cache_data.clear()
 
         st.session_state.result_img = None
         st.session_state.results = []
         st.session_state.summary = None
         st.session_state.report = ""
+        st.toast(
+            "Yandex önbelleği temizlendi, veriler yeniden yükleniyor...",
+            icon="🔄",
+        )
         st.rerun()
 
     if st.button(
@@ -801,6 +818,11 @@ if city:
         YANDEX_ROOT_PUBLIC_KEY,
         city,
     )
+    if dealer_error:
+        st.warning(
+            "Yandex bayi listesi alınamadı: "
+            + str(dealer_error)
+        )
 
 with c2:
     dealer_name = st.selectbox(
@@ -841,6 +863,11 @@ if dealer_path:
                 YANDEX_ROOT_PUBLIC_KEY,
                 dealer_path,
             )
+        )
+    if ref_img is None and ref_error:
+        st.warning(
+            "Yandex referans görseli alınamadı: "
+            + str(ref_error)
         )
 
 u1, u2 = st.columns(2)
@@ -916,24 +943,35 @@ if st.button(
     st.session_state.report = ""
 
     with st.spinner("İlk 6 raf için analiz yapılıyor..."):
-        result_img, results, summary = (
-            analyze_planogram_grid_free(
-                ref_img,
-                field_img,
+        try:
+            result_img, results, summary = (
+                analyze_planogram_grid_free(
+                    ref_img,
+                    field_img,
+                )
             )
-        )
-        report = build_report(
-            dealer_name or "Manuel",
-            results,
-            summary,
-        )
+            report = build_report(
+                dealer_name or "Manuel",
+                results,
+                summary,
+            )
 
-        st.session_state.result_img = (
-            result_img
-        )
-        st.session_state.results = results
-        st.session_state.summary = summary
-        st.session_state.report = report
+            st.session_state.result_img = (
+                result_img
+            )
+            st.session_state.results = results
+            st.session_state.summary = summary
+            st.session_state.report = report
+        except Exception as exc:
+            st.session_state.result_img = None
+            st.session_state.results = []
+            st.session_state.summary = None
+            st.session_state.report = ""
+            st.error(
+                "Analiz sırasında bir hata oluştu. "
+                "Lütfen fotoğrafların bozuk olmadığından emin olup "
+                "tekrar deneyin.\n\nTeknik detay: " + str(exc)
+            )
 
 
 # =========================================================

@@ -317,8 +317,6 @@ def get_dealers(public_key, city):
         return [], error
     
     dealers = []
-    prefix_to_remove = normalize_text(city) + " -"
-    
     for item in items:
         if (
             item.get("type") == "dir"
@@ -326,19 +324,9 @@ def get_dealers(public_key, city):
             and item.get("path")
         ):
             raw_name = item["name"]
-            cleaned_name = raw_name
-            
-            upper_raw = normalize_text(raw_name)
-            if upper_raw.startswith(prefix_to_remove):
-                cleaned_name = raw_name[len(prefix_to_remove):].strip()
-            elif " - " in raw_name:
-                parts = raw_name.split(" - ", 1)
-                if normalize_text(parts[0]) == normalize_text(city):
-                    cleaned_name = parts[1].strip()
-
             dealers.append(
                 {
-                    "name": cleaned_name,
+                    "name": raw_name,
                     "raw_name": raw_name,
                     "path": item["path"],
                 }
@@ -934,23 +922,39 @@ if city:
         )
 
 with c2:
-    dealer_choices = {x["raw_name"]: x for x in dealers}
+    st.markdown("**Bayi Arama ve Seçim**")
+    search_term = st.text_input(
+        "Bayi ara",
+        placeholder="Jandarma, HTC vb. yazın...",
+        key="dealer_search_box",
+        label_visibility="collapsed",
+    )
+    
+    # Türkçe karakterleri koruyarak akıllı filtreleme
+    filtered_dealers = []
+    norm_search = normalize_text(search_term)
+    for dealer in dealers:
+        if not norm_search or norm_search in normalize_text(dealer["raw_name"]):
+            filtered_dealers.append(dealer)
+
+    dealer_choices = {x["raw_name"]: x for x in filtered_dealers}
     dealer_raw_names = list(dealer_choices.keys())
     
     selected_raw_dealer = st.selectbox(
         "Bayi",
         options=[""] + dealer_raw_names,
         format_func=lambda x: (
-            "Bayi seçin veya yazın..."
+            "Arama sonucu eşleşen bayiyi seçin..."
             if x == ""
-            else dealer_choices[x]["name"] if x in dealer_choices else x
+            else x
         ),
+        label_visibility="collapsed",
     )
     
     dealer_name = ""
     dealer_path = ""
     if selected_raw_dealer in dealer_choices:
-        dealer_name = dealer_choices[selected_raw_dealer]["name"]
+        dealer_name = dealer_choices[selected_raw_dealer]["raw_name"]
         dealer_path = dealer_choices[selected_raw_dealer]["path"]
 
 

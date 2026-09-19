@@ -934,28 +934,24 @@ if city:
         )
 
 with c2:
-    dealer_names = [x["name"] for x in dealers]
-    dealer_options = [""] + dealer_names
+    dealer_choices = {x["raw_name"]: x for x in dealers}
+    dealer_raw_names = list(dealer_choices.keys())
     
-    st.markdown("**Bayi**")
-    # Arama çubuğu (No results) sorununu önleyen radyo bileşeni entegrasyonu
-    dealer_name = st.radio(
-        "Bayi Seçimi",
-        options=dealer_options,
+    selected_raw_dealer = st.selectbox(
+        "Bayi",
+        options=[""] + dealer_raw_names,
         format_func=lambda x: (
-            "Bayi seçin..."
+            "Bayi seçin veya yazın..."
             if x == ""
-            else x
+            else dealer_choices[x]["name"] if x in dealer_choices else x
         ),
-        label_visibility="collapsed"
     )
-
-dealer_path = ""
-if dealer_name:
-    for dealer in dealers:
-        if dealer["name"] == dealer_name:
-            dealer_path = dealer["path"]
-            break
+    
+    dealer_name = ""
+    dealer_path = ""
+    if selected_raw_dealer in dealer_choices:
+        dealer_name = dealer_choices[selected_raw_dealer]["name"]
+        dealer_path = dealer_choices[selected_raw_dealer]["path"]
 
 
 # =========================================================

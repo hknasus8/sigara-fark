@@ -126,6 +126,53 @@ def prepare_image(img):
     )
 
 
+def detect_shelf_top(img, search_ratio=0.45, extra_margin=0.035):
+    """
+    Rafın üst çerçevesini otomatik tahmin eder.
+    Fotoğraf rafın tam sınırına kırpılmışsa (üstte dekor/eşya
+    yoksa) 0.0 döner. Rafın üstünde çakmak, süs eşyası vb.
+    varsa, bunların bulunduğu "gürültülü" alanı geçip parlak/
+    düzgün raf çerçevesinin bittiği noktayı bulmaya çalışır.
+    Basit bir sezgisel yöntemdir; kesin bir nesne tespiti değildir,
+    bu yüzden kullanıcı isterse UI üzerinden elle geçersiz kılabilir.
+    """
+    try:
+        h, w = img.shape[:2]
+        search_h = max(10, int(h * search_ratio))
+        gray = cv2.cvtColor(
+            img[:search_h, :], cv2.COLOR_BGR2GRAY
+        ).astype(np.float32)
+        row_mean = gray.mean(axis=1)
+        row_std = gray.std(axis=1)
+
+        k = max(3, search_h // 60)
+        kernel = np.ones(k, dtype=np.float32) / k
+        row_mean_s = np.convolve(row_mean, kernel, mode="same")
+        row_std_s = np.convolve(row_std, kernel, mode="same")
+
+        # Rafın çerçevesi genelde parlak ve tek renkli (düşük
+        # varyanslı) bir bant olarak görünür; bu bandın bittiği
+        # yer ürün sıralarının başladığı yerdir.
+        bright_uniform = (row_mean_s > 150) & (row_std_s < 25)
+        idx = np.where(bright_uniform)[0]
+        if len(idx) == 0:
+            return 0.0
+
+        start = int(idx[0])
+        end = start
+        for i in idx:
+            if i - end <= 3:
+                end = i
+            else:
+                break
+
+        shelf_start = min(search_h - 1, end + int(h * extra_margin))
+        ratio = safe_float(shelf_start / h, 0.0)
+        return max(0.0, min(0.4, ratio))
+    except Exception:
+        return 0.0
+
+
 def safe_download_image(url, timeout=25):
     try:
         if not url:
@@ -999,22 +1046,52 @@ with u2:
 # =========================================================
 st.divider()
 
+auto_top_pct = 0
+if ref_img is not None and field_img is not None:
+    try:
+        auto_top_pct = int(
+            round(
+                max(
+                    detect_shelf_top(ref_img),
+                    detect_shelf_top(field_img),
+                )
+                * 100
+            )
+        )
+    except Exception:
+        auto_top_pct = 0
+
+# Fotoğraf seti değiştiğinde (bayi değişince ya da yeni fotoğraf
+# yüklenince) kaydırıcının otomatik tespit edilen değere sıfırlanması
+# için, widget anahtarını fotoğraf setine bağlıyoruz.
+roi_widget_key = "roi_slider_" + (
+    dealer_path if dealer_path else "manuel"
+)
+
 with st.expander("⚙️ Gelişmiş Analiz Ayarları", expanded=False):
-    st.caption(
-        "Fotoğraf rafın tam sınırına kırpılmamışsa (raf üstünde "
-        "çakmak, süs eşyası vb. görünüyorsa) üst sınırı artırarak "
-        "bu alanı analiz dışı bırakabilirsiniz."
-    )
+    if auto_top_pct > 0:
+        st.caption(
+            f"📐 Raf üstünde alakasız eşyalar otomatik tespit edildi "
+            f"— üst sınır otomatik olarak %{auto_top_pct} önerildi. "
+            "Gerekirse aşağıdan elle değiştirebilirsiniz."
+        )
+    else:
+        st.caption(
+            "Fotoğraf rafın tam sınırına kırpılmamışsa (raf üstünde "
+            "çakmak, süs eşyası vb. görünüyorsa) üst sınırı artırarak "
+            "bu alanı analiz dışı bırakabilirsiniz."
+        )
     roi_range = st.slider(
         "Analiz Edilecek Raf Bölgesi (görüntü yüksekliğinin %'si)",
         min_value=0,
         max_value=100,
-        value=(0, 65),
+        value=(auto_top_pct, 65),
         step=1,
+        key=roi_widget_key,
         help=(
-            "Varsayılan: 0-65 (görüntünün üst %65'i, yani "
-            "'ilk 6 raf'). Raf üstünde alakasız eşyalar varsa "
-            "alt sınırı düşürmeden üst sınırı artırın."
+            "Üst sınır fotoğraftan otomatik tahmin edilir. "
+            "Raf üstünde alakasız eşyalar varsa alt sınırı "
+            "düşürmeden üst sınırı artırın."
         ),
     )
     illumination_normalize = st.checkbox(

@@ -327,19 +327,36 @@ def get_dealers(public_key, city):
     )
     if error:
         return [], error
+    
     dealers = []
+    prefix_to_remove = normalize_text(city) + " -"
+    
     for item in items:
         if (
             item.get("type") == "dir"
             and item.get("name")
             and item.get("path")
         ):
+            raw_name = item["name"]
+            cleaned_name = raw_name
+            
+            # Klasör adının başındaki "ŞEHİR - " önekini otomatik temizle
+            upper_raw = normalize_text(raw_name)
+            if upper_raw.startswith(prefix_to_remove):
+                cleaned_name = raw_name[len(prefix_to_remove):].strip()
+            elif " - " in raw_name:
+                parts = raw_name.split(" - ", 1)
+                if normalize_text(parts[0]) == normalize_text(city):
+                    cleaned_name = parts[1].strip()
+
             dealers.append(
                 {
-                    "name": item["name"],
+                    "name": cleaned_name,      # Arayüzde görünecek temiz ad
+                    "raw_name": raw_name,      # Yandex'teki orijinal klasör adı
                     "path": item["path"],
                 }
             )
+            
     dealers.sort(
         key=lambda x: normalize_text(x["name"])
     )
@@ -592,16 +609,9 @@ def analyze_planogram_grid_free(
         align_images(reference, field)
     )
 
-    # Analiz edilecek dikey bölge: varsayılan olarak "ilk 6 raf"ı
-    # kapsayan üst %65'lik kısım. Üst sınır, raf üstündeki
-    # dekor/ürün dışı eşyaları (çakmak gazı, süs vb.) devre dışı
-    # bırakmak için ayarlanabilir.
     roi_top = max(0, min(h - 1, int(h * roi_top_ratio)))
     roi_bottom = max(roi_top + 1, min(h, int(h * roi_bottom_ratio)))
 
-    # Görüntü kenarlarındaki ince şeritler perspektif hizalamasından
-    # (warpPerspective) kaynaklanan yapay farklardır, gerçek ürün
-    # farkı değildir; bu payı analiz dışı bırakıyoruz.
     margin_x = int(w * edge_margin_ratio)
     margin_y = int(h * edge_margin_ratio)
 
@@ -609,9 +619,6 @@ def analyze_planogram_grid_free(
     tar_gray = cv2.cvtColor(aligned, cv2.COLOR_BGR2GRAY)
 
     if illumination_normalize:
-        # İki fotoğraf arasındaki genel parlaklık/kontrast farkını
-        # (farklı ışık, flaş, pozlama) dengele; böylece ürün
-        # değişikliği olmayan alanlarda sahte fark üretilmesini azaltır.
         roi_ref = ref_gray[roi_top:roi_bottom, margin_x:w - margin_x].astype(np.float32)
         roi_tar = tar_gray[roi_top:roi_bottom, margin_x:w - margin_x].astype(np.float32)
         ref_mean, ref_std = roi_ref.mean(), roi_ref.std() + 1e-6
@@ -628,7 +635,6 @@ def analyze_planogram_grid_free(
     diff = cv2.absdiff(ref_gray, tar_gray)
     _, thresh = cv2.threshold(diff, 30, 255, cv2.THRESH_BINARY)
 
-    # Analiz bölgesi dışını (üst/alt sınır ve kenar payı) tamamen yok say
     thresh[roi_bottom:, :] = 0
     thresh[:roi_top, :] = 0
     if margin_x > 0:
@@ -662,7 +668,6 @@ def analyze_planogram_grid_free(
 
         x, y, bw, bh = cv2.boundingRect(cnt)
 
-        # Ek güvenlik önlemi: Belirlenen sınırların dışındaki konturları atla
         if y > roi_bottom or y < roi_top:
             continue
 
@@ -717,7 +722,6 @@ def analyze_planogram_grid_free(
     }
 
     return result_img, results, summary
-
 
 
 # =========================================================
@@ -839,8 +843,6 @@ with st.sidebar:
             get_dealers.clear()
             get_reference_image.clear()
         except Exception:
-            # Tek tek temizleme başarısız olursa, tüm
-            # @st.cache_data önbelleğini temizleyerek devam et.
             st.cache_data.clear()
 
         st.session_state.result_img = None
@@ -1061,9 +1063,6 @@ if ref_img is not None and field_img is not None:
     except Exception:
         auto_top_pct = 0
 
-# Fotoğraf seti değiştiğinde (bayi değişince ya da yeni fotoğraf
-# yüklenince) kaydırıcının otomatik tespit edilen değere sıfırlanması
-# için, widget anahtarını fotoğraf setine bağlıyoruz.
 roi_widget_key = "roi_slider_" + (
     dealer_path if dealer_path else "manuel"
 )

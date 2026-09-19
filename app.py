@@ -936,7 +936,7 @@ if city:
 with c2:
     dealer_options = [""] + [x["name"] for x in dealers]
     
-    # Bayi seçimi için güvenli selectbox (uzun metinlerde No results sorununu çözer)
+    # Uzun isimlerde filtre çakışmalarını (No results) önleyen güvenli selectbox entegrasyonu
     dealer_name = st.selectbox(
         "Bayi",
         options=dealer_options,

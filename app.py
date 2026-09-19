@@ -35,9 +35,6 @@ st.set_page_config(
 st.markdown(
     """
 <style>
-#MainMenu {visibility:hidden;}
-footer {visibility:hidden;}
-header {visibility:hidden;}
 .block-container {padding-top:1rem;padding-bottom:2rem;}
 </style>
 """,
@@ -782,9 +779,44 @@ with st.sidebar:
 # =========================================================
 # ANA EKRAN & LOKASYON SEÇİMİ
 # =========================================================
-st.title(
-    "📊 ÖZÇELİK STAND KONTROL UYGULAMASI (İLK 6 RAF)"
-)
+def clear_yandex_cache():
+    try:
+        yandex_root_items.clear()
+        yandex_list_dir.clear()
+        get_cities.clear()
+        get_dealers.clear()
+        get_reference_image.clear()
+    except Exception:
+        st.cache_data.clear()
+
+    st.session_state.result_img = None
+    st.session_state.results = []
+    st.session_state.summary = None
+    st.session_state.report = ""
+
+
+title_col, refresh_col = st.columns([5, 1])
+with title_col:
+    st.title(
+        "📊 ÖZÇELİK STAND KONTROL UYGULAMASI (İLK 6 RAF)"
+    )
+with refresh_col:
+    st.write("")
+    if st.button(
+        "🔄 Yandex Önbelleğini Yenile",
+        use_container_width=True,
+        key="main_refresh_btn",
+        help=(
+            "Yandex Disk'ten çekilen şehir, bayi ve "
+            "referans fotoğraf listelerini yeniden yükler."
+        ),
+    ):
+        clear_yandex_cache()
+        st.toast(
+            "Yandex önbelleği temizlendi, veriler yeniden yükleniyor...",
+            icon="🔄",
+        )
+        st.rerun()
 
 st.subheader("1. Şehir ve Bayi Seçiniz")
 

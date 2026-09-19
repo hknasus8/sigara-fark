@@ -526,7 +526,14 @@ def align_images(reference, target):
 # =========================================================
 # İLK 6 RAF MODÜLÜ İÇİN KONTUR ANALİZİ
 # =========================================================
-def analyze_planogram_grid_free(reference, field):
+def analyze_planogram_grid_free(
+    reference,
+    field,
+    roi_top_ratio=0.0,
+    roi_bottom_ratio=0.65,
+    edge_margin_ratio=0.025,
+    illumination_normalize=True,
+):
     h, w = reference.shape[:2]
 
     field = cv2.resize(
@@ -538,11 +545,35 @@ def analyze_planogram_grid_free(reference, field):
         align_images(reference, field)
     )
 
-    # Sadece ilk 6 raf modülünü kapsayan üst bölgeyi maskeliyoruz (Y ekseninin ilk %65'lik kısmı)
-    roi_height_limit = int(h * 0.65)
+    # Analiz edilecek dikey bölge: varsayılan olarak "ilk 6 raf"ı
+    # kapsayan üst %65'lik kısım. Üst sınır, raf üstündeki
+    # dekor/ürün dışı eşyaları (çakmak gazı, süs vb.) devre dışı
+    # bırakmak için ayarlanabilir.
+    roi_top = max(0, min(h - 1, int(h * roi_top_ratio)))
+    roi_bottom = max(roi_top + 1, min(h, int(h * roi_bottom_ratio)))
+
+    # Görüntü kenarlarındaki ince şeritler perspektif hizalamasından
+    # (warpPerspective) kaynaklanan yapay farklardır, gerçek ürün
+    # farkı değildir; bu payı analiz dışı bırakıyoruz.
+    margin_x = int(w * edge_margin_ratio)
+    margin_y = int(h * edge_margin_ratio)
 
     ref_gray = cv2.cvtColor(reference, cv2.COLOR_BGR2GRAY)
     tar_gray = cv2.cvtColor(aligned, cv2.COLOR_BGR2GRAY)
+
+    if illumination_normalize:
+        # İki fotoğraf arasındaki genel parlaklık/kontrast farkını
+        # (farklı ışık, flaş, pozlama) dengele; böylece ürün
+        # değişikliği olmayan alanlarda sahte fark üretilmesini azaltır.
+        roi_ref = ref_gray[roi_top:roi_bottom, margin_x:w - margin_x].astype(np.float32)
+        roi_tar = tar_gray[roi_top:roi_bottom, margin_x:w - margin_x].astype(np.float32)
+        ref_mean, ref_std = roi_ref.mean(), roi_ref.std() + 1e-6
+        tar_mean, tar_std = roi_tar.mean(), roi_tar.std() + 1e-6
+        tar_gray = np.clip(
+            (tar_gray.astype(np.float32) - tar_mean) * (ref_std / tar_std) + ref_mean,
+            0,
+            255,
+        ).astype(np.uint8)
 
     ref_gray = cv2.GaussianBlur(ref_gray, (5, 5), 0)
     tar_gray = cv2.GaussianBlur(tar_gray, (5, 5), 0)
@@ -550,8 +581,14 @@ def analyze_planogram_grid_free(reference, field):
     diff = cv2.absdiff(ref_gray, tar_gray)
     _, thresh = cv2.threshold(diff, 30, 255, cv2.THRESH_BINARY)
 
-    # İlk 6 raf dışındaki alt kısımları tamamen yok say (sıfırla)
-    thresh[roi_height_limit:, :] = 0
+    # Analiz bölgesi dışını (üst/alt sınır ve kenar payı) tamamen yok say
+    thresh[roi_bottom:, :] = 0
+    thresh[:roi_top, :] = 0
+    if margin_x > 0:
+        thresh[:, :margin_x] = 0
+        thresh[:, w - margin_x:] = 0
+    if margin_y > 0:
+        thresh[:margin_y, :] = 0
 
     kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (7, 7))
     thresh = cv2.morphologyEx(thresh, cv2.MORPH_CLOSE, kernel, iterations=2)
@@ -564,6 +601,9 @@ def analyze_planogram_grid_free(reference, field):
     )
 
     result_img = aligned.copy()
+    cv2.line(result_img, (0, roi_bottom), (w, roi_bottom), (255, 180, 0), 2)
+    if roi_top > 0:
+        cv2.line(result_img, (0, roi_top), (w, roi_top), (255, 180, 0), 2)
     results = []
     fark_sayisi = 0
     paket_eksigi_sayisi = 0
@@ -574,9 +614,9 @@ def analyze_planogram_grid_free(reference, field):
             continue
 
         x, y, bw, bh = cv2.boundingRect(cnt)
-        
-        # Ek güvenlik önlemi: Belirlenen sınırın altındaki konturları atla
-        if y > roi_height_limit:
+
+        # Ek güvenlik önlemi: Belirlenen sınırların dışındaki konturları atla
+        if y > roi_bottom or y < roi_top:
             continue
 
         fark_sayisi += 1
@@ -630,6 +670,7 @@ def analyze_planogram_grid_free(reference, field):
     }
 
     return result_img, results, summary
+
 
 
 # =========================================================
@@ -958,10 +999,47 @@ with u2:
 # =========================================================
 st.divider()
 
+with st.expander("⚙️ Gelişmiş Analiz Ayarları", expanded=False):
+    st.caption(
+        "Fotoğraf rafın tam sınırına kırpılmamışsa (raf üstünde "
+        "çakmak, süs eşyası vb. görünüyorsa) üst sınırı artırarak "
+        "bu alanı analiz dışı bırakabilirsiniz."
+    )
+    roi_range = st.slider(
+        "Analiz Edilecek Raf Bölgesi (görüntü yüksekliğinin %'si)",
+        min_value=0,
+        max_value=100,
+        value=(0, 65),
+        step=1,
+        help=(
+            "Varsayılan: 0-65 (görüntünün üst %65'i, yani "
+            "'ilk 6 raf'). Raf üstünde alakasız eşyalar varsa "
+            "alt sınırı düşürmeden üst sınırı artırın."
+        ),
+    )
+    illumination_normalize = st.checkbox(
+        "Işık/Parlaklık Farkını Otomatik Dengele",
+        value=True,
+        help=(
+            "İki fotoğraf farklı ışıkta/flaşla çekildiyse, genel "
+            "parlaklık farkının sahte fark olarak işaretlenmesini önler."
+        ),
+    )
+
+roi_top_ratio = roi_range[0] / 100.0
+roi_bottom_ratio = roi_range[1] / 100.0
+
 ready = (
     ref_img is not None
     and field_img is not None
+    and roi_bottom_ratio > roi_top_ratio
 )
+
+if ref_img is not None and field_img is not None and roi_bottom_ratio <= roi_top_ratio:
+    st.warning(
+        "Raf bölgesi ayarı geçersiz: üst sınır, alt sınırdan "
+        "küçük olmalı."
+    )
 
 if st.button(
     "🚀 KONTROLE BAŞLA",
@@ -980,6 +1058,9 @@ if st.button(
                 analyze_planogram_grid_free(
                     ref_img,
                     field_img,
+                    roi_top_ratio=roi_top_ratio,
+                    roi_bottom_ratio=roi_bottom_ratio,
+                    illumination_normalize=illumination_normalize,
                 )
             )
             report = build_report(

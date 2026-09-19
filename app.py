@@ -2,12 +2,6 @@
 """
 ÖZÇELİK STAND KONTROL UYGULAMASI
 Gelişmiş Etiket ve Paket Sayımı Sürümü (İlk 6 Raf Modülü)
-
-Kurulum:
-    pip install streamlit opencv-python-headless numpy requests pillow
-
-Streamlit Cloud Secrets:
-    app_password = "SIFRENIZ"
 """
 
 import hashlib
@@ -399,7 +393,7 @@ def gray_normalize(img):
 
 def orb_align(reference, target):
     h, w = reference.shape[:2]
-    if target.shape[:2] != (h, w):
+    if target.shape[:2] != (w, h):
         target = cv2.resize(
             target,
             (w, h),
@@ -930,11 +924,13 @@ with c2:
         label_visibility="collapsed",
     )
     
-    # Türkçe karakterleri koruyarak akıllı filtreleme
+    # Türkçe 'İ' ve 'I' harflerini ve tüm karakterleri koruyarak akıllı filtreleme
     filtered_dealers = []
-    norm_search = normalize_text(search_term)
+    search_cleaned = search_term.replace("i", "İ").replace("ı", "I").strip().upper()
+    
     for dealer in dealers:
-        if not norm_search or norm_search in normalize_text(dealer["raw_name"]):
+        dealer_name_upper = dealer["raw_name"].replace("i", "İ").replace("ı", "I").upper()
+        if not search_cleaned or search_cleaned in dealer_name_upper:
             filtered_dealers.append(dealer)
 
     dealer_choices = {x["raw_name"]: x for x in filtered_dealers}

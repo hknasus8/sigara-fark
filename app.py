@@ -127,15 +127,6 @@ def prepare_image(img):
 
 
 def detect_shelf_top(img, search_ratio=0.45, extra_margin=0.035):
-    """
-    Rafın üst çerçevesini otomatik tahmin eder.
-    Fotoğraf rafın tam sınırına kırpılmışsa (üstte dekor/eşya
-    yoksa) 0.0 döner. Rafın üstünde çakmak, süs eşyası vb.
-    varsa, bunların bulunduğu "gürültülü" alanı geçip parlak/
-    düzgün raf çerçevesinin bittiği noktayı bulmaya çalışır.
-    Basit bir sezgisel yöntemdir; kesin bir nesne tespiti değildir,
-    bu yüzden kullanıcı isterse UI üzerinden elle geçersiz kılabilir.
-    """
     try:
         h, w = img.shape[:2]
         search_h = max(10, int(h * search_ratio))
@@ -150,9 +141,6 @@ def detect_shelf_top(img, search_ratio=0.45, extra_margin=0.035):
         row_mean_s = np.convolve(row_mean, kernel, mode="same")
         row_std_s = np.convolve(row_std, kernel, mode="same")
 
-        # Rafın çerçevesi genelde parlak ve tek renkli (düşük
-        # varyanslı) bir bant olarak görünür; bu bandın bittiği
-        # yer ürün sıralarının başladığı yerdir.
         bright_uniform = (row_mean_s > 150) & (row_std_s < 25)
         idx = np.where(bright_uniform)[0]
         if len(idx) == 0:
@@ -340,7 +328,6 @@ def get_dealers(public_key, city):
             raw_name = item["name"]
             cleaned_name = raw_name
             
-            # Klasör adının başındaki "ŞEHİR - " önekini otomatik temizle
             upper_raw = normalize_text(raw_name)
             if upper_raw.startswith(prefix_to_remove):
                 cleaned_name = raw_name[len(prefix_to_remove):].strip()
@@ -351,8 +338,8 @@ def get_dealers(public_key, city):
 
             dealers.append(
                 {
-                    "name": cleaned_name,      # Arayüzde görünecek temiz ad
-                    "raw_name": raw_name,      # Yandex'teki orijinal klasör adı
+                    "name": cleaned_name,
+                    "raw_name": raw_name,
                     "path": item["path"],
                 }
             )
@@ -509,7 +496,7 @@ def orb_align(reference, target):
 
 def ecc_align(reference, target):
     h, w = reference.shape[:2]
-    if target.shape[:2] != (h, w):
+    if target.shape[:2] != (w, h):
         target = cv2.resize(
             target,
             (w, h),
@@ -947,13 +934,12 @@ if city:
         )
 
 with c2:
+    dealer_options = [""] + [x["name"] for x in dealers]
+    
+    # Bayi seçimi için güvenli selectbox (uzun metinlerde No results sorununu çözer)
     dealer_name = st.selectbox(
         "Bayi",
-        options=[""]
-        + [
-            x["name"]
-            for x in dealers
-        ],
+        options=dealer_options,
         format_func=lambda x: (
             "Bayi seçin..."
             if x == ""
@@ -996,7 +982,7 @@ u1, u2 = st.columns(2)
 
 with u1:
     st.markdown(
-        "**Orijinal Referans Fotoğrafı**"
+        "**Orijinal Referans Fotoğraf**"
     )
     if ref_img is None:
         ref_upload = st.file_uploader(

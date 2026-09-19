@@ -934,17 +934,20 @@ if city:
         )
 
 with c2:
-    dealer_options = [""] + [x["name"] for x in dealers]
+    dealer_names = [x["name"] for x in dealers]
+    dealer_options = [""] + dealer_names
     
-    # Uzun isimlerde filtre çakışmalarını (No results) önleyen güvenli selectbox entegrasyonu
-    dealer_name = st.selectbox(
-        "Bayi",
+    st.markdown("**Bayi**")
+    # Arama çubuğu (No results) sorununu önleyen radyo bileşeni entegrasyonu
+    dealer_name = st.radio(
+        "Bayi Seçimi",
         options=dealer_options,
         format_func=lambda x: (
             "Bayi seçin..."
             if x == ""
             else x
         ),
+        label_visibility="collapsed"
     )
 
 dealer_path = ""

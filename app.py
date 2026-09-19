@@ -924,13 +924,17 @@ with c2:
         label_visibility="collapsed",
     )
     
-    # Türkçe 'İ' ve 'I' harflerini ve tüm karakterleri koruyarak akıllı filtreleme
+    # Türkçe İ ve I harflerini dikkate alan özel güvenli arama fonksiyonu
+    def tr_lower(text):
+        return str(text).replace("İ", "i").replace("I", "ı").lower()
+
     filtered_dealers = []
-    search_cleaned = search_term.replace("i", "İ").replace("ı", "I").strip().upper()
+    search_cleaned = tr_lower(search_term).strip()
+    search_words = [w for w in search_cleaned.split() if w]
     
     for dealer in dealers:
-        dealer_name_upper = dealer["raw_name"].replace("i", "İ").replace("ı", "I").upper()
-        if not search_cleaned or search_cleaned in dealer_name_upper:
+        dealer_name_lower = tr_lower(dealer["raw_name"])
+        if not search_words or all(word in dealer_name_lower for word in search_words):
             filtered_dealers.append(dealer)
 
     dealer_choices = {x["raw_name"]: x for x in filtered_dealers}

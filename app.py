@@ -660,7 +660,7 @@ def draw_band_preview(img, roi_top_pct, roi_bottom_pct, band_bounds_pct):
 
     all_bounds = [roi_top_pct] + list(band_bounds_pct) + [roi_bottom_pct]
     
-    # Her raf için ayrı distinct (farklı) renkler (BGR formatında)
+    # 6 adet raf bölgesi için özel renkler (BGR)
     band_colors = [
         (255, 100, 100),  # Raf 1: Açık Mavi
         (0, 165, 255),    # Raf 2: Turuncu
@@ -670,7 +670,7 @@ def draw_band_preview(img, roi_top_pct, roi_bottom_pct, band_bounds_pct):
         (255, 255, 0)     # Raf 6: Turkuaz
     ]
     
-    # Her sınır çizgisi için ayrı renkler
+    # Sınır çizgileri için özel renkler
     boundary_colors = [
         (0, 0, 255),      # Sınır 1: Kırmızı
         (255, 0, 0),      # Sınır 2: Mavi
@@ -693,12 +693,12 @@ def draw_band_preview(img, roi_top_pct, roi_bottom_pct, band_bounds_pct):
     if roi_bottom_px < h:
         preview[roi_bottom_px:h, :] = (preview[roi_bottom_px:h, :].astype(np.float32) * 0.35).astype(np.uint8)
 
-    # Her sınır çizgisine kendi özel rengini ve etiketini çizdirme
+    # Sınır çizgilerini ve etiketlerini çizme
     for idx, pct in enumerate(band_bounds_pct):
         y = int(h * pct / 100.0)
         b_color = boundary_colors[idx % len(boundary_colors)]
         cv2.line(preview, (0, y), (w, y), b_color, 3)
-        cv2.putText(preview, f"SINIR {idx + 1}", (10, max(20, y - 5)), cv2.FONT_HERSHEY_SIMPLEX, 0.6, b_color, 2, cv2.LINE_AA)
+        cv2.putText(preview, f"SINIR {idx + 1} (%{pct})", (10, max(20, y - 5)), cv2.FONT_HERSHEY_SIMPLEX, 0.6, b_color, 2, cv2.LINE_AA)
 
     for i in range(len(all_bounds) - 1):
         top_px = int(h * all_bounds[i] / 100.0)
@@ -958,26 +958,38 @@ roi_top_ratio = roi_range[0] / 100.0
 roi_bottom_ratio = roi_range[1] / 100.0
 
 band_widget_key = "band_boundaries_" + (dealer_path if dealer_path else "manuel")
-default_bounds = [round(100 * i / RAF_SAYISI) for i in range(1, RAF_SAYISI)]
+default_bounds = [int(roi_range[0] + (roi_range[1] - roi_range[0]) * i / RAF_SAYISI) for i in range(1, RAF_SAYISI)]
 
 if label_check_enabled:
-    with st.expander("📐 İlk 6 Raf Sınırlarını Kalibre Et", expanded=False):
-        st.caption("Rafların perspektif kaymalarını ve çakışmalarını önlemek için sınırları ayarlayın (sınırlar otomatik olarak sıralanır):")
+    with st.expander("📐 İlk 6 Raf Sınırlarını Kalibre Et (İnce Ayarlı)", expanded=True):
+        st.caption("Rafların perspektif kaymalarını önlemek için her sınır için aşağı/yukarı (+/-) ince ayar yapın. Sınırlar otomatik olarak sıralanır:")
         cols = st.columns(RAF_SAYISI - 1)
         raw_bounds = []
-        last_val = 5
+        last_val = max(5, roi_range[0])
+        
         for i, col in enumerate(cols):
             with col:
-                min_v = max(1, last_val + 1)
-                val = st.slider(f"Sınır {i + 1}", min_value=min_v, max_value=95 + i, value=min(max(default_bounds[i], min_v), 98), key=f"{band_widget_key}_{i}")
+                min_v = max(roi_range[0] + 1, last_val + 1)
+                max_v = min(roi_range[1] - (RAF_SAYISI - 1 - i), 98)
+                default_val = min(max(default_bounds[i], min_v), max_v)
+                
+                # Sayı kutusu ile (+/- tuşlarıyla) 1'er birimlik tam hassasiyetli ince ayar
+                val = st.number_input(
+                    f"Sınır {i + 1} (%)", 
+                    min_value=int(min_v), 
+                    max_value=int(max_v), 
+                    value=int(default_val), 
+                    step=1, 
+                    key=f"{band_widget_key}_num_{i}"
+                )
                 raw_bounds.append(val)
                 last_val = val
         
-        # Sınırların çakışmasını engellemek için kesin sıralama
+        # Sınırların çakışmasını engellemek için kesin sıralama kilidi
         band_bounds_pct = sorted(raw_bounds)
 
         if ref_img is not None:
-            st.image(draw_band_preview(ref_img, roi_range[0], roi_range[1], band_bounds_pct), channels="BGR", use_container_width=True, caption="Önizleme: Her raf ve sınır çizgisi farklı renklerle kodlanmıştır.")
+            st.image(draw_band_preview(ref_img, roi_range[0], roi_range[1], band_bounds_pct), channels="BGR", use_container_width=True, caption="Önizleme: 6 Raf ve Sınır Çizgileri (Ayrı Renk Kodlu)")
 else:
     band_bounds_pct = default_bounds
 

@@ -652,71 +652,8 @@ def draw_label_results(result_img, band_results, x_offset, y_offset):
 
 
 def draw_band_preview(img, roi_top_pct, roi_bottom_pct, band_bounds_pct, raf5_alt_pct):
-    preview = img.copy()
-    h, w = preview.shape[:2]
-    overlay = preview.copy()
-    roi_top_px = int(h * roi_top_pct / 100.0)
-    roi_bottom_px = int(h * roi_bottom_pct / 100.0)
-
-    # 6 Raf için toplam 7 nokta (roi_top, 5 sınır çizgisi ve raf5_alt_pct)
-    all_bounds = [roi_top_pct] + list(band_bounds_pct) + [raf5_alt_pct]
-    
-    band_colors = [
-        (255, 100, 100),  # Raf 1
-        (0, 165, 255),    # Raf 2
-        (0, 255, 0),      # Raf 3
-        (255, 0, 255),    # Raf 4
-        (0, 255, 255),    # Raf 5
-        (255, 255, 0)     # Raf 6
-    ]
-    
-    boundary_colors = [
-        (0, 0, 255),      # Sınır 1
-        (255, 0, 0),      # Sınır 2
-        (0, 255, 0),      # Sınır 3
-        (0, 165, 255),    # Sınır 4
-        (128, 0, 128)     # Raf 5 İç Kalibre Çubuğu
-    ]
-
-    for i in range(len(all_bounds) - 1):
-        top_px = int(h * all_bounds[i] / 100.0)
-        bottom_px = int(h * all_bounds[i + 1] / 100.0)
-        if bottom_px <= top_px:
-            continue
-        color = band_colors[i % len(band_colors)]
-        cv2.rectangle(overlay, (0, top_px), (w, bottom_px), color, -1)
-
-    preview = cv2.addWeighted(overlay, 0.22, preview, 0.78, 0)
-    if roi_top_px > 0:
-        preview[0:roi_top_px, :] = (preview[0:roi_top_px, :].astype(np.float32) * 0.35).astype(np.uint8)
-    if roi_bottom_px < h:
-        preview[roi_bottom_px:h, :] = (preview[roi_bottom_px:h, :].astype(np.float32) * 0.35).astype(np.uint8)
-
-    # Sınır çizgileri
-    for idx, pct in enumerate(band_bounds_pct):
-        y = int(h * pct / 100.0)
-        b_color = boundary_colors[idx % len(boundary_colors)]
-        cv2.line(preview, (0, y), (w, y), b_color, 2)
-        cv2.putText(preview, f"SINIR {idx + 1} (%{pct})", (10, max(20, y - 5)), cv2.FONT_HERSHEY_SIMPLEX, 0.5, b_color, 2, cv2.LINE_AA)
-
-    # Raf 5 İç Kalibre Çubuğu çizgisi
-    y_raf5 = int(h * raf5_alt_pct / 100.0)
-    raf5_color = boundary_colors[4]
-    cv2.line(preview, (0, y_raf5), (w, y_raf5), raf5_color, 3)
-    cv2.putText(preview, f"RAF 5 İÇ KALİBRE ÇUBUĞU (%{raf5_alt_pct})", (10, max(20, y_raf5 - 5)), cv2.FONT_HERSHEY_SIMPLEX, 0.6, raf5_color, 2, cv2.LINE_AA)
-
-    for i in range(len(all_bounds) - 1):
-        top_px = int(h * all_bounds[i] / 100.0)
-        bottom_px = int(h * all_bounds[i + 1] / 100.0)
-        if bottom_px <= top_px:
-            continue
-        mid_y = (top_px + bottom_px) // 2
-        text = f"RAF {i + 1}"
-        (tw, th_), _ = cv2.getTextSize(text, cv2.FONT_HERSHEY_SIMPLEX, 0.8, 2)
-        cv2.rectangle(preview, (w - tw - 20, mid_y - th_ - 6), (w - 10, mid_y + 6), (0, 0, 0), -1)
-        cv2.putText(preview, text, (w - tw - 15, mid_y + 4), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 2, cv2.LINE_AA)
-
-    return preview
+    # Kullanıcı talebi üzerine önizlemedeki tüm kılavuz çizgileri ve renkli katmanlar kaldırılmıştır.
+    return img.copy()
 
 
 def split_bands(roi_top_px, roi_bottom_px, boundaries_ratio):
@@ -964,7 +901,6 @@ roi_bottom_ratio = roi_range[1] / 100.0
 
 band_widget_key = "band_boundaries_" + (dealer_path if dealer_path else "manuel")
 
-# 6 Raf için 5 adet dahili sınır hesaplanır
 default_span = (roi_range[1] - roi_range[0])
 default_upper_bounds = [int(roi_range[0] + default_span * (i / 6.0)) for i in range(1, 6)]
 default_raf5_alt = int(roi_range[1])
@@ -979,7 +915,6 @@ if label_check_enabled:
             raw_bounds = []
             last_val = max(5, roi_range[0])
             
-            # 5 adet dahili sınır çizgisi
             for i in range(5):
                 min_v = max(roi_range[0] + 1, last_val + 1)
                 max_v = min(roi_range[1] - (5 - i), 95)
@@ -996,7 +931,6 @@ if label_check_enabled:
                 raw_bounds.append(val)
                 last_val = val
             
-            # Raf 5 İç Kalibre Çubuğu Ayarı
             raf5_min_v = max(raw_bounds[-1] + 1, roi_range[0] + 5)
             raf5_max_v = 99
             default_raf5_val = min(max(roi_range[1], raf5_min_v), raf5_max_v)
@@ -1014,12 +948,11 @@ if label_check_enabled:
 
         with cal_col2:
             if ref_img is not None:
-                st.image(draw_band_preview(ref_img, roi_range[0], roi_range[1], band_bounds_pct, raf5_alt_pct), channels="BGR", use_container_width=True, caption="Canlı Önizleme: 6 Raf ve Kalibre Konumu")
+                st.image(draw_band_preview(ref_img, roi_range[0], roi_range[1], band_bounds_pct, raf5_alt_pct), channels="BGR", use_container_width=True, caption="Orijinal Referans Görsel Önizlemesi")
 else:
     band_bounds_pct = default_upper_bounds
     raf5_alt_pct = roi_range[1]
 
-# Bölümleri oranlara dönüştürme
 all_pct_cuts = band_bounds_pct + [raf5_alt_pct]
 band_boundaries_ratio = []
 roi_span_pct = max(1, (raf5_alt_pct - roi_range[0]))

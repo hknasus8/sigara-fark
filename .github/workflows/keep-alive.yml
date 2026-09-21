@@ -2,18 +2,29 @@ name: Keep Streamlit Alive
 
 on:
   schedule:
-    - cron: "0 * * * *"  # Her 1 saatte bir çalıştırarak uykuya geçişi kesin olarak engeller
-  workflow_dispatch: # Manuel test edebilmen için bırakıldı
+    # Streamlit Cloud'un mevcut hareketsizlik eşiği ~12 saat.
+    # Bunu güvenle geçmemek için her 6 saatte bir çalıştırıyoruz.
+    - cron: "0 */6 * * *"
+  workflow_dispatch: {} # Manuel tetikleme için
 
 jobs:
-  ping:
+  wake-up:
     runs-on: ubuntu-latest
     steps:
-      - name: Send HTTP request to Streamlit app
+      - name: Kodları indir
+        uses: actions/checkout@v4
+
+      - name: Python kur
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Bağımlılıkları kur
         run: |
-          response=$(curl -s -o /dev/null -w "%{http_code}" https://sigarafark.streamlit.app/)
-          echo "HTTP Response Code: $response"
-          if [ "$response" -ge 400 ]; then
-            echo "Error: Application returned status code $response"
-            exit 1
-          fi
+          pip install playwright
+          playwright install --with-deps chromium
+
+      - name: Uygulamayı uyandır
+        env:
+          STREAMLIT_APP_URL: "https://sigarafark.streamlit.app/"
+        run: python keepalive/wake_app.py

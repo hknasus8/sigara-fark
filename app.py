@@ -17,7 +17,6 @@ import requests
 import streamlit as st
 
 # OCR (etiket / ürün adı okuma) modülü opsiyoneldir.
-# Sunucuda tesseract kurulu değilse uygulama çökmesin diye güvenli import.
 try:
     import pytesseract
     OCR_AVAILABLE = True
@@ -51,15 +50,14 @@ st.markdown(
 # =========================================================
 YANDEX_ROOT_PUBLIC_KEY = "https://disk.yandex.com.tr/d/ikCHPwREiCVv_g"
 
-# --- Etiket / Ürün Adı Kontrolü (OCR) ayarları ---
 RAF_SAYISI = 6  # İlk 6 raf modülü
-OCR_LANG_TRY_ORDER = ("tur+eng", "eng")  # tur paketi kurulu değilse eng'e düşer
-TAG_MIN_AREA_RATIO = 0.0012   # bant alanına göre minimum etiket kutusu alanı
-TAG_SEARCH_BAND_RATIO = 0.22  # her rafın alt yüzde kaçlık kısmında etiket aranacak
-TAG_MIN_MEAN_BRIGHTNESS = 165  # gerçek etiket kağıdı parlak/beyazdır (siyah baskı yazı ortalamayı düşürür)
-TAG_MAX_STD_BRIGHTNESS = 75    # paket fotoğrafı (kırmızı/mavi/desenli) yerine düz beyaz kağıt+siyah yazı arar
-NAME_STRIP_HEIGHT_RATIO = 0.18  # etiketin üstünde ürün adı için aranacak şerit yüksekliği
-NAME_STRIP_GAP_RATIO = 0.05     # etiket ile ürün adı şeridi arasındaki boşluk payı (raf itici/yansıma payı)
+OCR_LANG_TRY_ORDER = ("tur+eng", "eng")
+TAG_MIN_AREA_RATIO = 0.0012
+TAG_SEARCH_BAND_RATIO = 0.22
+TAG_MIN_MEAN_BRIGHTNESS = 165
+TAG_MAX_STD_BRIGHTNESS = 75
+NAME_STRIP_HEIGHT_RATIO = 0.18
+NAME_STRIP_GAP_RATIO = 0.05
 DEFAULT_LABEL_SIM_THRESHOLD = 0.55
 
 
@@ -174,6 +172,59 @@ def detect_shelf_top(img, search_ratio=0.45, extra_margin=0.035):
         return max(0.0, min(0.4, ratio))
     except Exception:
         return 0.0
+
+
+def detect_real_shelf_boundaries(img, roi_top_px, roi_bottom_px, num_shelves=6):
+    """
+    Fotoğraftaki gerçek raf çizgilerini (yatay kenar ve koyu bant geçişlerini)
+    piksel yoğunluğu analiziyle otomatik tespit eder.
+    """
+    try:
+        h, w = img.shape[:2]
+        if roi_bottom_px <= roi_top_px:
+            return [round(100 * i / num_shelves) for i in range(1, num_shelves)]
+
+        roi = img[roi_top_px:roi_bottom_px, int(w*0.1):int(w*0.9)]
+        gray = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY)
+        
+        # Dikey yönde yatay çizgileri bulmak için gradyan ve ortalama analizi
+        row_mean = np.mean(gray, axis=1)
+        grad_y = np.gradient(row_mean)
+        
+        total_h = roi_bottom_px - roi_top_px
+        ideal_step = total_h / num_shelves
+        
+        detected_bounds = []
+        for i in range(1, num_shelves):
+            expected_y = int(i * ideal_step)
+            # Beklenen konumun etrafında (+/- %25 marj) en güçlü yatay çizgiyi ara
+            search_window = int(ideal_step * 0.25)
+            s_start = max(0, expected_y - search_window)
+            s_end = min(total_h, expected_y + search_window)
+            
+            if s_end > s_start:
+                segment = np.abs(grad_y[s_start:s_end])
+                if len(segment) > 0 and np.max(segment) > 1.0:
+                    best_offset = np.argmax(segment)
+                    best_y = s_start + best_offset
+                else:
+                    best_y = expected_y
+                
+                pct = int(round(100 * best_y / total_h))
+                detected_bounds.append(max(1, min(99, pct)))
+            else:
+                detected_bounds.append(int(round(100 * i / num_shelves)))
+                
+        # Sıralı ve çakışmasız olduğundan emin ol
+        corrected = []
+        last = 0
+        for b in sorted(detected_bounds):
+            safe_b = max(b, last + 2)
+            corrected.append(safe_b)
+            last = safe_b
+        return corrected
+    except Exception:
+        return [round(100 * i / num_shelves) for i in range(1, num_shelves)]
 
 
 def safe_download_image(url, timeout=25):
@@ -924,7 +975,7 @@ def draw_label_results(result_img, band_results, x_offset, y_offset):
             label = "ETIKET UYUSMUYOR"
         elif durum == "ETIKET_EKSIK":
             color = (0, 140, 255)
-            label = "ETIKET EKSIK"
+            label = "ETİKET EKSİK"
         else:
             continue
 
@@ -1415,8 +1466,7 @@ with st.expander("⚙️ Gelişmiş Analiz Ayarları", expanded=False):
         )
     else:
         st.caption(
-            "Fotoğraf rafın tam sınırına kırpılmamışsa (raf üstünde "
-            "çakmak, süs eşyası vb. görünüyorsa) üst sınırı artırarak "
+            "Fotoğraf rafın tam sınırına kırpılmamışsa üst sınırı artırarak "
             "bu alanı analiz dışı bırakabilirsiniz."
         )
     roi_range = st.slider(
@@ -1426,19 +1476,10 @@ with st.expander("⚙️ Gelişmiş Analiz Ayarları", expanded=False):
         value=(auto_top_pct, 65),
         step=1,
         key=roi_widget_key,
-        help=(
-            "Üst sınır fotoğraftan otomatik tahmin edilir. "
-            "Raf üstünde alakasız eşyalar varsa alt sınırı "
-            "düşürmeden üst sınırı artırın."
-        ),
     )
     illumination_normalize = st.checkbox(
         "Işık/Parlaklık Farkını Otomatik Dengele",
         value=True,
-        help=(
-            "İki fotoğraf farklı ışıkta/flaşla çekildiyse, genel "
-            "parlaklık farkının sahte fark olarak işaretlenmesini önler."
-        ),
     )
 
     st.divider()
@@ -1446,11 +1487,6 @@ with st.expander("⚙️ Gelişmiş Analiz Ayarları", expanded=False):
         label_check_enabled = st.checkbox(
             "🏷️ Etiket / Ürün Adı Kontrolünü Etkinleştir (OCR)",
             value=True,
-            help=(
-                "Her rafta, alttaki beyaz fiyat/ürün etiketini paketin "
-                "üzerindeki basılı ürün adıyla karşılaştırır. "
-                "Uyuşmazsa kırmızı, etiket eksikse turuncu işaretler."
-            ),
         )
         label_sim_threshold = st.slider(
             "Etiket Eşleşme Hassasiyeti",
@@ -1458,27 +1494,17 @@ with st.expander("⚙️ Gelişmiş Analiz Ayarları", expanded=False):
             max_value=0.90,
             value=DEFAULT_LABEL_SIM_THRESHOLD,
             step=0.05,
-            help=(
-                "Düşük değer: daha toleranslı (OCR hatalarına karşı esnek). "
-                "Yüksek değer: daha katı eşleşme ister."
-            ),
             disabled=not label_check_enabled,
         )
     else:
         label_check_enabled = False
         label_sim_threshold = DEFAULT_LABEL_SIM_THRESHOLD
-        st.warning(
-            "⚠️ Sunucuda OCR motoru (tesseract) bulunamadı. "
-            "Etiket/ürün adı kontrolü şu an devre dışı. "
-            "`packages.txt` içine `tesseract-ocr` ve `tesseract-ocr-tur` "
-            "eklenip uygulama yeniden başlatılmalı."
-        )
 
 roi_top_ratio = roi_range[0] / 100.0
 roi_bottom_ratio = roi_range[1] / 100.0
 
 # ---------------------------------------------------------
-# 6 RAF SINIRLARINI KALİBRE ET (GÜVENLİ & FARE SÜRÜKLEME UYUMLU)
+# 6 RAF SINIRLARINI KALİBRE ET (GERÇEK GÖRSEL PİKSEL ANALİZİ)
 # ---------------------------------------------------------
 band_widget_key = "band_boundaries_" + (
     dealer_path if dealer_path else "manuel"
@@ -1486,47 +1512,51 @@ band_widget_key = "band_boundaries_" + (
 
 if label_check_enabled:
     with st.expander(
-        "📐 İlk 6 Raf Sınırlarını Kalibre Et", expanded=False
+        "📐 İlk 6 Raf Sınırlarını Kalibre Et (Gerçek Raf Otomatik Tespiti)", expanded=True
     ):
         st.caption(
-            "Fare ile sürükleyerek veya ok tuşlarıyla rafların aralarındaki sınırları hassas biçimde ayarlayabilirsiniz. "
-            "Sınırların sırası otomatik korunur ve çakışması engellenir."
+            "Uygulama, fotoğraftaki gerçek raf hatlarını analiz ederek sınırları otomatik hizalamıştır. "
+            "İsterseniz kaydırma çubuklarıyla rafların yerini hassas biçimde ince ayarlayabilirsiniz."
         )
         
         session_key_bounds = f"stored_bounds_{band_widget_key}"
-        if session_key_bounds not in st.session_state:
-            st.session_state[session_key_bounds] = [
-                round(100 * i / RAF_SAYISI) for i in range(1, RAF_SAYISI)
-            ]
+        
+        # Eğer henüz hesaplanmadıysa veya görseller değiştiyse gerçek piksel analiziyle bul
+        if session_key_bounds not in st.session_state or st.session_state.get("last_dealer") != dealer_path:
+            st.session_state["last_dealer"] = dealer_path
+            if ref_img is not None:
+                h_ref, w_ref = ref_img.shape[:2]
+                r_top_px = int(h_ref * roi_top_ratio)
+                r_bot_px = int(h_ref * roi_bottom_ratio)
+                st.session_state[session_key_bounds] = detect_real_shelf_boundaries(ref_img, r_top_px, r_bot_px, RAF_SAYISI)
+            else:
+                st.session_state[session_key_bounds] = [round(100 * i / RAF_SAYISI) for i in range(1, RAF_SAYISI)]
 
         cols = st.columns(RAF_SAYISI - 1)
         current_bounds = st.session_state[session_key_bounds]
         new_bounds = []
         
-        min_gap = 1  # Fareyle hassas ve akıcı kontrol için 1 birimlik adım
-        
         for i, col in enumerate(cols):
             with col:
-                min_limit = current_bounds[i-1] + min_gap if i > 0 else 1
-                max_limit = current_bounds[i+1] - min_gap if i < len(current_bounds) - 1 else 99
+                min_limit = current_bounds[i-1] + 1 if i > 0 else 1
+                max_limit = current_bounds[i+1] - 1 if i < len(current_bounds) - 1 else 99
                 
                 val_default = max(min_limit, min(max_limit, current_bounds[i]))
                 
                 val = st.slider(
-                    f"Sınır {i + 1}",
+                    f"Raf Sınırı {i + 1}",
                     min_value=min_limit,
                     max_value=max_limit,
                     value=val_default,
-                    step=1,  # Fare ile sürüklerken 1'er 1'er akıcı ilerlemesi için
+                    step=1,
                     key=f"{band_widget_key}_{i}",
-                    help=f"Fare ile basılı tutup sürükleyerek {i+1}. raf sınırını ayarlayın."
                 )
                 new_bounds.append(val)
         
         corrected_bounds = []
         last_val = 0
         for b in new_bounds:
-            safe_b = max(b, last_val + min_gap)
+            safe_b = max(b, last_val + 1)
             corrected_bounds.append(safe_b)
             last_val = safe_b
             
@@ -1548,12 +1578,6 @@ ready = (
     and roi_bottom_ratio > roi_top_ratio
 )
 
-if ref_img is not None and field_img is not None and roi_bottom_ratio <= roi_top_ratio:
-    st.warning(
-        "Raf bölgesi ayarı geçersiz: üst sınır, alt sınırdan "
-        "küçük olmalı."
-    )
-
 if st.button(
     "🚀 KONTROLE BAŞLA",
     type="primary",
@@ -1565,7 +1589,7 @@ if st.button(
     st.session_state.summary = None
     st.session_state.report = ""
 
-    with st.spinner("İlk 6 raf için analiz yapılıyor..."):
+    with st.spinner("İlk 6 raf için gerçek oranlarla analiz yapılıyor..."):
         try:
             result_img, results, summary, aligned_field = (
                 analyze_planogram_grid_free(
@@ -1599,8 +1623,7 @@ if st.button(
             etiket_eksik = 0
             if label_check_enabled and OCR_AVAILABLE:
                 with st.spinner(
-                    "Etiket / ürün adı OCR kontrolü yapılıyor "
-                    "(bu adım biraz sürebilir)..."
+                    "Etiket / ürün adı OCR kontrolü yapılıyor..."
                 ):
                     label_bands = analyze_all_bands_labels(
                         aligned_field,
@@ -1630,9 +1653,7 @@ if st.button(
                 label_bands=label_bands,
             )
 
-            st.session_state.result_img = (
-                result_img
-            )
+            st.session_state.result_img = result_img
             st.session_state.results = results
             st.session_state.summary = summary
             st.session_state.report = report
@@ -1642,9 +1663,7 @@ if st.button(
             st.session_state.summary = None
             st.session_state.report = ""
             st.error(
-                "Analiz sırasında bir hata oluştu. "
-                "Lütfen fotoğrafların bozuk olmadığından emin olup "
-                "tekrar deneyin.\n\nTeknik detay: " + str(exc)
+                "Analiz sırasında bir hata oluştu.\n\nDetay: " + str(exc)
             )
 
 

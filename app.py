@@ -716,9 +716,6 @@ def analyze_planogram_grid_free(
 
 # =========================================================
 # ETİKET / ÜRÜN ADI KONTROL MODÜLÜ (OCR)
-# Madde 2-3-4: Raf etiketi ile paket üzerindeki ürün adını
-# karşılaştırır. Sadece verilen raf bandı (crop) içine bakar,
-# bant dışındaki hiçbir görsel unsuru (paket dışı obje) işlemez.
 # =========================================================
 def normalize_ocr_text(value):
     value = normalize_text(value)
@@ -778,7 +775,6 @@ def ocr_text_from_crop(crop_bgr, lang="eng"):
 
 
 def ocr_with_fallback(crop_bgr):
-    """Türkçe dil paketi kurulu değilse otomatik olarak İngilizce'ye düşer."""
     for lang in OCR_LANG_TRY_ORDER:
         try:
             txt = ocr_text_from_crop(crop_bgr, lang=lang)
@@ -790,7 +786,6 @@ def ocr_with_fallback(crop_bgr):
 
 
 def detect_tag_boxes(band_bgr):
-    """Rafın alt kısmındaki (fiyat/ürün) etiket kutucuklarını bulur."""
     h, w = band_bgr.shape[:2]
     search_top = int(h * (1.0 - TAG_SEARCH_BAND_RATIO))
     sub = band_bgr[search_top:h, :]
@@ -817,8 +812,6 @@ def detect_tag_boxes(band_bgr):
         if bh < sub.shape[0] * 0.25:
             continue
 
-        # Gerçek etiket kağıdı düzgün ve parlak beyazdır; paket
-        # fotoğrafındaki (renkli/desenli) alanları eleriz.
         patch = gray[y : y + bh, x : x + bw]
         if patch.size == 0:
             continue
@@ -834,7 +827,6 @@ def detect_tag_boxes(band_bgr):
 
 
 def extract_name_strip_above(band_bgr, tag_box):
-    """Etiketin hemen üstündeki, paket üzerinde basılı ürün adı şeridini kırpar."""
     h, w = band_bgr.shape[:2]
     x, y, bw, bh = tag_box
     strip_h = max(6, int(h * NAME_STRIP_HEIGHT_RATIO))
@@ -850,15 +842,6 @@ def extract_name_strip_above(band_bgr, tag_box):
 
 
 def analyze_band_labels(band_bgr, sim_threshold=DEFAULT_LABEL_SIM_THRESHOLD):
-    """
-    Tek bir raf bandı (crop) içinde her ürün konumu için:
-      - etiket metnini (alttaki beyaz etiket) okur
-      - paket üzerindeki ürün adı metnini (etiketin hemen üstü) okur
-      - ikisini karşılaştırır
-    Döndürür: liste of dict(durum, tag_box, name_box, tag_text, name_text, benzerlik)
-    Sadece bu bant içindeki (yani rafın içindeki) alan işlenir; bant dışına
-    hiç bakılmaz (Madde 4).
-    """
     results = []
     if not OCR_AVAILABLE:
         return results
@@ -870,8 +853,6 @@ def analyze_band_labels(band_bgr, sim_threshold=DEFAULT_LABEL_SIM_THRESHOLD):
     widths = [b[2] for b in tag_boxes]
     median_w = float(np.median(widths)) if widths else 0.0
 
-    # Ardışık etiketler arasında beklenenden büyük boşluk varsa
-    # -> o slotta etiket eksik demektir (Madde 3).
     gaps = []
     for i in range(len(tag_boxes) - 1):
         x1_end = tag_boxes[i][0] + tag_boxes[i][2]
@@ -899,8 +880,6 @@ def analyze_band_labels(band_bgr, sim_threshold=DEFAULT_LABEL_SIM_THRESHOLD):
             durum = "ETIKET_EKSIK"
             sim = 0.0
         elif not name_text:
-            # Paket adı okunamadı (yansıma/ışık); kesin hata sayma,
-            # sadece bilgi amaçlı düşük öncelikli şüpheli işaretle.
             durum = "SUPHELI"
             sim = 0.0
         else:
@@ -934,7 +913,6 @@ def analyze_band_labels(band_bgr, sim_threshold=DEFAULT_LABEL_SIM_THRESHOLD):
 
 
 def draw_label_results(result_img, band_results, x_offset, y_offset):
-    """Etiket kontrol sonuçlarını (kırmızı/turuncu kutu + ok) ana görsele çizer."""
     for item in band_results:
         durum = item["durum"]
         tx, ty, tw, th = item["tag_box"]
@@ -942,13 +920,13 @@ def draw_label_results(result_img, band_results, x_offset, y_offset):
         tag_pt2 = (x_offset + tx + tw, y_offset + ty + th)
 
         if durum == "UYUMSUZ":
-            color = (0, 0, 255)  # kırmızı
+            color = (0, 0, 255)
             label = "ETIKET UYUSMUYOR"
         elif durum == "ETIKET_EKSIK":
-            color = (0, 140, 255)  # turuncu
+            color = (0, 140, 255)
             label = "ETIKET EKSIK"
         else:
-            continue  # UYUMLU ve SUPHELI görsele işaretlenmez
+            continue
 
         cv2.rectangle(result_img, tag_pt1, tag_pt2, color, 2)
         cv2.putText(
@@ -969,7 +947,6 @@ def draw_label_results(result_img, band_results, x_offset, y_offset):
             name_pt2 = (x_offset + nx + nw, y_offset + ny + nh)
             cv2.rectangle(result_img, name_pt1, name_pt2, color, 2)
 
-            # Foto 3'teki gibi paket adı ile etiket arasına çift yönlü ok
             arrow_x = x_offset + nx + nw // 2
             arrow_top = name_pt2[1]
             arrow_bottom = tag_pt1[1]
@@ -992,95 +969,7 @@ def draw_label_results(result_img, band_results, x_offset, y_offset):
                 )
 
 
-def draw_band_preview(img, roi_top_pct, roi_bottom_pct, band_bounds_pct):
-    """
-    Referans fotoğraf üzerine analiz bölgesini (ROI) ve içindeki
-    6 raf sınırını çizer; kullanıcı kaydırıcıları hareket ettirdikçe
-    her rafın nerede başlayıp bittiğini görsel olarak gösterir.
-    """
-    preview = img.copy()
-    h, w = preview.shape[:2]
-
-    overlay = preview.copy()
-    roi_top_px = int(h * roi_top_pct / 100.0)
-    roi_bottom_px = int(h * roi_bottom_pct / 100.0)
-
-    all_bounds = [roi_top_pct] + list(band_bounds_pct) + [roi_bottom_pct]
-    band_colors = [
-        (255, 120, 0),
-        (0, 165, 255),
-        (255, 120, 0),
-        (0, 165, 255),
-        (255, 120, 0),
-        (0, 165, 255),
-    ]
-
-    for i in range(len(all_bounds) - 1):
-        top_px = int(h * all_bounds[i] / 100.0)
-        bottom_px = int(h * all_bounds[i + 1] / 100.0)
-        if bottom_px <= top_px:
-            continue
-        color = band_colors[i % len(band_colors)]
-        cv2.rectangle(overlay, (0, top_px), (w, bottom_px), color, -1)
-
-    preview = cv2.addWeighted(overlay, 0.22, preview, 0.78, 0)
-
-    # ROI dışını griye boyayıp soluklaştır (analiz dışı olduğunu belli et)
-    if roi_top_px > 0:
-        dim = preview[0:roi_top_px, :].astype(np.float32) * 0.35
-        preview[0:roi_top_px, :] = dim.astype(np.uint8)
-    if roi_bottom_px < h:
-        dim = preview[roi_bottom_px:h, :].astype(np.float32) * 0.35
-        preview[roi_bottom_px:h, :] = dim.astype(np.uint8)
-
-    # Raf sınır çizgileri (kırmızı, kalın) + üst/alt ROI çizgisi (mavi)
-    for pct in band_bounds_pct:
-        y = int(h * pct / 100.0)
-        cv2.line(preview, (0, y), (w, y), (0, 0, 255), 3)
-
-    cv2.line(preview, (0, roi_top_px), (w, roi_top_px), (255, 180, 0), 3)
-    cv2.line(
-        preview, (0, roi_bottom_px), (w, roi_bottom_px), (255, 180, 0), 3
-    )
-
-    # Her rafın ortasına "RAF n" etiketi
-    for i in range(len(all_bounds) - 1):
-        top_px = int(h * all_bounds[i] / 100.0)
-        bottom_px = int(h * all_bounds[i + 1] / 100.0)
-        if bottom_px <= top_px:
-            continue
-        mid_y = (top_px + bottom_px) // 2
-        text = f"RAF {i + 1}"
-        (tw, th_), _ = cv2.getTextSize(
-            text, cv2.FONT_HERSHEY_SIMPLEX, 0.9, 2
-        )
-        tx = 12
-        cv2.rectangle(
-            preview,
-            (tx - 6, mid_y - th_ - 6),
-            (tx + tw + 6, mid_y + 6),
-            (0, 0, 0),
-            -1,
-        )
-        cv2.putText(
-            preview,
-            text,
-            (tx, mid_y),
-            cv2.FONT_HERSHEY_SIMPLEX,
-            0.9,
-            (255, 255, 255),
-            2,
-            cv2.LINE_AA,
-        )
-
-    return preview
-
-
 def split_bands(roi_top_px, roi_bottom_px, boundaries_ratio):
-    """
-    boundaries_ratio: roi içinde 0..1 arası artan sıralı (raf_sayisi-1) adet
-    ara sınır oranı. Bant listesini (top_px, bottom_px) olarak döndürür.
-    """
     total = roi_bottom_px - roi_top_px
     cuts = [roi_top_px]
     for r in boundaries_ratio:
@@ -1102,11 +991,6 @@ def analyze_all_bands_labels(
     side_margin_ratio=0.01,
     sim_threshold=DEFAULT_LABEL_SIM_THRESHOLD,
 ):
-    """
-    Verilen tüm raf bantları için etiket/ürün adı kontrolünü çalıştırır.
-    Her bant kendi sınırları içinde bağımsız işlenir; bant dışına
-    (rafın üstü/altı, komşu obje vb.) hiç bakılmaz (Madde 1 ve 4).
-    """
     h, w = field_aligned_img.shape[:2]
     margin_x = int(w * side_margin_ratio)
 
@@ -1391,7 +1275,6 @@ with c2:
         label_visibility="collapsed",
     )
     
-    # Türkçe İ ve I harflerini dikkate alan özel güvenli arama fonksiyonu
     def tr_lower(text):
         return str(text).replace("İ", "i").replace("I", "ı").lower()
 
@@ -1595,64 +1478,65 @@ roi_top_ratio = roi_range[0] / 100.0
 roi_bottom_ratio = roi_range[1] / 100.0
 
 # ---------------------------------------------------------
-# 6 RAF SINIRLARINI KALİBRE ET
-# Aynı bayinin fotoğrafları hep aynı açıdan çekildiği için bu
-# kalibrasyon bayi bazında bir kez yapılıp session içinde saklanır.
+# 6 RAF SINIRLARINI KALİBRE ET (GÜVENLİ & KAYMAZ SÜRÜCÜ)
 # ---------------------------------------------------------
 band_widget_key = "band_boundaries_" + (
     dealer_path if dealer_path else "manuel"
 )
-default_bounds = [
-    round(100 * i / RAF_SAYISI) for i in range(1, RAF_SAYISI)
-]
 
 if label_check_enabled:
     with st.expander(
         "📐 İlk 6 Raf Sınırlarını Kalibre Et", expanded=False
     ):
         st.caption(
-            "Aşağıdaki 5 ara sınırı sürükleyerek seçili raf bölgesini "
-            "(yukarıdaki %) 6 eşit olmayan rafa bölebilirsiniz. "
-            "Varsayılan olarak bölge 6 eşit parçaya ayrılmıştır."
+            "Aşağıdaki ara sınırları sürükleyerek veya rakamlarla oynayarak rafları ayarlayabilirsiniz. "
+            "Sınırların sırası otomatik korunur ve birbirinin üzerine geçmesi engellenir."
         )
+        
+        # Session state içinde sınır değerlerini güvenli tutalım
+        session_key_bounds = f"stored_bounds_{band_widget_key}"
+        if session_key_bounds not in st.session_state:
+            st.session_state[session_key_bounds] = [
+                round(100 * i / RAF_SAYISI) for i in range(1, RAF_SAYISI)
+            ]
+
         cols = st.columns(RAF_SAYISI - 1)
-        band_bounds_pct = []
-        prev_val = 0
+        current_bounds = st.session_state[session_key_bounds]
+        new_bounds = []
+        
+        # Minimum boşluk payı (çakışmayı önlemek için)
+        min_gap = 2
+        
         for i, col in enumerate(cols):
             with col:
+                # Sınırların alt/üst limitlerini önceki ve sonraki sınırlara göre dinamik kısıtlayalım
+                min_limit = current_bounds[i-1] + min_gap if i > 0 else 1
+                max_limit = current_bounds[i+1] - min_gap if i < len(current_bounds) - 1 else 99
+                
+                # Mevcut değeri güvenli aralıkta tut
+                val_default = max(min_limit, min(max_limit, current_bounds[i]))
+                
                 val = st.slider(
                     f"Sınır {i + 1}",
-                    min_value=1,
-                    max_value=99,
-                    value=default_bounds[i],
+                    min_value=min_limit,
+                    max_value=max_limit,
+                    value=val_default,
                     key=f"{band_widget_key}_{i}",
                 )
-                band_bounds_pct.append(val)
-        band_bounds_pct = sorted(band_bounds_pct)
-
-        st.markdown("**Önizleme — her raf hangi bölgeye denk geliyor:**")
-        if ref_img is not None:
-            preview_img = draw_band_preview(
-                ref_img,
-                roi_range[0],
-                roi_range[1],
-                band_bounds_pct,
-            )
-            st.image(
-                preview_img,
-                channels="BGR",
-                use_container_width=True,
-                caption=(
-                    "Turuncu/mavi şeritler her rafı, kırmızı çizgiler "
-                    "sınırları, gri alanlar analiz dışı bölgeyi gösterir."
-                ),
-            )
-        else:
-            st.info(
-                "Önizlemeyi görmek için önce referans fotoğrafı yükleyin."
-            )
+                new_bounds.append(val)
+        
+        # Kesin sıralama ve benzersizlik garantisi (Sınırların bozulmasını önler)
+        corrected_bounds = []
+        last_val = 0
+        for b in new_bounds:
+            safe_b = max(b, last_val + min_gap)
+            corrected_bounds.append(safe_b)
+            last_val = safe_b
+            
+        st.session_state[session_key_bounds] = corrected_bounds
+        band_bounds_pct = corrected_bounds
 else:
-    band_bounds_pct = default_bounds
+    band_bounds_pct = [round(100 * i / RAF_SAYISI) for i in range(1, RAF_SAYISI)]
 
 # Sınır oranlarını ROI içindeki (0..1) göreceli konuma çevir
 band_boundaries_ratio = []
@@ -1705,7 +1589,6 @@ if st.button(
                 roi_top_px, roi_bottom_px, band_boundaries_ratio
             )
 
-            # Foto 1'deki gibi her rafı kırmızı çerçeve içine al
             for band_top, band_bottom in bands:
                 cv2.rectangle(
                     result_img,

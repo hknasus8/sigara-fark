@@ -670,7 +670,7 @@ def draw_band_preview(img, roi_top_pct, roi_bottom_pct, band_bounds_pct):
         (255, 255, 0)     # Raf 6: Turkuaz
     ]
     
-    # Sınır çizgileri için özel renkler
+    # Sınır çizgileri için özel renkler (5 adet sınır)
     boundary_colors = [
         (0, 0, 255),      # Sınır 1: Kırmızı
         (255, 0, 0),      # Sınır 2: Mavi
@@ -961,14 +961,17 @@ band_widget_key = "band_boundaries_" + (dealer_path if dealer_path else "manuel"
 default_bounds = [int(roi_range[0] + (roi_range[1] - roi_range[0]) * i / RAF_SAYISI) for i in range(1, RAF_SAYISI)]
 
 if label_check_enabled:
-    with st.expander("📐 İlk 6 Raf Sınırlarını Kalibre Et (İnce Ayarlı)", expanded=True):
-        st.caption("Rafların perspektif kaymalarını önlemek için her sınır için aşağı/yukarı (+/-) ince ayar yapın. Sınırlar otomatik olarak sıralanır:")
-        cols = st.columns(RAF_SAYISI - 1)
-        raw_bounds = []
-        last_val = max(5, roi_range[0])
+    with st.expander("📐 İlk 6 Raf Sınırlarını Kalibre Et (6 Raf İçin 5 Sınır Çizgisi)", expanded=True):
+        st.caption("Rafların perspektif kaymalarını önlemek için sol taraftan ince ayar yapın, önizlemeyi hemen sağdan takip edin:")
         
-        for i, col in enumerate(cols):
-            with col:
+        # SÜTUNLU YAPI: Sol taraf ayarlar, sağ taraf önizleme (Ekran aşağı kaymasın diye)
+        cal_col1, cal_col2 = st.columns([1, 1.3])
+        
+        with cal_col1:
+            raw_bounds = []
+            last_val = max(5, roi_range[0])
+            
+            for i in range(RAF_SAYISI - 1):
                 min_v = max(roi_range[0] + 1, last_val + 1)
                 max_v = min(roi_range[1] - (RAF_SAYISI - 1 - i), 98)
                 default_val = min(max(default_bounds[i], min_v), max_v)
@@ -984,12 +987,13 @@ if label_check_enabled:
                 )
                 raw_bounds.append(val)
                 last_val = val
-        
+                
         # Sınırların çakışmasını engellemek için kesin sıralama kilidi
         band_bounds_pct = sorted(raw_bounds)
 
-        if ref_img is not None:
-            st.image(draw_band_preview(ref_img, roi_range[0], roi_range[1], band_bounds_pct), channels="BGR", use_container_width=True, caption="Önizleme: 6 Raf ve Sınır Çizgileri (Ayrı Renk Kodlu)")
+        with cal_col2:
+            if ref_img is not None:
+                st.image(draw_band_preview(ref_img, roi_range[0], roi_range[1], band_bounds_pct), channels="BGR", use_container_width=True, caption="Canlı Önizleme: 6 Raf ve 5 Sınır Çizgisi")
 else:
     band_bounds_pct = default_bounds
 

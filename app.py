@@ -1478,7 +1478,7 @@ roi_top_ratio = roi_range[0] / 100.0
 roi_bottom_ratio = roi_range[1] / 100.0
 
 # ---------------------------------------------------------
-# 6 RAF SINIRLARINI KALİBRE ET (GÜVENLİ & KAYMAZ SÜRÜCÜ)
+# 6 RAF SINIRLARINI KALİBRE ET (GÜVENLİ & FARE SÜRÜKLEME UYUMLU)
 # ---------------------------------------------------------
 band_widget_key = "band_boundaries_" + (
     dealer_path if dealer_path else "manuel"
@@ -1489,11 +1489,10 @@ if label_check_enabled:
         "📐 İlk 6 Raf Sınırlarını Kalibre Et", expanded=False
     ):
         st.caption(
-            "Aşağıdaki ara sınırları sürükleyerek veya rakamlarla oynayarak rafları ayarlayabilirsiniz. "
-            "Sınırların sırası otomatik korunur ve birbirinin üzerine geçmesi engellenir."
+            "Fare ile sürükleyerek veya ok tuşlarıyla rafların aralarındaki sınırları hassas biçimde ayarlayabilirsiniz. "
+            "Sınırların sırası otomatik korunur ve çakışması engellenir."
         )
         
-        # Session state içinde sınır değerlerini güvenli tutalım
         session_key_bounds = f"stored_bounds_{band_widget_key}"
         if session_key_bounds not in st.session_state:
             st.session_state[session_key_bounds] = [
@@ -1504,16 +1503,13 @@ if label_check_enabled:
         current_bounds = st.session_state[session_key_bounds]
         new_bounds = []
         
-        # Minimum boşluk payı (çakışmayı önlemek için)
-        min_gap = 2
+        min_gap = 1  # Fareyle hassas ve akıcı kontrol için 1 birimlik adım
         
         for i, col in enumerate(cols):
             with col:
-                # Sınırların alt/üst limitlerini önceki ve sonraki sınırlara göre dinamik kısıtlayalım
                 min_limit = current_bounds[i-1] + min_gap if i > 0 else 1
                 max_limit = current_bounds[i+1] - min_gap if i < len(current_bounds) - 1 else 99
                 
-                # Mevcut değeri güvenli aralıkta tut
                 val_default = max(min_limit, min(max_limit, current_bounds[i]))
                 
                 val = st.slider(
@@ -1521,11 +1517,12 @@ if label_check_enabled:
                     min_value=min_limit,
                     max_value=max_limit,
                     value=val_default,
+                    step=1,  # Fare ile sürüklerken 1'er 1'er akıcı ilerlemesi için
                     key=f"{band_widget_key}_{i}",
+                    help=f"Fare ile basılı tutup sürükleyerek {i+1}. raf sınırını ayarlayın."
                 )
                 new_bounds.append(val)
         
-        # Kesin sıralama ve benzersizlik garantisi (Sınırların bozulmasını önler)
         corrected_bounds = []
         last_val = 0
         for b in new_bounds:
@@ -1538,7 +1535,6 @@ if label_check_enabled:
 else:
     band_bounds_pct = [round(100 * i / RAF_SAYISI) for i in range(1, RAF_SAYISI)]
 
-# Sınır oranlarını ROI içindeki (0..1) göreceli konuma çevir
 band_boundaries_ratio = []
 roi_span_pct = max(1, (roi_range[1] - roi_range[0]))
 for pct in band_bounds_pct:

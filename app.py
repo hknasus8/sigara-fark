@@ -368,7 +368,7 @@ def analyze_planogram_grid_free(
     reference,
     field,
     roi_top_ratio=0.0,
-    roi_bottom_ratio=0.65,
+    roi_bottom_ratio=0.85,
     edge_margin_ratio=0.025,
     illumination_normalize=True,
 ):
@@ -944,7 +944,8 @@ if ref_img is not None and field_img is not None:
 roi_widget_key = "roi_slider_" + (dealer_path if dealer_path else "manuel")
 
 with st.expander("⚙️ Gelişmiş Analiz Ayarları", expanded=False):
-    roi_range = st.slider("Analiz Edilecek Raf Bölgesi (%)", min_value=0, max_value=100, value=(auto_top_pct, 65), step=1, key=roi_widget_key)
+    # Raf 6'nın altındaki alanların da kapsanması için varsayılan alt sınır %85'e çıkarıldı
+    roi_range = st.slider("Analiz Edilecek Raf Bölgesi (%)", min_value=0, max_value=100, value=(auto_top_pct, 85), step=1, key=roi_widget_key)
     illumination_normalize = st.checkbox("Işık/Parlaklık Farkını Otomatik Dengele", value=True)
     
     if OCR_AVAILABLE:

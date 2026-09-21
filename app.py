@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """
 ÖZÇELİK STAND KONTROL UYGULAMASI
-Gelişmiş Etiket ve Paket Sayımı Sürümü (İlk 6 Raf Modülü)
+Gelişmiş Etiket ve Paket Sayımı Sürümü (İlk 6 Raf Modülü + Raf 6 Kalibre Çubuğu)
 """
 
 import difflib
@@ -676,7 +676,7 @@ def draw_band_preview(img, roi_top_pct, roi_bottom_pct, band_bounds_pct):
         (255, 0, 0),      # Sınır 2: Mavi
         (0, 255, 0),      # Sınır 3: Yeşil
         (0, 165, 255),    # Sınır 4: Turuncu
-        (128, 0, 128)     # Sınır 5: Mor
+        (128, 0, 128)     # Sınır 5 (Raf 6 Üst Sınırı / Kalibre Çubuğu)
     ]
 
     for i in range(len(all_bounds) - 1):
@@ -697,8 +697,9 @@ def draw_band_preview(img, roi_top_pct, roi_bottom_pct, band_bounds_pct):
     for idx, pct in enumerate(band_bounds_pct):
         y = int(h * pct / 100.0)
         b_color = boundary_colors[idx % len(boundary_colors)]
-        cv2.line(preview, (0, y), (w, y), b_color, 3)
-        cv2.putText(preview, f"SINIR {idx + 1} (%{pct})", (10, max(20, y - 5)), cv2.FONT_HERSHEY_SIMPLEX, 0.6, b_color, 2, cv2.LINE_AA)
+        label_text = f"RAF 6 KALİBRE ÇUBUĞU (%{pct})" if idx == 4 else f"SINIR {idx + 1} (%{pct})"
+        cv2.line(preview, (0, y), (w, y), b_color, 3 if idx == 4 else 2)
+        cv2.putText(preview, label_text, (10, max(20, y - 5)), cv2.FONT_HERSHEY_SIMPLEX, 0.6, b_color, 2, cv2.LINE_AA)
 
     for i in range(len(all_bounds) - 1):
         top_px = int(h * all_bounds[i] / 100.0)
@@ -864,7 +865,7 @@ with refresh_col:
         clear_yandex_cache()
         st.rerun()
 
-st.subheader("1. Şehir ve Bayi Seçiniz")
+st.subheader("1. Şehir dan Bayi Seçiniz")
 cities, city_error = get_cities(YANDEX_ROOT_PUBLIC_KEY)
 if city_error:
     st.warning("Yandex şehir listesi alınamadı: " + str(city_error))
@@ -944,7 +945,6 @@ if ref_img is not None and field_img is not None:
 roi_widget_key = "roi_slider_" + (dealer_path if dealer_path else "manuel")
 
 with st.expander("⚙️ Gelişmiş Analiz Ayarları", expanded=False):
-    # Raf 6'nın altındaki alanların da kapsanması için varsayılan alt sınır %85'e çıkarıldı
     roi_range = st.slider("Analiz Edilecek Raf Bölgesi (%)", min_value=0, max_value=100, value=(auto_top_pct, 85), step=1, key=roi_widget_key)
     illumination_normalize = st.checkbox("Işık/Parlaklık Farkını Otomatik Dengele", value=True)
     
@@ -962,10 +962,9 @@ band_widget_key = "band_boundaries_" + (dealer_path if dealer_path else "manuel"
 default_bounds = [int(roi_range[0] + (roi_range[1] - roi_range[0]) * i / RAF_SAYISI) for i in range(1, RAF_SAYISI)]
 
 if label_check_enabled:
-    with st.expander("📐 İlk 6 Raf Sınırlarını Kalibre Et (6 Raf İçin 5 Sınır Çizgisi)", expanded=True):
-        st.caption("Rafların perspektif kaymalarını önlemek için sol taraftan ince ayar yapın, önizlemeyi hemen sağdan takip edin:")
+    with st.expander("📐 İlk 6 Raf Sınırlarını ve Raf 6 Kalibre Çubuğunu Ayarla", expanded=True):
+        st.caption("Özellikle **Sınır 5 (Raf 6 Kalibre Çubuğu)** ile Raf 6'nın taban yüksekliğini tam olarak hizalayabilirsiniz:")
         
-        # SÜTUNLU YAPI: Sol taraf ayarlar, sağ taraf önizleme (Ekran aşağı kaymasın diye)
         cal_col1, cal_col2 = st.columns([1, 1.3])
         
         with cal_col1:
@@ -977,9 +976,11 @@ if label_check_enabled:
                 max_v = min(roi_range[1] - (RAF_SAYISI - 1 - i), 98)
                 default_val = min(max(default_bounds[i], min_v), max_v)
                 
-                # Sayı kutusu ile (+/- tuşlarıyla) 1'er birimlik tam hassasiyetli ince ayar
+                # Özel başlık tanımı: 5. sınır Raf 6 Kalibre Çubuğu olarak etiketlendi
+                input_label = f"Raf 6 Kalibre Çubuğu (%)" if i == 4 else f"Sınır {i + 1} (%)"
+                
                 val = st.number_input(
-                    f"Sınır {i + 1} (%)", 
+                    input_label, 
                     min_value=int(min_v), 
                     max_value=int(max_v), 
                     value=int(default_val), 
@@ -989,12 +990,11 @@ if label_check_enabled:
                 raw_bounds.append(val)
                 last_val = val
                 
-        # Sınırların çakışmasını engellemek için kesin sıralama kilidi
         band_bounds_pct = sorted(raw_bounds)
 
         with cal_col2:
             if ref_img is not None:
-                st.image(draw_band_preview(ref_img, roi_range[0], roi_range[1], band_bounds_pct), channels="BGR", use_container_width=True, caption="Canlı Önizleme: 6 Raf ve 5 Sınır Çizgisi")
+                st.image(draw_band_preview(ref_img, roi_range[0], roi_range[1], band_bounds_pct), channels="BGR", use_container_width=True, caption="Canlı Önizleme: Raf 6 Kalibre Çubuğu ve Raf Sınırları")
 else:
     band_bounds_pct = default_bounds
 

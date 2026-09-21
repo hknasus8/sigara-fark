@@ -992,6 +992,90 @@ def draw_label_results(result_img, band_results, x_offset, y_offset):
                 )
 
 
+def draw_band_preview(img, roi_top_pct, roi_bottom_pct, band_bounds_pct):
+    """
+    Referans fotoğraf üzerine analiz bölgesini (ROI) ve içindeki
+    6 raf sınırını çizer; kullanıcı kaydırıcıları hareket ettirdikçe
+    her rafın nerede başlayıp bittiğini görsel olarak gösterir.
+    """
+    preview = img.copy()
+    h, w = preview.shape[:2]
+
+    overlay = preview.copy()
+    roi_top_px = int(h * roi_top_pct / 100.0)
+    roi_bottom_px = int(h * roi_bottom_pct / 100.0)
+
+    all_bounds = [roi_top_pct] + list(band_bounds_pct) + [roi_bottom_pct]
+    band_colors = [
+        (255, 120, 0),
+        (0, 165, 255),
+        (255, 120, 0),
+        (0, 165, 255),
+        (255, 120, 0),
+        (0, 165, 255),
+    ]
+
+    for i in range(len(all_bounds) - 1):
+        top_px = int(h * all_bounds[i] / 100.0)
+        bottom_px = int(h * all_bounds[i + 1] / 100.0)
+        if bottom_px <= top_px:
+            continue
+        color = band_colors[i % len(band_colors)]
+        cv2.rectangle(overlay, (0, top_px), (w, bottom_px), color, -1)
+
+    preview = cv2.addWeighted(overlay, 0.22, preview, 0.78, 0)
+
+    # ROI dışını griye boyayıp soluklaştır (analiz dışı olduğunu belli et)
+    if roi_top_px > 0:
+        dim = preview[0:roi_top_px, :].astype(np.float32) * 0.35
+        preview[0:roi_top_px, :] = dim.astype(np.uint8)
+    if roi_bottom_px < h:
+        dim = preview[roi_bottom_px:h, :].astype(np.float32) * 0.35
+        preview[roi_bottom_px:h, :] = dim.astype(np.uint8)
+
+    # Raf sınır çizgileri (kırmızı, kalın) + üst/alt ROI çizgisi (mavi)
+    for pct in band_bounds_pct:
+        y = int(h * pct / 100.0)
+        cv2.line(preview, (0, y), (w, y), (0, 0, 255), 3)
+
+    cv2.line(preview, (0, roi_top_px), (w, roi_top_px), (255, 180, 0), 3)
+    cv2.line(
+        preview, (0, roi_bottom_px), (w, roi_bottom_px), (255, 180, 0), 3
+    )
+
+    # Her rafın ortasına "RAF n" etiketi
+    for i in range(len(all_bounds) - 1):
+        top_px = int(h * all_bounds[i] / 100.0)
+        bottom_px = int(h * all_bounds[i + 1] / 100.0)
+        if bottom_px <= top_px:
+            continue
+        mid_y = (top_px + bottom_px) // 2
+        text = f"RAF {i + 1}"
+        (tw, th_), _ = cv2.getTextSize(
+            text, cv2.FONT_HERSHEY_SIMPLEX, 0.9, 2
+        )
+        tx = 12
+        cv2.rectangle(
+            preview,
+            (tx - 6, mid_y - th_ - 6),
+            (tx + tw + 6, mid_y + 6),
+            (0, 0, 0),
+            -1,
+        )
+        cv2.putText(
+            preview,
+            text,
+            (tx, mid_y),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.9,
+            (255, 255, 255),
+            2,
+            cv2.LINE_AA,
+        )
+
+    return preview
+
+
 def split_bands(roi_top_px, roi_bottom_px, boundaries_ratio):
     """
     boundaries_ratio: roi içinde 0..1 arası artan sıralı (raf_sayisi-1) adet
@@ -1545,6 +1629,28 @@ if label_check_enabled:
                 )
                 band_bounds_pct.append(val)
         band_bounds_pct = sorted(band_bounds_pct)
+
+        st.markdown("**Önizleme — her raf hangi bölgeye denk geliyor:**")
+        if ref_img is not None:
+            preview_img = draw_band_preview(
+                ref_img,
+                roi_range[0],
+                roi_range[1],
+                band_bounds_pct,
+            )
+            st.image(
+                preview_img,
+                channels="BGR",
+                use_container_width=True,
+                caption=(
+                    "Turuncu/mavi şeritler her rafı, kırmızı çizgiler "
+                    "sınırları, gri alanlar analiz dışı bölgeyi gösterir."
+                ),
+            )
+        else:
+            st.info(
+                "Önizlemeyi görmek için önce referans fotoğrafı yükleyin."
+            )
 else:
     band_bounds_pct = default_bounds
 

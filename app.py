@@ -652,7 +652,6 @@ def draw_label_results(result_img, band_results, x_offset, y_offset):
 
 
 def draw_band_preview(img, roi_top_pct, roi_bottom_pct, band_bounds_pct, raf5_alt_pct):
-    # Kullanıcı talebi üzerine önizlemedeki tüm kılavuz çizgileri ve renkli katmanlar kaldırılmıştır.
     return img.copy()
 
 
@@ -905,53 +904,50 @@ default_span = (roi_range[1] - roi_range[0])
 default_upper_bounds = [int(roi_range[0] + default_span * (i / 6.0)) for i in range(1, 6)]
 default_raf5_alt = int(roi_range[1])
 
-if label_check_enabled:
-    with st.expander("📐 Raf Sınırları ve Raf 5 İç Kalibre Çubuğu Ayarı", expanded=True):
-        st.caption("1 ile 5. raflar arası otomatik bölüştürülür. **Raf 5 İç Kalibre Çubuğu (%)** ise doğrudan **5. rafa ait** alt sınırı hassasiyetle kalibre eder:")
+# Raf sınırları ve iç kalibre çubuğu ayarları artık her zaman aktif ve bağımsızdır.
+with st.expander("📐 Raf Sınırları ve Raf 5 İç Kalibre Çubuğu Ayarı", expanded=True):
+    st.caption("1 ile 5. raflar arası otomatik bölüştürülür. **Raf 5 İç Kalibre Çubuğu (%)** ise doğrudan **5. rafa ait** alt sınırı hassasiyetle kalibre eder:")
+    
+    cal_col1, cal_col2 = st.columns([1, 1.3])
+    
+    with cal_col1:
+        raw_bounds = []
+        last_val = max(5, roi_range[0])
         
-        cal_col1, cal_col2 = st.columns([1, 1.3])
-        
-        with cal_col1:
-            raw_bounds = []
-            last_val = max(5, roi_range[0])
+        for i in range(5):
+            min_v = max(roi_range[0] + 1, last_val + 1)
+            max_v = min(roi_range[1] - (5 - i), 95)
+            default_val = min(max(default_upper_bounds[i], min_v), max_v)
             
-            for i in range(5):
-                min_v = max(roi_range[0] + 1, last_val + 1)
-                max_v = min(roi_range[1] - (5 - i), 95)
-                default_val = min(max(default_upper_bounds[i], min_v), max_v)
-                
-                val = st.number_input(
-                    f"Sınır {i + 1} (%)", 
-                    min_value=int(min_v), 
-                    max_value=int(max_v), 
-                    value=int(default_val), 
-                    step=1, 
-                    key=f"{band_widget_key}_num_{i}"
-                )
-                raw_bounds.append(val)
-                last_val = val
-            
-            raf5_min_v = max(raw_bounds[-1] + 1, roi_range[0] + 5)
-            raf5_max_v = 99
-            default_raf5_val = min(max(roi_range[1], raf5_min_v), raf5_max_v)
-            
-            raf5_alt_pct = st.number_input(
-                "Raf 5 İç Kalibre Çubuğu (%)",
-                min_value=int(raf5_min_v),
-                max_value=int(raf5_max_v),
-                value=int(default_raf5_val),
-                step=1,
-                key=f"{band_widget_key}_raf5_alt"
+            val = st.number_input(
+                f"Sınır {i + 1} (%)", 
+                min_value=int(min_v), 
+                max_value=int(max_v), 
+                value=int(default_val), 
+                step=1, 
+                key=f"{band_widget_key}_num_{i}"
             )
-                
-        band_bounds_pct = sorted(raw_bounds)
+            raw_bounds.append(val)
+            last_val = val
+        
+        raf5_min_v = max(raw_bounds[-1] + 1, roi_range[0] + 5)
+        raf5_max_v = 99
+        default_raf5_val = min(max(roi_range[1], raf5_min_v), raf5_max_v)
+        
+        raf5_alt_pct = st.number_input(
+            "Raf 5 İç Kalibre Çubuğu (%)",
+            min_value=int(raf5_min_v),
+            max_value=int(raf5_max_v),
+            value=int(default_raf5_val),
+            step=1,
+            key=f"{band_widget_key}_raf5_alt"
+        )
+            
+    band_bounds_pct = sorted(raw_bounds)
 
-        with cal_col2:
-            if ref_img is not None:
-                st.image(draw_band_preview(ref_img, roi_range[0], roi_range[1], band_bounds_pct, raf5_alt_pct), channels="BGR", use_container_width=True, caption="Orijinal Referans Görsel Önizlemesi")
-else:
-    band_bounds_pct = default_upper_bounds
-    raf5_alt_pct = roi_range[1]
+    with cal_col2:
+        if ref_img is not None:
+            st.image(draw_band_preview(ref_img, roi_range[0], roi_range[1], band_bounds_pct, raf5_alt_pct), channels="BGR", use_container_width=True, caption="Orijinal Referans Görsel Önizlemesi")
 
 all_pct_cuts = band_bounds_pct + [raf5_alt_pct]
 band_boundaries_ratio = []
@@ -982,8 +978,7 @@ if st.button("🚀 KONTROLE BAŞLA", type="primary", use_container_width=True, d
             
             bands = split_bands(roi_top_px, roi_bottom_px, band_boundaries_ratio)
 
-            for band_top, band_bottom in bands:
-                cv2.rectangle(result_img, (2, band_top), (result_img.shape[1] - 2, band_bottom), (0, 0, 255), 2)
+            # Raf sınır çizgileri görsel üzerine çizilmeyecek şekilde kaldırılmıştır.
 
             label_bands = []
             etiket_uyumsuz = 0

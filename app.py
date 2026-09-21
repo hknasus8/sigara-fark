@@ -362,7 +362,7 @@ def align_images(reference, target):
 
 
 # =========================================================
-# KONTUR ANALİZİ
+# KONTUR ANALİZİ (İPUCU: DÜZELTİLMİŞ IŞIK VE EŞİKLEME)
 # =========================================================
 def analyze_planogram_grid_free(
     reference,
@@ -387,21 +387,19 @@ def analyze_planogram_grid_free(
     tar_gray = cv2.cvtColor(aligned, cv2.COLOR_BGR2GRAY)
 
     if illumination_normalize:
-        roi_ref = ref_gray[roi_top:roi_bottom, margin_x:w - margin_x].astype(np.float32)
-        roi_tar = tar_gray[roi_top:roi_bottom, margin_x:w - margin_x].astype(np.float32)
-        ref_mean, ref_std = roi_ref.mean(), roi_ref.std() + 1e-6
-        tar_mean, tar_std = roi_tar.mean(), roi_tar.std() + 1e-6
-        tar_gray = np.clip(
-            (tar_gray.astype(np.float32) - tar_mean) * (ref_std / tar_std) + ref_mean,
-            0,
-            255,
-        ).astype(np.uint8)
+        # Gelişmiş aydınlatma dengelemesi (Histogram Eşitleme / CLAHE ile parlamaları bastırma)
+        clahe = cv2.createCLAHE(clipLimit=1.5, tileGridSize=(8, 8))
+        ref_gray = clahe.apply(ref_gray)
+        tar_gray = clahe.apply(tar_gray)
 
-    ref_gray = cv2.GaussianBlur(ref_gray, (5, 5), 0)
-    tar_gray = cv2.GaussianBlur(tar_gray, (5, 5), 0)
+    # Gürültüyü azaltmak için yumuşatma filtresi güçlendirildi (Ufak pikseltaşımlarını engeller)
+    ref_gray = cv2.GaussianBlur(ref_gray, (7, 7), 0)
+    tar_gray = cv2.GaussianBlur(tar_gray, (7, 7), 0)
 
     diff = cv2.absdiff(ref_gray, tar_gray)
-    _, thresh = cv2.threshold(diff, 30, 255, cv2.THRESH_BINARY)
+    
+    # Eşik değeri yükseltildi: Çok küçük renk tonu ve ışık farkları artık hata sayılmayacak.
+    _, thresh = cv2.threshold(diff, 55, 255, cv2.THRESH_BINARY)
 
     thresh[roi_bottom:, :] = 0
     thresh[:roi_top, :] = 0
@@ -411,9 +409,10 @@ def analyze_planogram_grid_free(
     if margin_y > 0:
         thresh[:margin_y, :] = 0
 
-    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (7, 7))
+    # Morfolojik işlemler ile küçük parazit noktaları tamamen temizlenir
+    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (9, 9))
     thresh = cv2.morphologyEx(thresh, cv2.MORPH_CLOSE, kernel, iterations=2)
-    thresh = cv2.morphologyEx(thresh, cv2.MORPH_OPEN, kernel, iterations=1)
+    thresh = cv2.morphologyEx(thresh, cv2.MORPH_OPEN, kernel, iterations=2)
 
     contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
@@ -425,7 +424,8 @@ def analyze_planogram_grid_free(
 
     for cnt in contours:
         area = cv2.contourArea(cnt)
-        if area < (w * h * 0.0002) or area > (w * h * 0.15):
+        # Minimum alan filtresi büyütüldü: Ufak kutucukların ve yanlış alarmların önüne geçildi.
+        if area < (w * h * 0.0006) or area > (w * h * 0.15):
             continue
 
         x, y, bw, bh = cv2.boundingRect(cnt)
@@ -904,7 +904,6 @@ default_span = (roi_range[1] - roi_range[0])
 default_upper_bounds = [int(roi_range[0] + default_span * (i / 6.0)) for i in range(1, 6)]
 default_raf5_alt = int(roi_range[1])
 
-# Raf sınırları ve iç kalibre çubuğu ayarları artık her zaman aktif ve bağımsızdır.
 with st.expander("📐 Raf Sınırları ve Raf 5 İç Kalibre Çubuğu Ayarı", expanded=True):
     st.caption("1 ile 5. raflar arası otomatik bölüştürülür. **Raf 5 İç Kalibre Çubuğu (%)** ise doğrudan **5. rafa ait** alt sınırı hassasiyetle kalibre eder:")
     
@@ -977,8 +976,6 @@ if st.button("🚀 KONTROLE BAŞLA", type="primary", use_container_width=True, d
             roi_bottom_px = int(h_aligned * custom_bottom_ratio)
             
             bands = split_bands(roi_top_px, roi_bottom_px, band_boundaries_ratio)
-
-            # Raf sınır çizgileri görsel üzerine çizilmeyecek şekilde kaldırılmıştır.
 
             label_bands = []
             etiket_uyumsuz = 0

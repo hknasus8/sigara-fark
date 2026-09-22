@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """
 ÖZÇELİK STAND KONTROL UYGULAMASI
-İlk 6 Raf Modülü ve Etiket Kontrol Sürümü
+İlk 6 Raf Modülü ve Etiket Kontrol Sürümü (Hassasiyet Optimizasyonlu)
 """
 
 import difflib
@@ -46,19 +46,19 @@ st.markdown(
 
 
 # =========================================================
-# SABİTLER
+# SABİTLER (Hassasiyet Ayarları Güncellendi)
 # =========================================================
 YANDEX_ROOT_PUBLIC_KEY = "https://disk.yandex.com.tr/d/ikCHPwREiCVv_g"
 
 RAF_SAYISI = 6  
 OCR_LANG_TRY_ORDER = ("tur+eng", "eng")  
-TAG_MIN_AREA_RATIO = 0.0012   
+TAG_MIN_AREA_RATIO = 0.0025   # Ufak turuncu etiket yanılgılarını önlemek için artırıldı
 TAG_SEARCH_BAND_RATIO = 0.22  
 TAG_MIN_MEAN_BRIGHTNESS = 165  
 TAG_MAX_STD_BRIGHTNESS = 75    
 NAME_STRIP_HEIGHT_RATIO = 0.18  
 NAME_STRIP_GAP_RATIO = 0.05     
-DEFAULT_LABEL_SIM_THRESHOLD = 0.55
+DEFAULT_LABEL_SIM_THRESHOLD = 0.50
 
 
 # =========================================================
@@ -362,7 +362,7 @@ def align_images(reference, target):
 
 
 # =========================================================
-# KONTUR ANALİZİ
+# KONTUR ANALİZİ (Ufak kırmızı kutuları engellemek için filtreler güçlendirildi)
 # =========================================================
 def analyze_planogram_grid_free(
     reference,
@@ -393,7 +393,9 @@ def analyze_planogram_grid_free(
     tar_gray = cv2.GaussianBlur(tar_gray, (7, 7), 0)
 
     diff = cv2.absdiff(ref_gray, tar_gray)
-    _, thresh = cv2.threshold(diff, 55, 255, cv2.THRESH_BINARY)
+    
+    # Eşik değeri artırılarak küçük ışık oynamalarından doğan hatalı kırmızı kutular engellendi
+    _, thresh = cv2.threshold(diff, 65, 255, cv2.THRESH_BINARY)
 
     thresh[roi_bottom:, :] = 0
     thresh[:roi_top, :] = 0
@@ -403,7 +405,7 @@ def analyze_planogram_grid_free(
     if margin_y > 0:
         thresh[:margin_y, :] = 0
 
-    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (9, 9))
+    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (11, 11))
     thresh = cv2.morphologyEx(thresh, cv2.MORPH_CLOSE, kernel, iterations=2)
     thresh = cv2.morphologyEx(thresh, cv2.MORPH_OPEN, kernel, iterations=2)
 
@@ -417,7 +419,8 @@ def analyze_planogram_grid_free(
 
     for cnt in contours:
         area = cv2.contourArea(cnt)
-        if area < (w * h * 0.0006) or area > (w * h * 0.15):
+        # Minimum alan filtresi büyütüldü: Ufak gürültüler ve yanlış kırmızı kutular tamamen elenir
+        if area < (w * h * 0.0015) or area > (w * h * 0.15):
             continue
 
         x, y, bw, bh = cv2.boundingRect(cnt)
@@ -426,7 +429,7 @@ def analyze_planogram_grid_free(
 
         fark_sayisi += 1
         aspect_ratio = float(bw) / max(1, bh)
-        if 0.3 < aspect_ratio < 1.8 and area < (w * h * 0.02):
+        if 0.3 < aspect_ratio < 1.8 and area < (w * h * 0.025):
             paket_eksigi_sayisi += 1
             etiket_turu = f"PAKET #{paket_eksigi_sayisi}"
         else:
@@ -519,8 +522,8 @@ def detect_tag_boxes(band_bgr):
         return []
 
     gray = cv2.cvtColor(sub, cv2.COLOR_BGR2GRAY)
-    _, th = cv2.threshold(gray, 150, 255, cv2.THRESH_BINARY)
-    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (11, 3))
+    _, th = cv2.threshold(gray, 155, 255, cv2.THRESH_BINARY)
+    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (13, 3))
     th = cv2.morphologyEx(th, cv2.MORPH_CLOSE, kernel, iterations=1)
 
     cnts, _ = cv2.findContours(th, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
@@ -529,7 +532,7 @@ def detect_tag_boxes(band_bgr):
     for c in cnts:
         x, y, bw, bh = cv2.boundingRect(c)
         area = bw * bh
-        if area < min_area or bw < w * 0.015 or bw > w * 0.22 or bh < sub.shape[0] * 0.25:
+        if area < min_area or bw < w * 0.02 or bw > w * 0.22 or bh < sub.shape[0] * 0.3:
             continue
         patch = gray[y : y + bh, x : x + bw]
         if patch.size == 0 or patch.mean() < TAG_MIN_MEAN_BRIGHTNESS or patch.std() > TAG_MAX_STD_BRIGHTNESS:
@@ -569,7 +572,7 @@ def analyze_band_labels(band_bgr, sim_threshold=DEFAULT_LABEL_SIM_THRESHOLD):
         x1_end = tag_boxes[i][0] + tag_boxes[i][2]
         x2_start = tag_boxes[i + 1][0]
         gap_w = x2_start - x1_end
-        if median_w > 0 and gap_w > median_w * 1.3:
+        if median_w > 0 and gap_w > median_w * 1.4:  # Boşluk toleransı daraltıldı
             gaps.append((x1_end, tag_boxes[i][1], gap_w, tag_boxes[i][3]))
 
     for box in tag_boxes:
@@ -870,13 +873,11 @@ if ref_img is not None and field_img is not None:
     except Exception:
         auto_top_pct = 0
 
-# Sabit varsayılan analiz ve etiket oranları (Gelişmiş ayarlar kaldırıldı)
 roi_top_ratio = float(auto_top_pct) / 100.0
 roi_bottom_ratio = 0.85
 label_check_enabled = True
 label_sim_threshold = DEFAULT_LABEL_SIM_THRESHOLD
 
-# 6 raf sınırlarının otomatik eşit aralıklarla bölünmesi
 band_widget_key = "band_boundaries_" + (dealer_path if dealer_path else "manuel")
 default_span = (85 - auto_top_pct)
 default_upper_bounds = [int(auto_top_pct + default_span * (i / 6.0)) for i in range(1, 6)]
@@ -885,7 +886,6 @@ raf5_alt_pct = 85
 
 all_pct_cuts = band_bounds_pct + [raf5_alt_pct]
 band_boundaries_ratio = []
-roi_span_pct = max(1, (raf5_alt_pct - auto_top_pct))
 for pct in all_pct_cuts:
     rel = (pct - auto_top_pct) / max(1, (85 - auto_top_pct))
     band_boundaries_ratio.append(max(0.0, min(1.0, rel)))
@@ -898,7 +898,7 @@ if st.button("🚀 KONTROLE BAŞLA", type="primary", use_container_width=True, d
     st.session_state.summary = None
     st.session_state.report = ""
 
-    with st.spinner("İlk 6 raf için analiz yapılıyor ve etiketler kontrol ediliyor..."):
+    with st.spinner("İlk 6 raf hassas filtreleme ile analiz ediliyor..."):
         try:
             result_img, results, summary, aligned_field = analyze_planogram_grid_free(
                 ref_img, field_img, roi_top_ratio=roi_top_ratio, roi_bottom_ratio=roi_bottom_ratio

@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """
 ÖZÇELİK STAND KONTROL UYGULAMASI
-Raf Bazlı Analiz + Kalın Kırmızı ("FARKLI GÖRSEL") + Tekil Kalın Yeşil (Eksik Etiketler)
+Raf Bazlı Analiz + Kalın Kırmızı ("FARKLI GÖRSEL") + Ürün Altı Nokta Atışı Kalın Yeşil (Eksik Etiket)
 """
 
 import difflib
@@ -335,7 +335,7 @@ def analyze_planogram_grid_free(reference, field, roi_top_ratio=0.05, roi_bottom
             if x < 10 or (x + bw) > (w - 10):
                 continue
 
-            # Etiket şeridi varlığı kontrolü
+            # Etiket şeridi varlığı kontrolü (ürün altı)
             check_label_y1 = min(s_bottom - 5, abs_y + bh - int(bh * 0.2))
             check_label_y2 = min(s_bottom, abs_y + bh + int(bh * 0.3))
             label_strip_region = tar_gray[check_label_y1:check_label_y2, max(0, x-5):min(w, x+bw+5)]
@@ -382,43 +382,40 @@ def analyze_planogram_grid_free(reference, field, roi_top_ratio=0.05, roi_bottom
             results.append({"id": fark_sayisi, "durum": etiket_turu, "x": x, "y": abs_y, "w": bw, "h": bh, "alan": area})
 
         # =====================================================
-        # TEKİL EKSİK ETİKET KONTROLÜ (Kalın Yeşil Çerçeve)
+        # ÜRÜNLERİN ALTINDAKİ ETİKET ŞERİDİ (Eksik / Boş Etiket Taraması)
         # =====================================================
-        label_strip_top = s_bottom - int(shelf_height * 0.30)
-        label_strip_roi = tar_gray[label_strip_top:s_bottom, int(w*0.05):int(w*0.95)]
+        # Etiket şeridi rafın hemen alt bölümündedir (ürünlerin bittiği yer ile raf çizgisi arası)
+        label_strip_top = s_bottom - int(shelf_height * 0.22)
+        label_strip_bottom = s_bottom - int(shelf_height * 0.05)
         
-        # Referans etiket bandı ile karşılaştırma yaparak boşlukları bul
-        ref_label_strip = ref_gray[label_strip_top:s_bottom, int(w*0.05):int(w*0.95)]
+        target_label_strip = tar_gray[label_strip_top:label_strip_bottom, int(w*0.05):int(w*0.95)]
+        reference_label_strip = ref_gray[label_strip_top:label_strip_bottom, int(w*0.05):int(w*0.95)]
         
-        if label_strip_roi.size > 0 and ref_label_strip.size > 0:
-            # Referansta dolu olup sahada boş (koyu/eksik) olan etiket alanlarını tespiti
-            _, ref_th = cv2.threshold(ref_label_strip, 80, 255, cv2.THRESH_BINARY)
-            _, tar_th = cv2.threshold(label_strip_roi, 80, 255, cv2.THRESH_BINARY)
-            
-            # Referansta var olan etiketlerin slot konumu analizi
-            num_slots = 18  # Raftaki yaklaşık etiket slot sayısı
-            slot_width = label_strip_roi.shape[1] // num_slots
+        if target_label_strip.size > 0 and reference_label_strip.size > 0:
+            # Slot bazlı hassas kontrol (Standın yatay sütunları boyunca)
+            num_slots = 18  
+            slot_width = target_label_strip.shape[1] // num_slots
             
             for s_idx in range(num_slots):
                 sx_start = s_idx * slot_width
                 sx_end = (s_idx + 1) * slot_width
                 
-                ref_slot = ref_th[:, sx_start:sx_end]
-                tar_slot = tar_th[:, sx_start:sx_end]
+                ref_slot = reference_label_strip[:, sx_start:sx_end]
+                tar_slot = target_label_strip[:, sx_start:sx_end]
                 
-                # Eğer referansta bu slotta etiket var ama sahada yoksa / karanlıksa
-                if np.mean(ref_slot) > 50 and np.mean(tar_slot) < 30:
+                # Referansta dolu (etiket var) olan slot, sahada boş/karanlık/beyaz değilse (eksik etiket)
+                if np.mean(ref_slot) > 60 and np.mean(tar_slot) < 35:
                     eksik_etiket_sayisi += 1
                     abs_lx = int(w*0.05) + sx_start
                     abs_ly = label_strip_top
                     lw_box = slot_width
-                    lh_box = s_bottom - label_strip_top
+                    lh_box = label_strip_bottom - label_strip_top
                     
-                    # KALIN YEŞİL ÇERÇEVE (Kalınlık: 3)
+                    # ÜRÜNÜN ALTINDAKİ ETİKET ALANI -> KALIN YEŞİL ÇERÇEVE (Kalınlık: 3)
                     cv2.rectangle(result_img, (abs_lx, abs_ly), (abs_lx + lw_box, abs_ly + lh_box), (0, 255, 0), 3)
                     cv2.putText(
                         result_img,
-                        f"EKSİK ETİKET",
+                        "EKSİK ETİKET",
                         (abs_lx, max(15, abs_ly - 4)),
                         cv2.FONT_HERSHEY_SIMPLEX,
                         0.3,
@@ -549,7 +546,7 @@ with refresh_col:
         clear_yandex_cache()
         st.rerun()
 
-st.subheader("1. Şehir dan Bayi Seçiniz")
+st.subheader("1. Şehir ve Bayi Seçiniz")
 cities, city_error = get_cities(YANDEX_ROOT_PUBLIC_KEY)
 if city_error:
     st.warning("Yandex şehir listesi alınamadı: " + str(city_error))
@@ -627,7 +624,7 @@ if st.button("🚀 KONTROLE BAŞLA", type="primary", use_container_width=True, d
     st.session_state.summary = None
     st.session_state.report = ""
 
-    with st.spinner("İlk 6 raf analiz ediliyor (Farklı görseller ve tekil eksik etiketler taranıyor)..."):
+    with st.spinner("İlk 6 raf analiz ediliyor (Ürün altı etiketler ve görseller taranıyor)..."):
         try:
             result_img, results, summary, aligned_field = analyze_planogram_grid_free(
                 ref_img, field_img

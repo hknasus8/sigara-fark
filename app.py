@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-ÖZÇELİK STAND KONTROL UYGULAMASI (İlk 6 Raf Kontrolü + Sonraki Raflara Çarpı Sürümü)
+ÖZÇELİK STAND KONTROL UYGULAMASI (SFA & POG Analiz Entegreli)
 """
 
 import difflib
@@ -241,7 +241,7 @@ def get_reference_image(public_key, dealer_path):
 
 
 # =========================================================
-# GÖRSEL HİZALAMA VE ANALİZ
+# GÖRSEL HİZALAMA VE POG / SFA ANALİZ MOTORU
 # =========================================================
 def gray_normalize(img):
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
@@ -349,7 +349,7 @@ def analyze_planogram_grid_free(reference, field, roi_top_ratio=0.05, roi_bottom
 
                 fark_sayisi += 1
                 farkli_meyve_sayisi += 1
-                etiket_turu = f"FARKLI MEYVE #{farkli_meyve_sayisi}"
+                etiket_turu = f"POG UYUMSUZLUGU / FARKLI ÜRÜN #{farkli_meyve_sayisi}"
                 
                 box_color = (255, 255, 255) 
                 box_thickness = 4
@@ -391,7 +391,7 @@ def analyze_planogram_grid_free(reference, field, roi_top_ratio=0.05, roi_bottom
                 cv2.line(result_img, (x, abs_y), (x + bw, abs_y + bh), (0, 0, 255), 3)
                 cv2.line(result_img, (x, abs_y + bh), (x + bw, abs_y), (0, 0, 255), 3)
                 
-                results.append({"id": f"X_{asiri_raf_ihlali}", "durum": "6. RAF DIŞI ÜRÜN", "x": x, "y": abs_y, "w": bw, "h": bh, "alan": area})
+                results.append({"id": f"X_{asiri_raf_ihlali}", "durum": "SFA / 6. RAF DIŞI YETKSİZ ÜRÜN İHLALİ", "x": x, "y": abs_y, "w": bw, "h": bh, "alan": area})
 
     summary = {
         "fark": fark_sayisi,
@@ -399,7 +399,7 @@ def analyze_planogram_grid_free(reference, field, roi_top_ratio=0.05, roi_bottom
         "farkli_gorsel": farkli_meyve_sayisi,
         "asiri_raf_ihlali": asiri_raf_ihlali,
         "hizalama_ok": aligned_ok,
-        "hizalama": "Raf Bazlı Hibrit",
+        "hizalama": "SFA & POG Hibrit Motor",
     }
 
     return result_img, results, summary, aligned
@@ -408,14 +408,14 @@ def analyze_planogram_grid_free(reference, field, roi_top_ratio=0.05, roi_bottom
 def build_report(dealer, results, summary):
     from datetime import datetime
     lines = [
-        "=== ÖZÇELİK STAND MEYVE KONTROL RAPORU (İLK 6 RAF) ===",
+        "=== ÖZÇELİK SFA & PLANOGRAM (POG) DENETİM RAPORU ===",
         f"Bayi: {dealer}",
         "Tarih: " + datetime.now().strftime("%d.%m.%Y %H:%M:%S"),
         "",
-        "İlk 6 Rafta Tespit Edilen Farklı Meyve Sayısı (Beyaz Çerçeveli): " + str(summary.get('farkli_gorsel', 0)),
-        "6. Raf Sonrası Tespit Edilen ve Çarpı Atılan Ürün Sayısı: " + str(summary.get('asiri_raf_ihlali', 0)),
+        "SFA / İlk 6 Rafta Tespit Edilen Planogram Uyumsuzluğu: " + str(summary.get('farkli_gorsel', 0)),
+        "SFA / 6. Raf Sonrası Tespit Edilen Çarpı Atılan İhlal Sayısı: " + str(summary.get('asiri_raf_ihlali', 0)),
         "",
-        "--- DETAYLAR ---"
+        "--- DETAYLI İHLAL KAYITLARI ---"
     ]
     for item in results:
         lines.append(f"ID #{item.get('id')} ({item.get('durum')}) | Konum: X={item.get('x')}, Y={item.get('y')} | Boyut: {item.get('w')}x{item.get('h')}")
@@ -443,7 +443,7 @@ if "app_password" not in st.secrets:
     st.stop()
 
 if not st.session_state.authenticated:
-    st.title("🔐 Özçelik Stand Kontrol Uygulaması")
+    st.title("🔐 Özçelik SFA & POG Stand Kontrol Uygulaması")
     try:
         st.image(Image.open("logo.jpg"), width=250)
     except Exception:
@@ -462,7 +462,7 @@ if not st.session_state.authenticated:
 # SIDEBAR VE ARAYÜZ
 # =========================================================
 with st.sidebar:
-    st.header("⚙️ Denetim Ayarları")
+    st.header("⚙️ SFA & POG Ayarları")
     if st.button("🔄 Yandex Önbelleğini Yenile", use_container_width=True):
         try:
             st.cache_data.clear()
@@ -495,14 +495,14 @@ def clear_yandex_cache():
 
 title_col, refresh_col = st.columns([5, 1])
 with title_col:
-    st.title("📊 ÖZÇELİK STAND KONTROL UYGULAMASI (İLK 6 RAF)")
+    st.title("📊 ÖZÇELİK SFA & POG STAND KONTROL UYGULAMASI")
 with refresh_col:
     st.write("")
     if st.button("🔄 Yenile", use_container_width=True, key="main_refresh_btn"):
         clear_yandex_cache()
         st.rerun()
 
-st.subheader("1. Şehir dan Bayi Seçiniz")
+st.subheader("1. Şehir ve Bayi Seçiniz")
 cities, city_error = get_cities(YANDEX_ROOT_PUBLIC_KEY)
 if city_error:
     st.warning("Yandex şehir listesi alınamadı: " + str(city_error))
@@ -542,16 +542,16 @@ with c2:
         dealer_path = dealer_choices[selected_raw_dealer]["path"]
 
 st.divider()
-st.subheader("2. Orijinal Referans Fotoğraf ve Saha Fotoğrafı")
+st.subheader("2. POG Referans Planı ve SFA Saha Fotoğrafı")
 
 ref_img = None
 if dealer_path:
-    with st.spinner("Sistemdeki orijinal fotoğraf bulunuyor..."):
+    with st.spinner("Sistemdeki POG orijinal referans fotoğrafı bulunuyor..."):
         ref_img, ref_error = get_reference_image(YANDEX_ROOT_PUBLIC_KEY, dealer_path)
 
 u1, u2 = st.columns(2)
 with u1:
-    st.markdown("**Orijinal Referans Fotoğraf**")
+    st.markdown("**Planogram (POG) Orijinal Referans Fotoğrafı**")
     if ref_img is None:
         ref_upload = st.file_uploader("İsterseniz elle yükleyin", type=["jpg", "jpeg", "png", "webp"], key="ref_upload")
         if ref_upload is not None:
@@ -559,45 +559,45 @@ with u1:
     if ref_img is not None:
         st.image(ref_img, channels="BGR", use_container_width=True)
     else:
-        st.info("Şehir/bayi seçin veya görsel yükleyin.")
+        st.info("Şehir/bayi seçin veya POG referans görseli yükleyin.")
 
 with u2:
-    st.markdown("**Saha'dan Gelen Fotoğraf**")
+    st.markdown("**SFA (Saha Satış) Fotoğrafı**")
     field_upload = st.file_uploader("Saha fotoğrafını yükleyin", type=["jpg", "jpeg", "png", "webp"], key="field_upload")
     field_img = prepare_image(decode_uploaded(field_upload)) if field_upload is not None else None
     if field_img is not None:
         st.image(field_img, channels="BGR", use_container_width=True)
     else:
-        st.info("Sahadan gelen fotoğrafı yükleyin.")
+        st.info("SFA sahadan gelen fotoğrafı yükleyin.")
 
 st.divider()
 
 ready = ref_img is not None and field_img is not None
 
-if st.button("🚀 KONTROLE BAŞLA", type="primary", use_container_width=True, disabled=not ready):
+if st.button("🚀 SFA & POG KONTROLÜNÜ BAŞLAT", type="primary", use_container_width=True, disabled=not ready):
     st.session_state.result_img = None
     st.session_state.results = []
     st.session_state.summary = None
     st.session_state.report = ""
 
-    with st.spinner("Sadece ilk 6 raf kontrol ediliyor, sonraki raflar işaretleniyor..."):
+    with st.spinner("SFA algoritmaları ve POG şablon eşleştirmesi çalıştırılıyor..."):
         try:
             result_img, results, summary, aligned_field = analyze_planogram_grid_free(
                 ref_img, field_img
             )
 
-            st.session_state.result_img = result_img
+            st.session_state.result_img = result_app_img = result_img
             st.session_state.results = results
             st.session_state.summary = summary
             st.session_state.report = build_report(dealer_name or "Manuel", results, summary)
         except Exception as exc:
-            st.error("Analiz sırasında hata oluştu: " + str(exc))
+            st.error("SFA & POG analiz motorunda hata oluştu: " + str(exc))
 
 if st.session_state.result_img is not None and st.session_state.summary:
     summary = st.session_state.summary
     m1, m2 = st.columns(2)
-    m1.metric("İlk 6 Raftaki Farklı Meyve (Beyaz Çerçeveli)", summary.get("farkli_gorsel", 0))
-    m2.metric("6. Raf Sonrası Çarpı Atılan Ürün", summary.get("asiri_raf_ihlali", 0))
+    m1.metric("POG İlk 6 Raftaki Uyumsuzluk/Farklı Ürün", summary.get("farkli_gorsel", 0))
+    m2.metric("SFA 6. Raf Sonrası İhlal/Çarpı Atılan Ürün", summary.get("asiri_raf_ihlali", 0))
 
     st.image(st.session_state.result_img, channels="BGR", use_container_width=True)
 
@@ -605,9 +605,10 @@ if st.session_state.result_img is not None and st.session_state.summary:
     ok, encoded = cv2.imencode(".jpg", st.session_state.result_img)
     if ok:
         with d1:
-            st.download_button("📥 İşaretli Görseli İndir", data=encoded.tobytes(), file_name="denetim_sonuc.jpg", mime="image/jpeg", use_container_width=True)
+            st.download_button("📥 SFA Denetim Görselini İndir", data=encoded.tobytes(), file_name="sfa_pog_denetim_sonuc.jpg", mime="image/jpeg", use_container_width=True)
     if st.session_state.report:
         with d2:
-            st.download_button("📄 Raporu İndir", data=st.session_state.report.encode("utf-8"), file_name="rapor.txt", mime="text/plain", use_container_width=True)
+            st.download_button("📄 SFA Raporunu İndir", data=st.session_state.report.encode("utf-8"), file_name="sfa_pog_rapor.txt", mime="text/plain", use_container_width=True)
 else:
-    st.info("Analiz için referans ve saha fotoğrafını yükleyin, ardından 'KONTROLE BAŞLA' düğmesine basın.")
+    st.info("Denetim için POG referans ve SFA saha fotoğraflarını yükleyin, ardından 'SFA & POG KONTROLÜNÜ BAŞLAT' düğmesine basın.")
+```[cite: 20]

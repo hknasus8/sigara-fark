@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-ÖZÇELİK STAND KONTROL UYGULAMASI (Otomatik Önbellek Temizleme Sürümü)
+ÖZÇELİK STAND KONTROL UYGULAMASI (Otomatik Önbellek Temizleme ve Meyve Analiz Sürümü)
 """
 
 import difflib
@@ -241,7 +241,7 @@ def get_reference_image(public_key, dealer_path):
 
 
 # =========================================================
-# GÖRSEL HİZALAMA VE ANALİZ
+# GÖRSEL HİZALAMA VE ANALİZ (BEYAZ ÇERÇEVELİ MEYVE TESPİTİ)
 # =========================================================
 def gray_normalize(img):
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
@@ -308,8 +308,7 @@ def analyze_planogram_grid_free(reference, field, roi_top_ratio=0.05, roi_bottom
 
     results = []
     fark_sayisi = 0
-    paket_eksigi_sayisi = 0
-    farkli_gorsel_sayisi = 0
+    farkli_meyve_sayisi = 0
 
     for i in range(6):
         s_top = top_y + (i * shelf_height)
@@ -342,18 +341,12 @@ def analyze_planogram_grid_free(reference, field, roi_top_ratio=0.05, roi_bottom
                 continue
 
             fark_sayisi += 1
-            aspect_ratio = float(bw) / max(1, bh)
+            farkli_meyve_sayisi += 1
+            etiket_turu = f"FARKLI MEYVE #{farkli_meyve_sayisi}"
             
-            if 0.2 < aspect_ratio < 2.0:
-                farkli_gorsel_sayisi += 1
-                etiket_turu = f"FARKLI GÖRSEL #{farkli_gorsel_sayisi}"
-                box_color = (0, 0, 255) # Kırmızı
-                box_thickness = 4
-            else:
-                paket_eksigi_sayisi += 1
-                etiket_turu = f"EKSİK PAKET #{paket_eksigi_sayisi}"
-                box_color = (0, 0, 255)
-                box_thickness = 2
+            # İstendiği üzere BEYAZ renk ve KALIN (kalınlık: 4) çerçeve
+            box_color = (255, 255, 255) # BEYAZ (BGR formatında)
+            box_thickness = 4
 
             cv2.rectangle(result_img, (x, abs_y), (x + bw, abs_y + bh), box_color, box_thickness)
             cv2.putText(
@@ -362,7 +355,7 @@ def analyze_planogram_grid_free(reference, field, roi_top_ratio=0.05, roi_bottom
                 (x, max(15, abs_y - 5)),
                 cv2.FONT_HERSHEY_SIMPLEX,
                 0.35,
-                box_color,
+                (0, 0, 0), # Yazının arka planda okunabilmesi için siyah renk gölge/metin
                 1,
                 cv2.LINE_AA,
             )
@@ -371,8 +364,8 @@ def analyze_planogram_grid_free(reference, field, roi_top_ratio=0.05, roi_bottom
 
     summary = {
         "fark": fark_sayisi,
-        "paket_eksigi": paket_eksigi_sayisi,
-        "farkli_gorsel": farkli_gorsel_sayisi,
+        "paket_eksigi": 0,
+        "farkli_gorsel": farkli_meyve_sayisi,
         "supheli": 0,
         "uyumlu": 0,
         "hizalama_ok": aligned_ok,
@@ -386,15 +379,13 @@ def analyze_planogram_grid_free(reference, field, roi_top_ratio=0.05, roi_bottom
 def build_report(dealer, results, summary):
     from datetime import datetime
     lines = [
-        "=== ÖZÇELİK STAND KONTROL RAPORU (İLK 6 RAF) ===",
+        "=== ÖZÇELİK STAND MEYVE KONTROL RAPORU (İLK 6 RAF) ===",
         f"Bayi: {dealer}",
         "Tarih: " + datetime.now().strftime("%d.%m.%Y %H:%M:%S"),
         "",
-        "Eksik Paket Sayısı: " + str(summary.get('paket_eksigi', 0)),
-        "Farklı Görsel Sayısı (Kırmızı): " + str(summary.get('farkli_gorsel', 0)),
-        "Toplam Tespit Edilen Fark: " + str(summary['fark']),
+        "Tespit Edilen Farklı Meyve Sayısı (Beyaz Çerçeveli): " + str(summary.get('farkli_gorsel', 0)),
         "",
-        "--- FARK BÖLGELERİ ---"
+        "--- FARKLI MEYVE BÖLGELERİ ---"
     ]
     for item in results:
         lines.append(f"Fark ID #{item.get('id')} ({item.get('durum')}) | Konum: X={item.get('x')}, Y={item.get('y')} | Boyut: {item.get('w')}x{item.get('h')}")
@@ -559,7 +550,7 @@ if st.button("🚀 KONTROLE BAŞLA", type="primary", use_container_width=True, d
     st.session_state.summary = None
     st.session_state.report = ""
 
-    with st.spinner("İlk 6 raf analiz ediliyor (Planogram ve paket farkları taranıyor)..."):
+    with st.spinner("İlk 6 raf analiz ediliyor (Elma standı baz alınarak farklı meyveler taranıyor)..."):
         try:
             result_img, results, summary, aligned_field = analyze_planogram_grid_free(
                 ref_img, field_img
@@ -575,8 +566,7 @@ if st.button("🚀 KONTROLE BAŞLA", type="primary", use_container_width=True, d
 if st.session_state.result_img is not None and st.session_state.summary:
     summary = st.session_state.summary
     m1, m2 = st.columns(2)
-    m1.metric("Farklı Görsel (Kırmızı)", summary.get("farkli_gorsel", 0))
-    m2.metric("Paket Eksiği", summary.get("paket_eksigi", 0))
+    m1.metric("Tespit Edilen Farklı Meyve (Beyaz Çerçeveli)", summary.get("farkli_gorsel", 0))
 
     st.image(st.session_state.result_img, channels="BGR", use_container_width=True)
 

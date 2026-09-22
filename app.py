@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-ÖZÇELİK STAND KONTROL UYGULAMASI (Düzeltilmiş Etiket ve Ürün Ayrımı)
+ÖZÇELİK STAND KONTROL UYGULAMASI (Güncellenmiş Etiket ve Ürün Ayrımı)
 """
 
 import difflib
@@ -316,46 +316,36 @@ def analyze_planogram_grid_free(reference, field, roi_top_ratio=0.05, roi_bottom
         s_top = top_y + (i * shelf_height)
         s_bottom = s_top + shelf_height if i < 5 else bottom_y
 
-        # 1. ETİKET BANDI KONTROLÜ (Sadece alt şerit alanındaki eksiklikler)
-        label_band_height = int(shelf_height * 0.18)
+        # Etiket bandı sınırını net olarak ayırıyoruz (Rafın en alt kısmı)
+        label_band_height = int(shelf_height * 0.15)
         label_band_top = s_bottom - label_band_height
         
+        # 1. ETİKET BANDI KONTROLÜ (Sadece burada yeşil etiket aranır)
         ref_label_roi = ref_gray[label_band_top:s_bottom, :]
         tar_label_roi = tar_gray[label_band_top:s_bottom, :]
         
         label_diff = cv2.absdiff(ref_label_roi, tar_label_roi)
-        _, label_thresh = cv2.threshold(label_diff, 55, 255, cv2.THRESH_BINARY)
-        l_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (9, 3))
+        _, label_thresh = cv2.threshold(label_diff, 60, 255, cv2.THRESH_BINARY)
+        l_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (11, 3))
         label_thresh = cv2.morphologyEx(label_thresh, cv2.MORPH_CLOSE, l_kernel, iterations=1)
         
         l_contours, _ = cv2.findContours(label_thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
         for l_cnt in l_contours:
             l_area = cv2.contourArea(l_cnt)
-            if (w * h * 0.0004) < l_area < (w * h * 0.015):
+            if (w * h * 0.0005) < l_area < (w * h * 0.01):
                 lx, ly, lbw, lbh = cv2.boundingRect(l_cnt)
                 abs_ly = label_band_top + ly
-                if lx > 20 and (lx + lbw) < (w - 20) and lbh < (label_band_height * 0.9):
+                if lx > 20 and (lx + lbw) < (w - 20):
                     fark_sayisi += 1
                     eksik_etiket_sayisi += 1
                     etiket_turu = f"EKSİK ETİKET #{eksik_etiket_sayisi}"
-                    box_color = (0, 255, 0)  # Sadece Kesin Yeşil Çerçeve
-                    box_thickness = 2
-
-                    cv2.rectangle(result_img, (lx, abs_ly), (lx + lbw, abs_ly + lbh), box_color, box_thickness)
-                    cv2.putText(
-                        result_img,
-                        etiket_turu,
-                        (lx, max(15, abs_ly - 5)),
-                        cv2.FONT_HERSHEY_SIMPLEX,
-                        0.35,
-                        box_color,
-                        1,
-                        cv2.LINE_AA,
-                    )
+                    
+                    cv2.rectangle(result_img, (lx, abs_ly), (lx + lbw, abs_ly + lbh), (0, 255, 0), 2)
+                    cv2.putText(result_img, etiket_turu, (lx, max(15, abs_ly - 5)), cv2.FONT_HERSHEY_SIMPLEX, 0.35, (0, 255, 0), 1, cv2.LINE_AA)
                     results.append({"id": fark_sayisi, "durum": etiket_turu, "x": lx, "y": abs_ly, "w": lbw, "h": lbh, "alan": l_area})
 
-        # 2. ÜRÜN VE PAKET ALANI KONTROLÜ (Etiket bandı hariç tutulur)
-        product_bottom = s_bottom - label_band_height
+        # 2. ÜRÜN ALANI KONTROLÜ (Etiket bandı kesinlikle dahil edilmez, üst sınır korundu)
+        product_bottom = label_band_top - 2
         ref_roi = ref_gray[s_top:product_bottom, :]
         tar_roi = tar_gray[s_top:product_bottom, :]
 
@@ -388,26 +378,16 @@ def analyze_planogram_grid_free(reference, field, roi_top_ratio=0.05, roi_bottom
             if 0.2 < aspect_ratio < 2.0:
                 farkli_gorsel_sayisi += 1
                 etiket_turu = f"FARKLI GÖRSEL #{farkli_gorsel_sayisi}"
-                box_color = (0, 0, 255)  # Kırmızı çerçeve
+                box_color = (0, 0, 255)
                 box_thickness = 4
             else:
                 paket_eksigi_sayisi += 1
                 etiket_turu = f"EKSİK PAKET #{paket_eksigi_sayisi}"
-                box_color = (0, 0, 255)  # Kırmızı çerçeve
+                box_color = (0, 0, 255)
                 box_thickness = 2
 
             cv2.rectangle(result_img, (x, abs_y), (x + bw, abs_y + bh), box_color, box_thickness)
-            cv2.putText(
-                result_img,
-                etiket_turu,
-                (x, max(15, abs_y - 5)),
-                cv2.FONT_HERSHEY_SIMPLEX,
-                0.35,
-                box_color,
-                1,
-                cv2.LINE_AA,
-            )
-
+            cv2.putText(result_img, etiket_turu, (x, max(15, abs_y - 5)), cv2.FONT_HERSHEY_SIMPLEX, 0.35, box_color, 1, cv2.LINE_AA)
             results.append({"id": fark_sayisi, "durum": etiket_turu, "x": x, "y": abs_y, "w": bw, "h": bh, "alan": area})
 
     summary = {

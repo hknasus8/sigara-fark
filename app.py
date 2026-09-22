@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-ÖZÇELİK STAND KONTROL UYGULAMASI (Kararlı Sürüm - Sadece Görsel ve Paket Kontrolü)
+ÖZÇELİK STAND KONTROL UYGULAMASI (Otomatik Önbellek Temizleme Sürümü)
 """
 
 import difflib
@@ -34,6 +34,14 @@ st.markdown(
 """,
     unsafe_allow_html=True,
 )
+
+
+# =========================================================
+# OTOMATİK ÖNBELLEK TEMİZLEME (UYGULAMA BAŞLANGICI)
+# =========================================================
+if "cache_initialized" not in st.session_state:
+    st.cache_data.clear()
+    st.session_state.cache_initialized = True
 
 
 # =========================================================
@@ -436,13 +444,9 @@ with st.sidebar:
     st.header("⚙️ Denetim Ayarları")
     if st.button("🔄 Yandex Önbelleğini Yenile", use_container_width=True):
         try:
-            yandex_root_items.clear()
-            yandex_list_dir.clear()
-            get_cities.clear()
-            get_dealers.clear()
-            get_reference_image.clear()
-        except Exception:
             st.cache_data.clear()
+        except Exception:
+            pass
         st.session_state.result_img = None
         st.session_state.results = []
         st.session_state.summary = None
@@ -459,13 +463,9 @@ with st.sidebar:
 
 def clear_yandex_cache():
     try:
-        yandex_root_items.clear()
-        yandex_list_dir.clear()
-        get_cities.clear()
-        get_dealers.clear()
-        get_reference_image.clear()
-    except Exception:
         st.cache_data.clear()
+    except Exception:
+        pass
     st.session_state.result_img = None
     st.session_state.results = []
     st.session_state.summary = None

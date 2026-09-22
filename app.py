@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-ÖZÇELİK STAND KONTROL UYGULAMASI (Otomatik Önbellek Temizleme Sürümü)
+ÖZÇELİK STAND KONTROL UYGULAMASI (Yeşil Etiket Kontrollü ve Otomatik Önbellek)
 """
 
 import difflib
@@ -310,6 +310,7 @@ def analyze_planogram_grid_free(reference, field, roi_top_ratio=0.05, roi_bottom
     fark_sayisi = 0
     paket_eksigi_sayisi = 0
     farkli_gorsel_sayisi = 0
+    eksik_etiket_sayisi = 0
 
     for i in range(6):
         s_top = top_y + (i * shelf_height)
@@ -344,15 +345,24 @@ def analyze_planogram_grid_free(reference, field, roi_top_ratio=0.05, roi_bottom
             fark_sayisi += 1
             aspect_ratio = float(bw) / max(1, bh)
             
-            if 0.2 < aspect_ratio < 2.0:
+            # Etiket alanı kontrolü (Rafın alt kısımlarındaki yatay ve küçük dikdörtgen alanlar)
+            # Eğer yükseklik düşükse ve raf alt bandına denk geliyorsa etiket eksikliği olarak değerlendir
+            is_near_label_zone = (abs_y > (s_bottom - int(shelf_height * 0.35)))
+            
+            if is_near_label_zone and bh < (shelf_height * 0.25):
+                eksik_etiket_sayisi += 1
+                etiket_turu = f"EKSİK ETİKET #{eksik_etiket_sayisi}"
+                box_color = (0, 255, 0)  # Yeşil çerçeve
+                box_thickness = 2
+            elif 0.2 < aspect_ratio < 2.0:
                 farkli_gorsel_sayisi += 1
                 etiket_turu = f"FARKLI GÖRSEL #{farkli_gorsel_sayisi}"
-                box_color = (0, 0, 255) # Kırmızı
+                box_color = (0, 0, 255)  # Kırmızı çerçeve
                 box_thickness = 4
             else:
                 paket_eksigi_sayisi += 1
                 etiket_turu = f"EKSİK PAKET #{paket_eksigi_sayisi}"
-                box_color = (0, 0, 255)
+                box_color = (0, 0, 255)  # Kırmızı çerçeve
                 box_thickness = 2
 
             cv2.rectangle(result_img, (x, abs_y), (x + bw, abs_y + bh), box_color, box_thickness)
@@ -373,6 +383,7 @@ def analyze_planogram_grid_free(reference, field, roi_top_ratio=0.05, roi_bottom
         "fark": fark_sayisi,
         "paket_eksigi": paket_eksigi_sayisi,
         "farkli_gorsel": farkli_gorsel_sayisi,
+        "eksik_etiket": eksik_etiket_sayisi,
         "supheli": 0,
         "uyumlu": 0,
         "hizalama_ok": aligned_ok,
@@ -390,6 +401,7 @@ def build_report(dealer, results, summary):
         f"Bayi: {dealer}",
         "Tarih: " + datetime.now().strftime("%d.%m.%Y %H:%M:%S"),
         "",
+        "Eksik Etiket Sayısı (Yeşil): " + str(summary.get('eksik_etiket', 0)),
         "Eksik Paket Sayısı: " + str(summary.get('paket_eksigi', 0)),
         "Farklı Görsel Sayısı (Kırmızı): " + str(summary.get('farkli_gorsel', 0)),
         "Toplam Tespit Edilen Fark: " + str(summary['fark']),
@@ -481,7 +493,7 @@ with refresh_col:
         clear_yandex_cache()
         st.rerun()
 
-st.subheader("1. Şehir dan Bayi Seçiniz")
+st.subheader("1. Şehirden Bayi Seçiniz")
 cities, city_error = get_cities(YANDEX_ROOT_PUBLIC_KEY)
 if city_error:
     st.warning("Yandex şehir listesi alınamadı: " + str(city_error))
@@ -559,7 +571,7 @@ if st.button("🚀 KONTROLE BAŞLA", type="primary", use_container_width=True, d
     st.session_state.summary = None
     st.session_state.report = ""
 
-    with st.spinner("İlk 6 raf analiz ediliyor (Planogram ve paket farkları taranıyor)..."):
+    with st.spinner("İlk 6 raf analiz ediliyor (Etiket, Planogram ve paket farkları taranıyor)..."):
         try:
             result_img, results, summary, aligned_field = analyze_planogram_grid_free(
                 ref_img, field_img
@@ -574,9 +586,10 @@ if st.button("🚀 KONTROLE BAŞLA", type="primary", use_container_width=True, d
 
 if st.session_state.result_img is not None and st.session_state.summary:
     summary = st.session_state.summary
-    m1, m2 = st.columns(2)
-    m1.metric("Farklı Görsel (Kırmızı)", summary.get("farkli_gorsel", 0))
-    m2.metric("Paket Eksiği", summary.get("paket_eksigi", 0))
+    m1, m2, m3 = st.columns(3)
+    m1.metric("Eksik Etiket (Yeşil)", summary.get("eksik_etiket", 0))
+    m2.metric("Farklı Görsel (Kırmızı)", summary.get("farkli_gorsel", 0))
+    m3.metric("Paket Eksiği", summary.get("paket_eksigi", 0))
 
     st.image(st.session_state.result_img, channels="BGR", use_container_width=True)
 

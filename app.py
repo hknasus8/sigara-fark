@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """
 ÖZÇELİK STAND KONTROL UYGULAMASI
-Raf Bazlı Hassas Analiz + Etiketi Olup İçi Boş Olan Yerler İçin Beyaz Çerçeve
+Raf Bazlı Hassas Analiz + Etiketi Olup İçi Boş Alanlar İçin Kalın Kırmızı Çerçeve ("FARKLI GÖRSEL")
 """
 
 import difflib
@@ -234,7 +234,7 @@ def get_reference_image(public_key, dealer_path):
 
 
 # =========================================================
-# HASSAS RAF BAZLI HİZALAMA VE ANALİZ (KIRMIZI + BEYAZ ÇERÇEVE)
+# HASSAS RAF BAZLI HİZALAMA VE ANALİZ (KALIN KIRMIZI + FARKLI GÖRSEL)
 # =========================================================
 def gray_normalize(img):
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
@@ -302,7 +302,7 @@ def analyze_planogram_grid_free(reference, field, roi_top_ratio=0.05, roi_bottom
     results = []
     fark_sayisi = 0
     paket_eksigi_sayisi = 0
-    bos_etiketli_sayisi = 0
+    farkli_gorsel_sayisi = 0
 
     for i in range(6):
         s_top = top_y + (i * shelf_height)
@@ -334,17 +334,14 @@ def analyze_planogram_grid_free(reference, field, roi_top_ratio=0.05, roi_bottom
             if x < 10 or (x + bw) > (w - 10):
                 continue
 
-            # Kontrol: Alt kısımda (etiket bölgesinde) etiket var mı yok mu?
-            # Paketin hemen altındaki şeridi incele (etiket varlığı kontrolü)
+            # Etiket şeridi varlığı kontrolü
             check_label_y1 = min(s_bottom - 5, abs_y + bh - int(bh * 0.2))
             check_label_y2 = min(s_bottom, abs_y + bh + int(bh * 0.3))
             label_strip_region = tar_gray[check_label_y1:check_label_y2, max(0, x-5):min(w, x+bw+5)]
             
-            # Etiket varsa şerit üzerinde parlaklık/yazı yoğunluğu olur (etiket beyaz/renkli kağıttır)
             has_label = False
             if label_strip_region.size > 0:
                 mean_brightness = np.mean(label_strip_region)
-                # Etiket şeridi doluysa (beyaz/renkli etiket kağıdı varsa) parlaklık yüksektir
                 if mean_brightness > 75: 
                     has_label = True
 
@@ -353,20 +350,23 @@ def analyze_planogram_grid_free(reference, field, roi_top_ratio=0.05, roi_bottom
             
             if 0.2 < aspect_ratio < 2.0:
                 if has_label:
-                    # ETİKETİ VAR AMA İÇİ BOŞ -> BEYAZ ÇERÇEVE
-                    bos_etiketli_sayisi += 1
-                    etiket_turu = f"BOS #{bos_etiketli_sayisi}"
-                    box_color = (255, 255, 255) # BEYAZ
+                    # ETİKETİ VAR AMA İÇİ BOŞ -> "FARKLI GÖRSEL" + KALIN KIRMIZI (Kalınlık: 4)
+                    farkli_gorsel_sayisi += 1
+                    etiket_turu = f"FARKLI GÖRSEL #{farkli_gorsel_sayisi}"
+                    box_color = (0, 0, 255) # Kırmızı
+                    box_thickness = 4        # KALIN ÇERÇEVE
                 else:
-                    # NORMAL EKSİK PAKET -> KIRMIZI ÇERÇEVE
+                    # NORMAL EKSİK PAKET -> KIRMIZI
                     paket_eksigi_sayisi += 1
                     etiket_turu = f"EKSİK #{paket_eksigi_sayisi}"
-                    box_color = (0, 0, 255) # KIRMIZI
+                    box_color = (0, 0, 255)
+                    box_thickness = 2
             else:
                 etiket_turu = f"FARK #{fark_sayisi}"
                 box_color = (0, 0, 255)
+                box_thickness = 2
 
-            cv2.rectangle(result_img, (x, abs_y), (x + bw, abs_y + bh), box_color, 2)
+            cv2.rectangle(result_img, (x, abs_y), (x + bw, abs_y + bh), box_color, box_thickness)
             cv2.putText(
                 result_img,
                 etiket_turu,
@@ -383,7 +383,7 @@ def analyze_planogram_grid_free(reference, field, roi_top_ratio=0.05, roi_bottom
     summary = {
         "fark": fark_sayisi,
         "paket_eksigi": paket_eksigi_sayisi,
-        "bos_etiketli": bos_etiketli_sayisi,
+        "farkli_gorsel": farkli_gorsel_sayisi,
         "supheli": 0,
         "uyumlu": 0,
         "hizalama_ok": aligned_ok,
@@ -401,8 +401,8 @@ def build_report(dealer, results, summary):
         f"Bayi: {dealer}",
         "Tarih: " + datetime.now().strftime("%d.%m.%Y %H:%M:%S"),
         "",
-        "Eksik Paket Sayısı (Kırmızı): " + str(summary.get('paket_eksigi', 0)),
-        "Etiketi Olup İçi Boş Alan Sayısı (Beyaz): " + str(summary.get('bos_etiketli', 0)),
+        "Eksik Paket Sayısı: " + str(summary.get('paket_eksigi', 0)),
+        "Etiketi Olup İçi Boş Alan Sayısı (Farklı Görsel): " + str(summary.get('farkli_gorsel', 0)),
         "Toplam Tespit Edilen Fark: " + str(summary['fark']),
         "",
         "--- FARK BÖLGELERİ ---"
@@ -578,7 +578,7 @@ if st.button("🚀 KONTROLE BAŞLA", type="primary", use_container_width=True, d
     st.session_state.summary = None
     st.session_state.report = ""
 
-    with st.spinner("İlk 6 raf analiz ediliyor (Etiketi olan boş alanlar beyaz çerçeveleniyor)..."):
+    with st.spinner("İlk 6 raf analiz ediliyor (Etiketi olan boş alanlar kalın kırmızı çerçeveleniyor)..."):
         try:
             result_img, results, summary, aligned_field = analyze_planogram_grid_free(
                 ref_img, field_img
@@ -594,8 +594,8 @@ if st.button("🚀 KONTROLE BAŞLA", type="primary", use_container_width=True, d
 if st.session_state.result_img is not None and st.session_state.summary:
     summary = st.session_state.summary
     m1, m2, m3 = st.columns(3)
-    m1.metric("Eksik Paket (Kırmızı)", summary.get("paket_eksigi", 0))
-    m2.metric("Etiketi Olup Boş (Beyaz)", summary.get("bos_etiketli", 0))
+    m1.metric("Eksik Paket", summary.get("paket_eksigi", 0))
+    m2.metric("Farklı Görsel (Etiketli Boş)", summary.get("farkli_gorsel", 0))
     m3.metric("Toplam Tespit", summary.get("fark", 0))
 
     st.image(st.session_state.result_img, channels="BGR", use_container_width=True)

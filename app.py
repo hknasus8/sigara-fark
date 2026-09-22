@@ -281,6 +281,86 @@ def align_images_feature(reference, target):
     return aligned, True
 
 
+def detect_empty_labels(ref_gray, tar_gray, result_img, top_y, bottom_y, shelf_height, w, raf_sayisi=6):
+    """
+    Her rafın alt kısmındaki ürün etiket şeridini (fiyat/isim etiketleri) tarar.
+    Referansta dolu (yazılı) olup sahada boş/içi boş kalan etiket hücrelerini
+    bulur ve kalın YEŞİL çerçeve ile işaretler. Tek bir sabit bölge yerine
+    TÜM raflardaki TÜM etiket hücrelerini otomatik segmentleyip kontrol eder.
+    """
+    eksik_etiket_sayisi = 0
+    eksik_etiket_results = []
+
+    for i in range(raf_sayisi):
+        s_top = top_y + (i * shelf_height)
+        s_bottom = s_top + shelf_height if i < raf_sayisi - 1 else bottom_y
+
+        # Etiket şeridi: rafın alt %22'si ile alt %3'ü arasındaki bant
+        label_strip_top = s_bottom - int(shelf_height * 0.22)
+        label_strip_bottom = s_bottom - int(shelf_height * 0.03)
+        if label_strip_bottom <= label_strip_top:
+            continue
+
+        ref_strip = ref_gray[label_strip_top:label_strip_bottom, :]
+        tar_strip = tar_gray[label_strip_top:label_strip_bottom, :]
+        if ref_strip.size == 0 or tar_strip.size == 0:
+            continue
+
+        # 1) Referans şeritte etiket hücrelerini (parlak/beyaz dikdörtgenler) bul
+        _, ref_white_mask = cv2.threshold(ref_strip, 140, 255, cv2.THRESH_BINARY)
+        kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (9, 5))
+        ref_white_mask = cv2.morphologyEx(ref_white_mask, cv2.MORPH_CLOSE, kernel, iterations=2)
+        ref_white_mask = cv2.morphologyEx(ref_white_mask, cv2.MORPH_OPEN, kernel, iterations=1)
+
+        contours, _ = cv2.findContours(ref_white_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+
+        strip_h = label_strip_bottom - label_strip_top
+        min_area = strip_h * w * 0.0012
+        max_area = strip_h * w * 0.05
+
+        for cnt in contours:
+            area = cv2.contourArea(cnt)
+            if area < min_area or area > max_area:
+                continue
+
+            x, y, bw, bh = cv2.boundingRect(cnt)
+            if bh < 6 or bw < 8:
+                continue
+
+            ref_cell = ref_strip[y:y + bh, x:x + bw]
+            tar_cell = tar_strip[y:y + bh, x:x + bw]
+            if ref_cell.size == 0 or tar_cell.size == 0:
+                continue
+
+            ref_std = float(np.std(ref_cell))
+            tar_std = float(np.std(tar_cell))
+            tar_mean = float(np.mean(tar_cell))
+
+            # Referansta gerçek yazı/metin var (yüksek varyans),
+            # sahada aynı hücre parlak (etiket kağıdı orada) ama İÇİ BOŞ (düşük varyans) -> eksik/boş etiket
+            if ref_std > 16 and tar_mean > 110 and tar_std < 9:
+                eksik_etiket_sayisi += 1
+                abs_y1 = label_strip_top + y
+                abs_y2 = abs_y1 + bh
+
+                cv2.rectangle(result_img, (x, abs_y1), (x + bw, abs_y2), (0, 255, 0), 3)
+                cv2.putText(
+                    result_img,
+                    f"EKSIK ETIKET #{eksik_etiket_sayisi}",
+                    (x, max(15, abs_y1 - 5)),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    0.35,
+                    (0, 255, 0),
+                    1,
+                    cv2.LINE_AA,
+                )
+                eksik_etiket_results.append(
+                    {"id": eksik_etiket_sayisi, "durum": "EKSIK ETIKET", "x": x, "y": abs_y1, "w": bw, "h": bh, "alan": area}
+                )
+
+    return eksik_etiket_sayisi, eksik_etiket_results
+
+
 def analyze_planogram_grid_free(reference, field, roi_top_ratio=0.05, roi_bottom_ratio=0.82):
     h, w = reference.shape[:2]
     field = cv2.resize(field, (w, h), interpolation=cv2.INTER_AREA)
@@ -379,42 +459,14 @@ def analyze_planogram_grid_free(reference, field, roi_top_ratio=0.05, roi_bottom
             results.append({"id": fark_sayisi, "durum": etiket_turu, "x": x, "y": abs_y, "w": bw, "h": bh, "alan": area})
 
     # =====================================================
-    # NOKTA ATIŞI: YALNIZCA YEŞİL OKLA GÖSTERİLEN DOĞRU BÖLGE (3. RAF ETİKETİ)
+    # GENEL TARAMA: TÜM RAFLARDAKİ TÜM ETİKET HÜCRELERİNİ KONTROL ET
+    # (Referansta yazılı/dolu iken sahada içi boş kalan her etiketi bulur)
     # =====================================================
-    # 3. raf (index 2) üzerindeki spesifik hedef etiket alanı
-    if len(range(6)) >= 3:
-        target_shelf_idx = 2
-        s_top = top_y + (target_shelf_idx * shelf_height)
-        s_bottom = s_top + shelf_height
-        
-        label_strip_top = s_bottom - int(shelf_height * 0.20)
-        label_strip_bottom = s_bottom - int(shelf_height * 0.04)
-        
-        # Yeşil okun işaret ettiği sol-orta yatay aralık (örneğin %28 ile %38 arası)
-        col_start = int(w * 0.28)
-        col_end = int(w * 0.38)
-        
-        target_slot = tar_gray[label_strip_top:label_strip_bottom, col_start:col_end]
-        ref_slot = ref_gray[label_strip_top:label_strip_bottom, col_start:col_end]
-        
-        if target_slot.size > 0 and ref_slot.size > 0:
-            # Referansta olup sahada eksik/boş olan o spesifik nokta
-            if np.mean(ref_slot) > 55 and np.mean(target_slot) < 65:
-                eksik_etiket_sayisi += 1
-                lw_box = col_end - col_start
-                lh_box = label_strip_bottom - label_strip_top
-                
-                cv2.rectangle(result_img, (col_start, label_strip_top), (col_end, label_strip_bottom), (0, 255, 0), 3)
-                cv2.putText(
-                    result_img,
-                    "EKSİK ETİKET",
-                    (col_start, max(15, label_strip_top - 4)),
-                    cv2.FONT_HERSHEY_SIMPLEX,
-                    0.35,
-                    (0, 255, 0),
-                    1,
-                    cv2.LINE_AA,
-                )
+    eksik_etiket_sayisi, eksik_etiket_results = detect_empty_labels(
+        ref_gray, tar_gray, result_img, top_y, bottom_y, shelf_height, w, raf_sayisi=6
+    )
+    results.extend(eksik_etiket_results)
+    fark_sayisi += eksik_etiket_sayisi
 
     summary = {
         "fark": fark_sayisi,

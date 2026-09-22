@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """
 ÖZÇELİK STAND KONTROL UYGULAMASI
-İlk 6 Raf Modülü ve Etiket Kontrol Sürümü (Hassasiyet Optimizasyonlu)
+İlk 6 Raf Modülü (Etiket Kontrolü Hariç - Sadece Paket/Fark Analizi)
 """
 
 import difflib
@@ -15,14 +15,6 @@ import cv2
 import numpy as np
 import requests
 import streamlit as st
-
-# OCR (etiket / ürün adı okuma) modülü
-try:
-    import pytesseract
-    OCR_AVAILABLE = True
-except Exception:
-    pytesseract = None
-    OCR_AVAILABLE = False
 
 
 # =========================================================
@@ -46,19 +38,10 @@ st.markdown(
 
 
 # =========================================================
-# SABİTLER (Hassasiyet Ayarları Güncellendi)
+# SABİTLER
 # =========================================================
 YANDEX_ROOT_PUBLIC_KEY = "https://disk.yandex.com.tr/d/ikCHPwREiCVv_g"
-
 RAF_SAYISI = 6  
-OCR_LANG_TRY_ORDER = ("tur+eng", "eng")  
-TAG_MIN_AREA_RATIO = 0.0025   # Ufak turuncu etiket yanılgılarını önlemek için artırıldı
-TAG_SEARCH_BAND_RATIO = 0.22  
-TAG_MIN_MEAN_BRIGHTNESS = 165  
-TAG_MAX_STD_BRIGHTNESS = 75    
-NAME_STRIP_HEIGHT_RATIO = 0.18  
-NAME_STRIP_GAP_RATIO = 0.05     
-DEFAULT_LABEL_SIM_THRESHOLD = 0.50
 
 
 # =========================================================
@@ -362,7 +345,7 @@ def align_images(reference, target):
 
 
 # =========================================================
-# KONTUR ANALİZİ (Ufak kırmızı kutuları engellemek için filtreler güçlendirildi)
+# KONTUR ANALİZİ (Yalnızca Paket / Ürün Eksikleri)
 # =========================================================
 def analyze_planogram_grid_free(
     reference,
@@ -394,7 +377,7 @@ def analyze_planogram_grid_free(
 
     diff = cv2.absdiff(ref_gray, tar_gray)
     
-    # Eşik değeri artırılarak küçük ışık oynamalarından doğan hatalı kırmızı kutular engellendi
+    # Eşik değeri optimize edildi
     _, thresh = cv2.threshold(diff, 65, 255, cv2.THRESH_BINARY)
 
     thresh[roi_bottom:, :] = 0
@@ -419,8 +402,8 @@ def analyze_planogram_grid_free(
 
     for cnt in contours:
         area = cv2.contourArea(cnt)
-        # Minimum alan filtresi büyütüldü: Ufak gürültüler ve yanlış kırmızı kutular tamamen elenir
-        if area < (w * h * 0.0015) or area > (w * h * 0.15):
+        # Çok küçük gürültüleri elemek için alan filtresi sıkı tutuldu
+        if area < (w * h * 0.002) or area > (w * h * 0.15):
             continue
 
         x, y, bw, bh = cv2.boundingRect(cnt)
@@ -462,221 +445,7 @@ def analyze_planogram_grid_free(
     return result_img, results, summary, aligned
 
 
-# =========================================================
-# OCR & ETİKET KONTROLÜ
-# =========================================================
-def normalize_ocr_text(value):
-    value = normalize_text(value)
-    value = re.sub(r"[^A-Z0-9 ]", " ", value)
-    return re.sub(r"\s+", " ", value).strip()
-
-
-def text_similarity(a, b):
-    a = normalize_ocr_text(a)
-    b = normalize_ocr_text(b)
-    if not a or not b:
-        return 0.0
-    ratio = difflib.SequenceMatcher(None, a, b).ratio()
-    words_a = set(a.split())
-    words_b = set(b.split())
-    overlap = len(words_a & words_b) / max(1, min(len(words_a), len(words_b))) if words_a and words_b else 0.0
-    if a in b or b in a:
-        overlap = max(overlap, 0.85)
-    return max(ratio, overlap)
-
-
-def ocr_text_from_crop(crop_bgr, lang="eng"):
-    if not OCR_AVAILABLE or crop_bgr is None:
-        return ""
-    if crop_bgr.shape[0] < 4 or crop_bgr.shape[1] < 4:
-        return ""
-    try:
-        scale = max(1, int(120 / max(1, crop_bgr.shape[0])))
-        big = cv2.resize(crop_bgr, None, fx=scale + 2, fy=scale + 2, interpolation=cv2.INTER_CUBIC)
-        gray = cv2.cvtColor(big, cv2.COLOR_BGR2GRAY)
-        gray = cv2.bilateralFilter(gray, 5, 40, 40)
-        _, th = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
-        if np.mean(th) < 127:
-            th = cv2.bitwise_not(th)
-        return pytesseract.image_to_string(th, lang=lang, config="--psm 6")
-    except Exception:
-        return ""
-
-
-def ocr_with_fallback(crop_bgr):
-    for lang in OCR_LANG_TRY_ORDER:
-        try:
-            txt = ocr_text_from_crop(crop_bgr, lang=lang)
-            if txt.strip():
-                return txt
-        except Exception:
-            continue
-    return ""
-
-
-def detect_tag_boxes(band_bgr):
-    h, w = band_bgr.shape[:2]
-    search_top = int(h * (1.0 - TAG_SEARCH_BAND_RATIO))
-    sub = band_bgr[search_top:h, :]
-    if sub.size == 0:
-        return []
-
-    gray = cv2.cvtColor(sub, cv2.COLOR_BGR2GRAY)
-    _, th = cv2.threshold(gray, 155, 255, cv2.THRESH_BINARY)
-    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (13, 3))
-    th = cv2.morphologyEx(th, cv2.MORPH_CLOSE, kernel, iterations=1)
-
-    cnts, _ = cv2.findContours(th, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-    min_area = w * (h * TAG_SEARCH_BAND_RATIO) * TAG_MIN_AREA_RATIO
-    boxes = []
-    for c in cnts:
-        x, y, bw, bh = cv2.boundingRect(c)
-        area = bw * bh
-        if area < min_area or bw < w * 0.02 or bw > w * 0.22 or bh < sub.shape[0] * 0.3:
-            continue
-        patch = gray[y : y + bh, x : x + bw]
-        if patch.size == 0 or patch.mean() < TAG_MIN_MEAN_BRIGHTNESS or patch.std() > TAG_MAX_STD_BRIGHTNESS:
-            continue
-        boxes.append((x, y + search_top, bw, bh))
-    boxes.sort(key=lambda b: b[0])
-    return boxes
-
-
-def extract_name_strip_above(band_bgr, tag_box):
-    h, w = band_bgr.shape[:2]
-    x, y, bw, bh = tag_box
-    strip_h = max(6, int(h * NAME_STRIP_HEIGHT_RATIO))
-    gap = max(1, int(h * NAME_STRIP_GAP_RATIO))
-    y2 = max(0, y - gap)
-    y1 = max(0, y2 - strip_h)
-    pad = int(bw * 0.15)
-    x1 = max(0, x - pad)
-    x2 = min(w, x + bw + pad)
-    if y2 <= y1 or x2 <= x1:
-        return None, (x1, y1, x2 - x1, y2 - y1)
-    return band_bgr[y1:y2, x1:x2], (x1, y1, x2 - x1, y2 - y1)
-
-
-def analyze_band_labels(band_bgr, sim_threshold=DEFAULT_LABEL_SIM_THRESHOLD):
-    results = []
-    if not OCR_AVAILABLE:
-        return results
-    tag_boxes = detect_tag_boxes(band_bgr)
-    if not tag_boxes:
-        return results
-
-    widths = [b[2] for b in tag_boxes]
-    median_w = float(np.median(widths)) if widths else 0.0
-    gaps = []
-    for i in range(len(tag_boxes) - 1):
-        x1_end = tag_boxes[i][0] + tag_boxes[i][2]
-        x2_start = tag_boxes[i + 1][0]
-        gap_w = x2_start - x1_end
-        if median_w > 0 and gap_w > median_w * 1.4:  # Boşluk toleransı daraltıldı
-            gaps.append((x1_end, tag_boxes[i][1], gap_w, tag_boxes[i][3]))
-
-    for box in tag_boxes:
-        x, y, bw, bh = box
-        tag_crop = band_bgr[y : y + bh, x : x + bw]
-        tag_text = normalize_ocr_text(ocr_with_fallback(tag_crop))
-        name_crop, name_box = extract_name_strip_above(band_bgr, box)
-        name_text = normalize_ocr_text(ocr_with_fallback(name_crop))
-
-        if not tag_text:
-            durum = "ETIKET_EKSIK"
-            sim = 0.0
-        elif not name_text:
-            durum = "SUPHELI"
-            sim = 0.0
-        else:
-            sim = text_similarity(tag_text, name_text)
-            durum = "UYUMLU" if sim >= sim_threshold else "UYUMSUZ"
-
-        results.append({
-            "durum": durum,
-            "tag_box": box,
-            "name_box": name_box,
-            "tag_text": tag_text,
-            "name_text": name_text,
-            "benzerlik": round(sim, 2),
-        })
-
-    for gx, gy, gw, gh in gaps:
-        results.append({
-            "durum": "ETIKET_EKSIK",
-            "tag_box": (gx, gy, gw, gh),
-            "name_box": None,
-            "tag_text": "",
-            "name_text": "",
-            "benzerlik": 0.0,
-        })
-    return results
-
-
-def draw_label_results(result_img, band_results, x_offset, y_offset):
-    for item in band_results:
-        durum = item["durum"]
-        tx, ty, tw, th = item["tag_box"]
-        tag_pt1 = (x_offset + tx, y_offset + ty)
-        tag_pt2 = (x_offset + tx + tw, y_offset + ty + th)
-
-        if durum == "UYUMSUZ":
-            color = (0, 0, 255)
-            label = "ETIKET UYUSMUYOR"
-        elif durum == "ETIKET_EKSIK":
-            color = (0, 140, 255)
-            label = "ETIKET EKSIK"
-        else:
-            continue
-
-        cv2.rectangle(result_img, tag_pt1, tag_pt2, color, 2)
-        cv2.putText(result_img, label, (tag_pt1[0], max(12, tag_pt1[1] - 6)), cv2.FONT_HERSHEY_SIMPLEX, 0.42, color, 1, cv2.LINE_AA)
-
-        name_box = item.get("name_box")
-        if name_box is not None and durum == "UYUMSUZ":
-            nx, ny, nw, nh = name_box
-            name_pt1 = (x_offset + nx, y_offset + ny)
-            name_pt2 = (x_offset + nx + nw, y_offset + ny + nh)
-            cv2.rectangle(result_img, name_pt1, name_pt2, color, 2)
-            arrow_x = x_offset + nx + nw // 2
-            arrow_top = name_pt2[1]
-            arrow_bottom = tag_pt1[1]
-            if arrow_bottom > arrow_top:
-                cv2.arrowedLine(result_img, (arrow_x, arrow_top), (arrow_x, arrow_bottom), color, 2, tipLength=0.35)
-                cv2.arrowedLine(result_img, (arrow_x, arrow_bottom), (arrow_x, arrow_top), color, 2, tipLength=0.35)
-
-
-def split_bands(roi_top_px, roi_bottom_px, boundaries_ratio):
-    total = roi_bottom_px - roi_top_px
-    cuts = [roi_top_px]
-    for r in boundaries_ratio:
-        cuts.append(roi_top_px + int(total * r))
-    cuts.append(roi_bottom_px)
-
-    bands = []
-    for i in range(len(cuts) - 1):
-        top = max(roi_top_px, min(roi_bottom_px, cuts[i]))
-        bottom = max(roi_top_px, min(roi_bottom_px, cuts[i + 1]))
-        if bottom > top:
-            bands.append((top, bottom))
-    return bands
-
-
-def analyze_all_bands_labels(field_aligned_img, bands, side_margin_ratio=0.01, sim_threshold=DEFAULT_LABEL_SIM_THRESHOLD):
-    h, w = field_aligned_img.shape[:2]
-    margin_x = int(w * side_margin_ratio)
-    all_results = []
-    for band_top, band_bottom in bands:
-        band_crop = field_aligned_img[band_top:band_bottom, margin_x : w - margin_x]
-        band_results = analyze_band_labels(band_crop, sim_threshold=sim_threshold)
-        for item in band_results:
-            item["band_top"] = band_top
-            item["band_bottom"] = band_bottom
-        all_results.append({"band_top": band_top, "band_bottom": band_bottom, "items": band_results, "x_offset": margin_x})
-    return all_results
-
-
-def build_report(dealer, results, summary, label_bands=None):
+def build_report(dealer, results, summary):
     from datetime import datetime
     lines = [
         "=== ÖZÇELİK STAND KONTROL RAPORU (İLK 6 RAF) ===",
@@ -684,25 +453,10 @@ def build_report(dealer, results, summary, label_bands=None):
         "Tarih: " + datetime.now().strftime("%d.%m.%Y %H:%M:%S"),
         "",
         "Eksik Sigara Paketi Sayısı (İlk 6 Raf): " + str(summary.get('paket_eksigi', 0)),
-        "Toplam Tespit Edilen Etiket/Fark: " + str(summary['fark']),
+        "Toplam Tespit Edilen Fark: " + str(summary['fark']),
+        "",
+        "--- FARK BÖLGELERİ ---"
     ]
-    if label_bands:
-        toplam_uyumsuz = summary.get("etiket_uyumsuz", 0)
-        toplam_eksik = summary.get("etiket_eksik", 0)
-        lines += [
-            "",
-            "--- ETİKET / ÜRÜN ADI KONTROLÜ (OCR) ---",
-            f"Etiket-Ürün Adı Uyuşmayan Sayısı: {toplam_uyumsuz}",
-            f"Eksik Etiket Sayısı: {toplam_eksik}",
-        ]
-        for band_idx, band in enumerate(label_bands, start=1):
-            for item in band["items"]:
-                if item["durum"] == "UYUMSUZ":
-                    lines.append(f"Raf {band_idx} | UYUMSUZ | Etiket: '{item['tag_text']}' <> Paket: '{item['name_text']}'")
-                elif item["durum"] == "ETIKET_EKSIK":
-                    lines.append(f"Raf {band_idx} | ETİKET EKSİK | Konum X={item['tag_box'][0]}")
-
-    lines += ["", "--- FARK BÖLGELERİ ---"]
     for item in results:
         lines.append(f"Fark #{item.get('id')} | Konum: X={item.get('x')}, Y={item.get('y')} | Boyut: {item.get('w')}x{item.get('h')}")
     return "\n".join(lines)
@@ -875,20 +629,6 @@ if ref_img is not None and field_img is not None:
 
 roi_top_ratio = float(auto_top_pct) / 100.0
 roi_bottom_ratio = 0.85
-label_check_enabled = True
-label_sim_threshold = DEFAULT_LABEL_SIM_THRESHOLD
-
-band_widget_key = "band_boundaries_" + (dealer_path if dealer_path else "manuel")
-default_span = (85 - auto_top_pct)
-default_upper_bounds = [int(auto_top_pct + default_span * (i / 6.0)) for i in range(1, 6)]
-band_bounds_pct = default_upper_bounds
-raf5_alt_pct = 85
-
-all_pct_cuts = band_bounds_pct + [raf5_alt_pct]
-band_boundaries_ratio = []
-for pct in all_pct_cuts:
-    rel = (pct - auto_top_pct) / max(1, (85 - auto_top_pct))
-    band_boundaries_ratio.append(max(0.0, min(1.0, rel)))
 
 ready = ref_img is not None and field_img is not None and roi_bottom_ratio > roi_top_ratio
 
@@ -898,46 +638,24 @@ if st.button("🚀 KONTROLE BAŞLA", type="primary", use_container_width=True, d
     st.session_state.summary = None
     st.session_state.report = ""
 
-    with st.spinner("İlk 6 raf hassas filtreleme ile analiz ediliyor..."):
+    with st.spinner("İlk 6 raf analiz ediliyor..."):
         try:
             result_img, results, summary, aligned_field = analyze_planogram_grid_free(
                 ref_img, field_img, roi_top_ratio=roi_top_ratio, roi_bottom_ratio=roi_bottom_ratio
             )
 
-            h_aligned = aligned_field.shape[0]
-            roi_top_px = int(h_aligned * roi_top_ratio)
-            roi_bottom_px = int(h_aligned * roi_bottom_ratio)
-            
-            bands = split_bands(roi_top_px, roi_bottom_px, band_boundaries_ratio)
-
-            label_bands = []
-            etiket_uyumsuz = 0
-            etiket_eksik = 0
-            if label_check_enabled and OCR_AVAILABLE:
-                label_bands = analyze_all_bands_labels(aligned_field, bands, sim_threshold=label_sim_threshold)
-                for band in label_bands:
-                    draw_label_results(result_img, band["items"], band["x_offset"], band["band_top"])
-                    for item in band["items"]:
-                        if item["durum"] == "UYUMSUZ":
-                            etiket_uyumsuz += 1
-                        elif item["durum"] == "ETIKET_EKSIK":
-                            etiket_eksik += 1
-
-            summary["etiket_uyumsuz"] = etiket_uyumsuz
-            summary["etiket_eksik"] = etiket_eksik
             st.session_state.result_img = result_img
             st.session_state.results = results
             st.session_state.summary = summary
-            st.session_state.report = build_report(dealer_name or "Manuel", results, summary, label_bands=label_bands)
+            st.session_state.report = build_report(dealer_name or "Manuel", results, summary)
         except Exception as exc:
             st.error("Analiz sırasında hata oluştu: " + str(exc))
 
 if st.session_state.result_img is not None and st.session_state.summary:
     summary = st.session_state.summary
-    m1, m2, m3 = st.columns(3)
+    m1, m2 = st.columns(2)
     m1.metric("Eksik Paket / Fark", summary.get("paket_eksigi", 0))
-    m2.metric("Etiket-Ürün Uyuşmazlığı", summary.get("etiket_uyumsuz", 0))
-    m3.metric("Eksik Etiket", summary.get("etiket_eksik", 0))
+    m2.metric("Toplam Tespit", summary.get("fark", 0))
 
     st.image(st.session_state.result_img, channels="BGR", use_container_width=True)
 

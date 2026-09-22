@@ -225,7 +225,7 @@ def get_reference_image(public_key, dealer_path):
         if item.get("type") != "file":
             continue
         name = normalize_text(item.get("name", ""))
-.       if name.endswith((".JPG", ".JPEG", ".PNG", ".WEBP")):
+        if name.endswith((".JPG", ".JPEG", ".PNG", ".WEBP")):
             image_items.append(item)
     image_items.sort(
         key=lambda x: (
@@ -305,10 +305,8 @@ def analyze_planogram_grid_free(reference, field, roi_top_ratio=0.05, roi_bottom
     top_y = int(h * roi_top_ratio)
     bottom_y = int(h * roi_bottom_ratio)
     
-    # Tüm stand boyu (örneğin 9 raf veya toplam yükseklik) üzerinden raf aralığını hesapla
-    # İlk 6 raf üst kısımda kalır, 6. raftan sonrası alt kısımda kalır.
-    total_estimated_shelves = 9  # Standın tamamındaki yaklaşık raf sayısı
-    shelf_height = (bottom_y - top_y) // 6  # İlk 6 rafın toplam yüksekliğe oranı
+    total_estimated_shelves = 9  
+    shelf_height = (bottom_y - top_y) // 6  
 
     results = []
     fark_sayisi = 0
@@ -322,7 +320,6 @@ def analyze_planogram_grid_free(reference, field, roi_top_ratio=0.05, roi_bottom
         if s_top >= h:
             break
 
-        # KONTROL EDİLECEK ALAN: Sadece ilk 6 raf (0, 1, 2, 3, 4, 5 indeksleri)
         if i < 6:
             ref_roi = ref_gray[s_top:s_bottom, :]
             tar_roi = tar_gray[s_top:s_bottom, :]
@@ -354,8 +351,7 @@ def analyze_planogram_grid_free(reference, field, roi_top_ratio=0.05, roi_bottom
                 farkli_meyve_sayisi += 1
                 etiket_turu = f"FARKLI MEYVE #{farkli_meyve_sayisi}"
                 
-                # İstendiği üzere BEYAZ renk ve KALIN (kalınlık: 4) çerçeve
-                box_color = (255, 255, 255) # BEYAZ (BGR)
+                box_color = (255, 255, 255) 
                 box_thickness = 4
 
                 cv2.rectangle(result_img, (x, abs_y), (x + bw, abs_y + bh), box_color, box_thickness)
@@ -373,12 +369,9 @@ def analyze_planogram_grid_free(reference, field, roi_top_ratio=0.05, roi_bottom
                 results.append({"id": fark_sayisi, "durum": etiket_turu, "x": x, "y": abs_y, "w": bw, "h": bh, "alan": area})
 
         else:
-            # 6. RAFIN SONRASI (7., 8., 9. raflar vb.) -> Üzerine X (Çarpı işareti) koy
-            # Bu raflardaki ürün gruplarını veya raf şeritlerini tarayarak üzerlerine çarpı atalım
             tar_roi = tar_gray[s_top:s_bottom, :]
             tar_roi_blur = cv2.GaussianBlur(tar_roi, (5, 5), 0)
             
-            # Alt raflardaki ürün/paket bloklarını bulmak için eşikleme
             _, thresh = cv2.threshold(tar_roi_blur, 100, 255, cv2.THRESH_BINARY_INV)
             kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (10, 10))
             thresh = cv2.morphologyEx(thresh, cv2.MORPH_CLOSE, kernel, iterations=2)
@@ -395,7 +388,6 @@ def analyze_planogram_grid_free(reference, field, roi_top_ratio=0.05, roi_bottom
                     continue
 
                 asiri_raf_ihlali += 1
-                # Kırmızı renkte kalın X işareti çizimi
                 cv2.line(result_img, (x, abs_y), (x + bw, abs_y + bh), (0, 0, 255), 3)
                 cv2.line(result_img, (x, abs_y + bh), (x + bw, abs_y), (0, 0, 255), 3)
                 

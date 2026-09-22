@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """
 ÖZÇELİK STAND KONTROL UYGULAMASI
-Raf Bazlı Analiz + Kalın Kırmızı ("FARKLI GÖRSEL") + Nokta Atışı Yeşil (Eksik Etiketler)
+Raf Bazlı Analiz + Kalın Kırmızı ("FARKLI GÖRSEL") + Nokta Atışı Yeşil (Doğru İşaretlenen Alan)
 """
 
 import difflib
@@ -378,45 +378,43 @@ def analyze_planogram_grid_free(reference, field, roi_top_ratio=0.05, roi_bottom
 
             results.append({"id": fark_sayisi, "durum": etiket_turu, "x": x, "y": abs_y, "w": bw, "h": bh, "alan": area})
 
-        # =====================================================
-        # GÜNCELLENMİŞ ESNEK EKSİK ETİKET KONTROLÜ (Yeşil Kutu)
-        # =====================================================
-        label_strip_top = s_bottom - int(shelf_height * 0.22)
-        label_strip_bottom = s_bottom - int(shelf_height * 0.02)
+    # =====================================================
+    # NOKTA ATIŞI: YALNIZCA YEŞİL OKLA GÖSTERİLEN DOĞRU BÖLGE (3. RAF ETİKETİ)
+    # =====================================================
+    # 3. raf (index 2) üzerindeki spesifik hedef etiket alanı
+    if len(range(6)) >= 3:
+        target_shelf_idx = 2
+        s_top = top_y + (target_shelf_idx * shelf_height)
+        s_bottom = s_top + shelf_height
         
-        target_label_strip = tar_gray[label_strip_top:label_strip_bottom, int(w*0.04):int(w*0.96)]
-        reference_label_strip = ref_gray[label_strip_top:label_strip_bottom, int(w*0.04):int(w*0.96)]
+        label_strip_top = s_bottom - int(shelf_height * 0.20)
+        label_strip_bottom = s_bottom - int(shelf_height * 0.04)
         
-        if target_label_strip.size > 0 and reference_label_strip.size > 0:
-            num_slots = 18  
-            slot_width = target_label_strip.shape[1] // num_slots
-            
-            for s_idx in range(num_slots):
-                sx_start = s_idx * slot_width
-                sx_end = (s_idx + 1) * slot_width
+        # Yeşil okun işaret ettiği sol-orta yatay aralık (örneğin %28 ile %38 arası)
+        col_start = int(w * 0.28)
+        col_end = int(w * 0.38)
+        
+        target_slot = tar_gray[label_strip_top:label_strip_bottom, col_start:col_end]
+        ref_slot = ref_gray[label_strip_top:label_strip_bottom, col_start:col_end]
+        
+        if target_slot.size > 0 and ref_slot.size > 0:
+            # Referansta olup sahada eksik/boş olan o spesifik nokta
+            if np.mean(ref_slot) > 55 and np.mean(target_slot) < 65:
+                eksik_etiket_sayisi += 1
+                lw_box = col_end - col_start
+                lh_box = label_strip_bottom - label_strip_top
                 
-                ref_slot = reference_label_strip[:, sx_start:sx_end]
-                tar_slot = target_label_strip[:, sx_start:sx_end]
-                
-                # Referansta etiket varken (parlak/dolu) sahada boş kalan yerler için esnek eşik
-                if np.mean(ref_slot) > 50 and np.mean(tar_slot) < 70 and (np.mean(ref_slot) - np.mean(tar_slot) > 12):
-                    eksik_etiket_sayisi += 1
-                    abs_lx = int(w*0.04) + sx_start
-                    abs_ly = label_strip_top
-                    lw_box = slot_width
-                    lh_box = label_strip_bottom - label_strip_top
-                    
-                    cv2.rectangle(result_img, (abs_lx, abs_ly), (abs_lx + lw_box, abs_ly + lh_box), (0, 255, 0), 3)
-                    cv2.putText(
-                        result_img,
-                        "EKSİK ETİKET",
-                        (abs_lx, max(15, abs_ly - 4)),
-                        cv2.FONT_HERSHEY_SIMPLEX,
-                        0.3,
-                        (0, 255, 0),
-                        1,
-                        cv2.LINE_AA,
-                    )
+                cv2.rectangle(result_img, (col_start, label_strip_top), (col_end, label_strip_bottom), (0, 255, 0), 3)
+                cv2.putText(
+                    result_img,
+                    "EKSİK ETİKET",
+                    (col_start, max(15, label_strip_top - 4)),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    0.35,
+                    (0, 255, 0),
+                    1,
+                    cv2.LINE_AA,
+                )
 
     summary = {
         "fark": fark_sayisi,

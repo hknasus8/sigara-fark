@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """
 ÖZÇELİK STAND KONTROL UYGULAMASI
-Raf Bazlı Analiz + Kalın Kırmızı ("FARKLI GÖRSEL") + Nokta Atışı Yeşil (Doğru İşaretlenen Alan)
+Raf Bazlı Analiz + Kalın Kırmızı ("FARKLI GÖRSEL") + Dinamik Etiket Tespiti (Yeşil)
 """
 
 import difflib
@@ -282,7 +282,6 @@ def align_images_feature(reference, target):
 
 
 def _count_wide_segments(binary_row, min_w=15, max_w=90):
-    """Bir satırda genişliği min_w..max_w arasında olan ayrı 'parlak' bölüm sayısı."""
     cnt = 0
     run = 0
     for v in binary_row:
@@ -298,13 +297,6 @@ def _count_wide_segments(binary_row, min_w=15, max_w=90):
 
 
 def find_label_bands(gray, top_y, bottom_y):
-    """
-    Etiket şeritlerini (fiyat/isim etiketi sıraları) SABİT bir yükseklik
-    varsaymadan, İÇERİĞE bakarak bulur: bir etiket şeridi, yan yana çok
-    sayıda orta genişlikte parlak dikdörtgenden (etiketlerden) oluşan,
-    nispeten KISA (15-42px) bir bant olarak görünür. Ürün fotoğrafı
-    bantları ise çok daha yüksektir (>45px) ve bu şekilde elenir.
-    """
     roi = gray[top_y:bottom_y, :]
     if roi.size == 0:
         return []
@@ -339,7 +331,6 @@ def find_label_bands(gray, top_y, bottom_y):
 
 
 def segment_label_cells(gray, band_top, band_bot):
-    """Bir etiket şeridi bandı içindeki ayrı etiket hücrelerini (x,y,w,h) döndürür."""
     band = gray[band_top:band_bot, :]
     if band.size == 0:
         return []
@@ -380,13 +371,6 @@ def segment_label_cells(gray, band_top, band_bot):
 
 
 def detect_empty_labels(ref_gray, tar_gray, result_img, top_y, bottom_y, w):
-    """
-    Referans görüntüdeki gerçek etiket şeritlerini (band + hücre bazında)
-    otomatik bulur; her hücreyi sahadaki (hizalanmış) karşılığıyla
-    karşılaştırır. Referansta yazı/metin var (yüksek piksel varyansı) ama
-    sahada aynı hücre parlak/beyaz kalıp İÇİ BOŞ (düşük varyans) ise,
-    o hücreyi kalın YEŞİL çerçeve ile "EKSİK ETİKET" olarak işaretler.
-    """
     label_bands = find_label_bands(ref_gray, top_y, bottom_y)
 
     eksik_etiket_sayisi = 0
@@ -404,9 +388,6 @@ def detect_empty_labels(ref_gray, tar_gray, result_img, top_y, bottom_y, w):
             tar_std = float(np.std(tar_cell))
             tar_mean = float(np.mean(tar_cell))
 
-            # Referans hücrede belirgin metin/desen var (yüksek varyans),
-            # sahadaki aynı hücre hâlâ parlak (etiket kağıdı yerinde duruyor)
-            # ama üzerinde neredeyse hiç yazı yok (varyans referansın çok altında).
             if ref_std > 20 and tar_mean > 140 and tar_std < 35 and tar_std < ref_std * 0.72:
                 eksik_etiket_sayisi += 1
 
@@ -450,7 +431,6 @@ def analyze_planogram_grid_free(reference, field, roi_top_ratio=0.05, roi_bottom
     fark_sayisi = 0
     paket_eksigi_sayisi = 0
     farkli_gorsel_sayisi = 0
-    eksik_etiket_sayisi = 0
 
     for i in range(6):
         s_top = top_y + (i * shelf_height)
@@ -525,11 +505,6 @@ def analyze_planogram_grid_free(reference, field, roi_top_ratio=0.05, roi_bottom
 
             results.append({"id": fark_sayisi, "durum": etiket_turu, "x": x, "y": abs_y, "w": bw, "h": bh, "alan": area})
 
-    # =====================================================
-    # GENEL TARAMA: TÜM ROI İÇİNDEKİ GERÇEK ETİKET ŞERİTLERİNİ BUL VE KONTROL ET
-    # (Raf yükseklikleri eşit olmadığından sabit bant varsayımı yerine
-    #  etiketler içeriklerine göre otomatik tespit edilir)
-    # =====================================================
     eksik_etiket_sayisi, eksik_etiket_results = detect_empty_labels(
         ref_gray, tar_gray, result_img, top_y, bottom_y, w
     )
@@ -658,7 +633,7 @@ with refresh_col:
         clear_yandex_cache()
         st.rerun()
 
-st.subheader("1. Şehir ve Bayi Seçiniz")
+st.subheader("1. Şehir dan Bayi Seçiniz")
 cities, city_error = get_cities(YANDEX_ROOT_PUBLIC_KEY)
 if city_error:
     st.warning("Yandex şehir listesi alınamadı: " + str(city_error))
@@ -736,7 +711,7 @@ if st.button("🚀 KONTROLE BAŞLA", type="primary", use_container_width=True, d
     st.session_state.summary = None
     st.session_state.report = ""
 
-    with st.spinner("İlk 6 raf analiz ediliyor (Ürün altı etiketler ve görseller taranıyor)..."):
+    with st.spinner("İlk 6 raf analiz ediliyor (Dinamik etiketler ve görseller taranıyor)..."):
         try:
             result_img, results, summary, aligned_field = analyze_planogram_grid_free(
                 ref_img, field_img

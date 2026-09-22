@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """
 ÖZÇELİK STAND KONTROL UYGULAMASI
-İlk 6 Raf Modülü (Etiket Kontrolü Hariç - Sadece Paket/Fark Analizi)
+Raf Bazlı (Satır Satır) Hassas Hizalama ve Paket Fark Analizi
 """
 
 import difflib
@@ -98,39 +98,6 @@ def resize_keep_ratio(img, max_width=1200, max_height=1800):
 
 def prepare_image(img):
     return resize_keep_ratio(img, max_width=1200, max_height=1800)
-
-
-def detect_shelf_top(img, search_ratio=0.45, extra_margin=0.035):
-    try:
-        h, w = img.shape[:2]
-        search_h = max(10, int(h * search_ratio))
-        gray = cv2.cvtColor(img[:search_h, :], cv2.COLOR_BGR2GRAY).astype(np.float32)
-        row_mean = gray.mean(axis=1)
-        row_std = gray.std(axis=1)
-
-        k = max(3, search_h // 60)
-        kernel = np.ones(k, dtype=np.float32) / k
-        row_mean_s = np.convolve(row_mean, kernel, mode="same")
-        row_std_s = np.convolve(row_std, kernel, mode="same")
-
-        bright_uniform = (row_mean_s > 150) & (row_std_s < 25)
-        idx = np.where(bright_uniform)[0]
-        if len(idx) == 0:
-            return 0.0
-
-        start = int(idx[0])
-        end = start
-        for i in idx:
-            if i - end <= 3:
-                end = i
-            else:
-                break
-
-        shelf_start = min(search_h - 1, end + int(h * extra_margin))
-        ratio = safe_float(shelf_start / h, 0.0)
-        return max(0.0, min(0.4, ratio))
-    except Exception:
-        return 0.0
 
 
 def safe_download_image(url, timeout=25):
@@ -267,27 +234,29 @@ def get_reference_image(public_key, dealer_path):
 
 
 # =========================================================
-# HİZALAMA
+# HASSAS RAF BAZLI HİZALAMA VE ANALİZ
 # =========================================================
 def gray_normalize(img):
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-    clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+    clahe = cv2.createCLAHE(clipLimit=2.5, tileGridSize=(8, 8))
     return clahe.apply(gray)
 
 
-def orb_align(reference, target):
+def align_images_feature(reference, target):
+    """Global ORB+RANSAC tabanlı ilk hizalama"""
     h, w = reference.shape[:2]
     if target.shape[:2] != (w, h):
         target = cv2.resize(target, (w, h), interpolation=cv2.INTER_AREA)
+    
     ref_gray = gray_normalize(reference)
     tar_gray = gray_normalize(target)
 
-    orb = cv2.ORB_create(nfeatures=7000, scaleFactor=1.2, nlevels=8, edgeThreshold=15, fastThreshold=8)
+    orb = cv2.ORB_create(nfeatures=10000, scaleFactor=1.15, nlevels=8, edgeThreshold=10, fastThreshold=7)
     kp1, des1 = orb.detectAndCompute(ref_gray, None)
     kp2, des2 = orb.detectAndCompute(tar_gray, None)
 
-    if des1 is None or des2 is None or len(kp1) < 15 or len(kp2) < 15:
-        return target, False, 0
+    if des1 is None or des2 is None or len(kp1) < 10 or len(kp2) < 10:
+        return target, False
 
     matcher = cv2.BFMatcher(cv2.NORM_HAMMING)
     pairs = matcher.knnMatch(des2, des1, k=2)
@@ -296,141 +265,103 @@ def orb_align(reference, target):
         if len(pair) != 2:
             continue
         m, n = pair
-        if m.distance < 0.76 * n.distance:
+        if m.distance < 0.80 * n.distance:
             good.append(m)
 
-    if len(good) < 15:
-        return target, False, len(good)
+    if len(good) < 10:
+        return target, False
 
     src = np.float32([kp2[m.queryIdx].pt for m in good]).reshape(-1, 1, 2)
     dst = np.float32([kp1[m.trainIdx].pt for m in good]).reshape(-1, 1, 2)
 
-    matrix, mask = cv2.findHomography(src, dst, cv2.RANSAC, 5.0)
-    if matrix is None or mask is None:
-        return target, False, 0
-
-    inliers = int(mask.sum())
-    ratio = inliers / max(1, len(good))
-    if inliers < 12 or ratio < 0.22:
-        return target, False, inliers
-
-    aligned = cv2.warpPerspective(target, matrix, (w, h), flags=cv2.INTER_LINEAR, borderMode=cv2.BORDER_REPLICATE)
-    return aligned, True, inliers
-
-
-def ecc_align(reference, target):
-    h, w = reference.shape[:2]
-    if target.shape[:2] != (w, h):
-        target = cv2.resize(target, (w, h), interpolation=cv2.INTER_AREA)
-    ref_gray = cv2.cvtColor(reference, cv2.COLOR_BGR2GRAY).astype(np.float32) / 255.0
-    tar_gray = cv2.cvtColor(target, cv2.COLOR_BGR2GRAY).astype(np.float32) / 255.0
-    warp = np.eye(2, 3, dtype=np.float32)
-    criteria = (cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT, 80, 1e-5)
-    try:
-        cv2.findTransformECC(ref_gray, tar_gray, warp, cv2.MOTION_AFFINE, criteria, None, 3)
-        aligned = cv2.warpAffine(target, warp, (w, h), flags=(cv2.INTER_LINEAR + cv2.WARP_INVERSE_MAP), borderMode=cv2.BORDER_REPLICATE)
-        return aligned, True
-    except Exception:
+    matrix, mask = cv2.findHomography(src, dst, cv2.RANSAC, 4.0)
+    if matrix is None:
         return target, False
 
-
-def align_images(reference, target):
-    aligned, ok, inliers = orb_align(reference, target)
-    if ok:
-        return aligned, True, inliers, "ORB/RANSAC"
-    aligned, ok = ecc_align(reference, target)
-    if ok:
-        return aligned, True, 0, "ECC"
-    return target, False, 0, "Ölçek eşitleme"
+    aligned = cv2.warpPerspective(target, matrix, (w, h), flags=cv2.INTER_LINEAR, borderMode=cv2.BORDER_REPLICATE)
+    return aligned, True
 
 
-# =========================================================
-# KONTUR ANALİZİ (Yalnızca Paket / Ürün Eksikleri)
-# =========================================================
-def analyze_planogram_grid_free(
-    reference,
-    field,
-    roi_top_ratio=0.0,
-    roi_bottom_ratio=0.85,
-    edge_margin_ratio=0.025,
-):
+def analyze_planogram_grid_free(reference, field, roi_top_ratio=0.05, roi_bottom_ratio=0.82):
     h, w = reference.shape[:2]
-
     field = cv2.resize(field, (w, h), interpolation=cv2.INTER_AREA)
-    aligned, aligned_ok, inliers, method = align_images(reference, field)
 
-    roi_top = max(0, min(h - 1, int(h * roi_top_ratio)))
-    roi_bottom = max(roi_top + 1, min(h, int(h * roi_bottom_ratio)))
+    # 1. Adım: Genel Akıllı Hizalama
+    aligned, aligned_ok = align_images_feature(reference, field)
 
-    margin_x = int(w * edge_margin_ratio)
-    margin_y = int(h * edge_margin_ratio)
-
+    result_img = aligned.copy()
     ref_gray = cv2.cvtColor(reference, cv2.COLOR_BGR2GRAY)
     tar_gray = cv2.cvtColor(aligned, cv2.COLOR_BGR2GRAY)
 
-    clahe = cv2.createCLAHE(clipLimit=1.5, tileGridSize=(8, 8))
+    clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
     ref_gray = clahe.apply(ref_gray)
     tar_gray = clahe.apply(tar_gray)
 
-    ref_gray = cv2.GaussianBlur(ref_gray, (7, 7), 0)
-    tar_gray = cv2.GaussianBlur(tar_gray, (7, 7), 0)
-
-    diff = cv2.absdiff(ref_gray, tar_gray)
-    
-    # Eşik değeri optimize edildi
-    _, thresh = cv2.threshold(diff, 65, 255, cv2.THRESH_BINARY)
-
-    thresh[roi_bottom:, :] = 0
-    thresh[:roi_top, :] = 0
-    if margin_x > 0:
-        thresh[:, :margin_x] = 0
-        thresh[:, w - margin_x:] = 0
-    if margin_y > 0:
-        thresh[:margin_y, :] = 0
-
-    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (11, 11))
-    thresh = cv2.morphologyEx(thresh, cv2.MORPH_CLOSE, kernel, iterations=2)
-    thresh = cv2.morphologyEx(thresh, cv2.MORPH_OPEN, kernel, iterations=2)
-
-    contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-
-    result_img = aligned.copy()
+    # 2. Adım: İlk 6 Rafın dikey aralıklarını belirleme (Eşit 6 bölmeye ayırma mantığı)
+    top_y = int(h * roi_top_ratio)
+    bottom_y = int(h * roi_bottom_ratio)
+    shelf_height = (bottom_y - top_y) // 6
 
     results = []
     fark_sayisi = 0
     paket_eksigi_sayisi = 0
 
-    for cnt in contours:
-        area = cv2.contourArea(cnt)
-        # Çok küçük gürültüleri elemek için alan filtresi sıkı tutuldu
-        if area < (w * h * 0.002) or area > (w * h * 0.15):
-            continue
+    # Her rafı bağımsız dilimler halinde incele (Perspektif kaymalarını yok eder)
+    for i in range(6):
+        s_top = top_y + (i * shelf_height)
+        s_bottom = s_top + shelf_height if i < 5 else bottom_y
 
-        x, y, bw, bh = cv2.boundingRect(cnt)
-        if y > roi_bottom or y < roi_top:
-            continue
+        ref_roi = ref_gray[s_top:s_bottom, :]
+        tar_roi = tar_gray[s_top:s_bottom, :]
 
-        fark_sayisi += 1
-        aspect_ratio = float(bw) / max(1, bh)
-        if 0.3 < aspect_ratio < 1.8 and area < (w * h * 0.025):
-            paket_eksigi_sayisi += 1
-            etiket_turu = f"PAKET #{paket_eksigi_sayisi}"
-        else:
-            etiket_turu = f"FARK #{fark_sayisi}"
+        # Gürültü azaltma
+        ref_roi = cv2.GaussianBlur(ref_roi, (5, 5), 0)
+        tar_roi = cv2.GaussianBlur(tar_roi, (5, 5), 0)
 
-        cv2.rectangle(result_img, (x, y), (x + bw, y + bh), (0, 0, 255), 2)
-        cv2.putText(
-            result_img,
-            etiket_turu,
-            (x, max(15, y - 6)),
-            cv2.FONT_HERSHEY_SIMPLEX,
-            0.4,
-            (0, 0, 255),
-            1,
-            cv2.LINE_AA,
-        )
+        diff = cv2.absdiff(ref_roi, tar_roi)
+        _, thresh = cv2.threshold(diff, 50, 255, cv2.THRESH_BINARY)
 
-        results.append({"id": fark_sayisi, "durum": "FARK", "x": x, "y": y, "w": bw, "h": bh, "alan": area})
+        kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (7, 7))
+        thresh = cv2.morphologyEx(thresh, cv2.MORPH_CLOSE, kernel, iterations=2)
+        thresh = cv2.morphologyEx(thresh, cv2.MORPH_OPEN, kernel, iterations=1)
+
+        contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+
+        for cnt in contours:
+            area = cv2.contourArea(cnt)
+            # Paket boyutlarına uygun filtreleme (Çok küçük gürültüleri ve devasa alanı ele)
+            if area < (w * h * 0.0012) or area > (w * h * 0.08):
+                continue
+
+            x, y, bw, bh = cv2.boundingRect(cnt)
+            abs_y = s_top + y
+
+            # Kenar taşmalarını engelle
+            if x < 10 or (x + bw) > (w - 10):
+                continue
+
+            fark_sayisi += 1
+            aspect_ratio = float(bw) / max(1, bh)
+            
+            if 0.2 < aspect_ratio < 2.0:
+                paket_eksigi_sayisi += 1
+                etiket_turu = f"EKSİK #{paket_eksigi_sayisi}"
+            else:
+                etiket_turu = f"FARK #{fark_sayisi}"
+
+            cv2.rectangle(result_img, (x, abs_y), (x + bw, abs_y + bh), (0, 0, 255), 2)
+            cv2.putText(
+                result_img,
+                etiket_turu,
+                (x, max(15, abs_y - 5)),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.35,
+                (0, 0, 255),
+                1,
+                cv2.LINE_AA,
+            )
+
+            results.append({"id": fark_sayisi, "durum": "FARK", "x": x, "y": abs_y, "w": bw, "h": bh, "alan": area})
 
     summary = {
         "fark": fark_sayisi,
@@ -438,8 +369,8 @@ def analyze_planogram_grid_free(
         "supheli": 0,
         "uyumlu": 0,
         "hizalama_ok": aligned_ok,
-        "hizalama": method,
-        "inliers": inliers,
+        "hizalama": "Raf Bazlı Hibrit",
+        "inliers": 0,
     }
 
     return result_img, results, summary, aligned
@@ -620,17 +551,7 @@ with u2:
 
 st.divider()
 
-auto_top_pct = 0
-if ref_img is not None and field_img is not None:
-    try:
-        auto_top_pct = int(round(max(detect_shelf_top(ref_img), detect_shelf_top(field_img)) * 100))
-    except Exception:
-        auto_top_pct = 0
-
-roi_top_ratio = float(auto_top_pct) / 100.0
-roi_bottom_ratio = 0.85
-
-ready = ref_img is not None and field_img is not None and roi_bottom_ratio > roi_top_ratio
+ready = ref_img is not None and field_img is not None
 
 if st.button("🚀 KONTROLE BAŞLA", type="primary", use_container_width=True, disabled=not ready):
     st.session_state.result_img = None
@@ -638,10 +559,10 @@ if st.button("🚀 KONTROLE BAŞLA", type="primary", use_container_width=True, d
     st.session_state.summary = None
     st.session_state.report = ""
 
-    with st.spinner("İlk 6 raf analiz ediliyor..."):
+    with st.spinner("İlk 6 raf raf bazlı hassas analizle inceleniyor..."):
         try:
             result_img, results, summary, aligned_field = analyze_planogram_grid_free(
-                ref_img, field_img, roi_top_ratio=roi_top_ratio, roi_bottom_ratio=roi_bottom_ratio
+                ref_img, field_img
             )
 
             st.session_state.result_img = result_img

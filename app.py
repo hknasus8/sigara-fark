@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-ÖZÇELİK STAND KONTROL UYGULAMASI (Yeşil Etiket Kontrollü ve Otomatik Önbellek)
+ÖZÇELİK STAND KONTROL UYGULAMASI (Kesin Etiket Kontrollü Sürüm)
 """
 
 import difflib
@@ -342,18 +342,18 @@ def analyze_planogram_grid_free(reference, field, roi_top_ratio=0.05, roi_bottom
             if x < 10 or (x + bw) > (w - 10):
                 continue
 
-            fark_sayisi += 1
+            fark_sayisi +=1
             aspect_ratio = float(bw) / max(1, bh)
             
-            # Etiket alanı kontrolü (Rafın alt kısımlarındaki yatay ve küçük dikdörtgen alanlar)
-            # Eğer yükseklik düşükse ve raf alt bandına denk geliyorsa etiket eksikliği olarak değerlendir
-            is_near_label_zone = (abs_y > (s_bottom - int(shelf_height * 0.35)))
-            
-            if is_near_label_zone and bh < (shelf_height * 0.25):
+            # Etiket bölgesi kontrolü: Her rafın alt şerit bölgesindeki (yaklaşık son %30'luk kısım) küçük, yatay değişimler
+            label_band_start = s_bottom - int(shelf_height * 0.38)
+            is_in_label_band = (abs_y >= label_band_start)
+
+            if is_in_label_band and bh < (shelf_height * 0.25):
                 eksik_etiket_sayisi += 1
                 etiket_turu = f"EKSİK ETİKET #{eksik_etiket_sayisi}"
                 box_color = (0, 255, 0)  # Yeşil çerçeve
-                box_thickness = 2
+                box_thickness = 3
             elif 0.2 < aspect_ratio < 2.0:
                 farkli_gorsel_sayisi += 1
                 etiket_turu = f"FARKLI GÖRSEL #{farkli_gorsel_sayisi}"

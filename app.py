@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-ÖZÇELİK STAND KONTROL UYGULAMASI (Kesin Etiket Kontrollü Sürüm)
+ÖZÇELİK STAND KONTROL UYGULAMASI (Kesin Etiket Kontrollü Güncel Sürüm)
 """
 
 import difflib
@@ -316,8 +316,48 @@ def analyze_planogram_grid_free(reference, field, roi_top_ratio=0.05, roi_bottom
         s_top = top_y + (i * shelf_height)
         s_bottom = s_top + shelf_height if i < 5 else bottom_y
 
-        ref_roi = ref_gray[s_top:s_bottom, :]
-        tar_roi = tar_gray[s_top:s_bottom, :]
+        # 1. ETİKET BANDI KONTROLÜ (Özel olarak rafın alt şerit alanı taranır)
+        label_band_height = int(shelf_height * 0.22)
+        label_band_top = s_bottom - label_band_height
+        
+        ref_label_roi = ref_gray[label_band_top:s_bottom, :]
+        tar_label_roi = tar_gray[label_band_top:s_bottom, :]
+        
+        label_diff = cv2.absdiff(ref_label_roi, tar_label_roi)
+        _, label_thresh = cv2.threshold(label_diff, 45, 255, cv2.THRESH_BINARY)
+        l_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (5, 3))
+        label_thresh = cv2.morphologyEx(label_thresh, cv2.MORPH_CLOSE, l_kernel, iterations=2)
+        
+        l_contours, _ = cv2.findContours(label_thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        for l_cnt in l_contours:
+            l_area = cv2.contourArea(l_cnt)
+            if l_area > (w * h * 0.0003):  # Belirgin bir etiket eksikliği boyutu
+                lx, ly, lbw, lbh = cv2.boundingRect(l_cnt)
+                abs_ly = label_band_top + ly
+                if lx > 15 and (lx + lbw) < (w - 15):
+                    fark_sayisi += 1
+                    eksik_etiket_sayisi += 1
+                    etiket_turu = f"EKSİK ETİKET #{eksik_etiket_sayisi}"
+                    box_color = (0, 255, 0)  # Kesin Yeşil Çerçeve
+                    box_thickness = 3
+
+                    cv2.rectangle(result_img, (lx, abs_ly), (lx + lbw, abs_ly + lbh), box_color, box_thickness)
+                    cv2.putText(
+                        result_img,
+                        etiket_turu,
+                        (lx, max(15, abs_ly - 5)),
+                        cv2.FONT_HERSHEY_SIMPLEX,
+                        0.35,
+                        box_color,
+                        1,
+                        cv2.LINE_AA,
+                    )
+                    results.append({"id": fark_sayisi, "durum": etiket_turu, "x": lx, "y": abs_ly, "w": lbw, "h": lbh, "alan": l_area})
+
+        # 2. ÜRÜN VE PAKET ALANI KONTROLÜ
+        product_bottom = s_bottom - label_band_height
+        ref_roi = ref_gray[s_top:product_bottom, :]
+        tar_roi = tar_gray[s_top:product_bottom, :]
 
         ref_roi_blur = cv2.GaussianBlur(ref_roi, (5, 5), 0)
         tar_roi_blur = cv2.GaussianBlur(tar_roi, (5, 5), 0)
@@ -342,19 +382,10 @@ def analyze_planogram_grid_free(reference, field, roi_top_ratio=0.05, roi_bottom
             if x < 10 or (x + bw) > (w - 10):
                 continue
 
-            fark_sayisi +=1
+            fark_sayisi += 1
             aspect_ratio = float(bw) / max(1, bh)
             
-            # Etiket bölgesi kontrolü: Her rafın alt şerit bölgesindeki (yaklaşık son %30'luk kısım) küçük, yatay değişimler
-            label_band_start = s_bottom - int(shelf_height * 0.38)
-            is_in_label_band = (abs_y >= label_band_start)
-
-            if is_in_label_band and bh < (shelf_height * 0.25):
-                eksik_etiket_sayisi += 1
-                etiket_turu = f"EKSİK ETİKET #{eksik_etiket_sayisi}"
-                box_color = (0, 255, 0)  # Yeşil çerçeve
-                box_thickness = 3
-            elif 0.2 < aspect_ratio < 2.0:
+            if 0.2 < aspect_ratio < 2.0:
                 farkli_gorsel_sayisi += 1
                 etiket_turu = f"FARKLI GÖRSEL #{farkli_gorsel_sayisi}"
                 box_color = (0, 0, 255)  # Kırmızı çerçeve

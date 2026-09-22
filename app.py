@@ -281,54 +281,122 @@ def align_images_feature(reference, target):
     return aligned, True
 
 
-def detect_empty_labels(ref_gray, tar_gray, result_img, top_y, bottom_y, shelf_height, w, raf_sayisi=6):
+def _count_wide_segments(binary_row, min_w=15, max_w=90):
+    """Bir satırda genişliği min_w..max_w arasında olan ayrı 'parlak' bölüm sayısı."""
+    cnt = 0
+    run = 0
+    for v in binary_row:
+        if v:
+            run += 1
+        else:
+            if min_w <= run <= max_w:
+                cnt += 1
+            run = 0
+    if min_w <= run <= max_w:
+        cnt += 1
+    return cnt
+
+
+def find_label_bands(gray, top_y, bottom_y):
     """
-    Her rafın alt kısmındaki ürün etiket şeridini (fiyat/isim etiketleri) tarar.
-    Referansta dolu (yazılı) olup sahada boş/içi boş kalan etiket hücrelerini
-    bulur ve kalın YEŞİL çerçeve ile işaretler. Tek bir sabit bölge yerine
-    TÜM raflardaki TÜM etiket hücrelerini otomatik segmentleyip kontrol eder.
+    Etiket şeritlerini (fiyat/isim etiketi sıraları) SABİT bir yükseklik
+    varsaymadan, İÇERİĞE bakarak bulur: bir etiket şeridi, yan yana çok
+    sayıda orta genişlikte parlak dikdörtgenden (etiketlerden) oluşan,
+    nispeten KISA (15-42px) bir bant olarak görünür. Ürün fotoğrafı
+    bantları ise çok daha yüksektir (>45px) ve bu şekilde elenir.
     """
+    roi = gray[top_y:bottom_y, :]
+    if roi.size == 0:
+        return []
+
+    _, bright = cv2.threshold(roi, 150, 255, cv2.THRESH_BINARY)
+    bright01 = (bright > 0).astype(np.uint8)
+
+    seg_counts = np.array(
+        [_count_wide_segments(bright01[y]) for y in range(bright01.shape[0])],
+        dtype=np.float32,
+    )
+    if seg_counts.size == 0:
+        return []
+
+    smooth = np.convolve(seg_counts, np.ones(5) / 5.0, mode="same")
+    is_label_row = smooth >= 6
+
+    bands = []
+    in_band = False
+    start = 0
+    for y, v in enumerate(is_label_row):
+        if v and not in_band:
+            start = y
+            in_band = True
+        elif not v and in_band:
+            bands.append((start, y))
+            in_band = False
+    if in_band:
+        bands.append((start, len(is_label_row)))
+
+    return [(b[0] + top_y, b[1] + top_y) for b in bands if 14 <= (b[1] - b[0]) <= 42]
+
+
+def segment_label_cells(gray, band_top, band_bot):
+    """Bir etiket şeridi bandı içindeki ayrı etiket hücrelerini (x,y,w,h) döndürür."""
+    band = gray[band_top:band_bot, :]
+    if band.size == 0:
+        return []
+
+    _, mask = cv2.threshold(band, 150, 255, cv2.THRESH_BINARY)
+    mask01 = (mask > 0).astype(np.float32)
+    col_frac = mask01.mean(axis=0)
+
+    is_label_col = col_frac > 0.4
+    x_ranges = []
+    in_cell = False
+    start = 0
+    for x, v in enumerate(is_label_col):
+        if v and not in_cell:
+            start = x
+            in_cell = True
+        elif not v and in_cell:
+            x_ranges.append((start, x))
+            in_cell = False
+    if in_cell:
+        x_ranges.append((start, len(is_label_col)))
+
+    cells = []
+    for x1, x2 in x_ranges:
+        bw = x2 - x1
+        if bw < 15 or bw > 100:
+            continue
+        row_frac = mask01[:, x1:x2].mean(axis=1)
+        rows = np.where(row_frac > 0.75)[0]
+        if rows.size == 0:
+            continue
+        y1, y2 = int(rows.min()), int(rows.max()) + 1
+        bh = y2 - y1
+        if bh < 6:
+            continue
+        cells.append((x1, band_top + y1, bw, bh))
+    return cells
+
+
+def detect_empty_labels(ref_gray, tar_gray, result_img, top_y, bottom_y, w):
+    """
+    Referans görüntüdeki gerçek etiket şeritlerini (band + hücre bazında)
+    otomatik bulur; her hücreyi sahadaki (hizalanmış) karşılığıyla
+    karşılaştırır. Referansta yazı/metin var (yüksek piksel varyansı) ama
+    sahada aynı hücre parlak/beyaz kalıp İÇİ BOŞ (düşük varyans) ise,
+    o hücreyi kalın YEŞİL çerçeve ile "EKSİK ETİKET" olarak işaretler.
+    """
+    label_bands = find_label_bands(ref_gray, top_y, bottom_y)
+
     eksik_etiket_sayisi = 0
     eksik_etiket_results = []
 
-    for i in range(raf_sayisi):
-        s_top = top_y + (i * shelf_height)
-        s_bottom = s_top + shelf_height if i < raf_sayisi - 1 else bottom_y
-
-        # Etiket şeridi: rafın alt %22'si ile alt %3'ü arasındaki bant
-        label_strip_top = s_bottom - int(shelf_height * 0.22)
-        label_strip_bottom = s_bottom - int(shelf_height * 0.03)
-        if label_strip_bottom <= label_strip_top:
-            continue
-
-        ref_strip = ref_gray[label_strip_top:label_strip_bottom, :]
-        tar_strip = tar_gray[label_strip_top:label_strip_bottom, :]
-        if ref_strip.size == 0 or tar_strip.size == 0:
-            continue
-
-        # 1) Referans şeritte etiket hücrelerini (parlak/beyaz dikdörtgenler) bul
-        _, ref_white_mask = cv2.threshold(ref_strip, 140, 255, cv2.THRESH_BINARY)
-        kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (9, 5))
-        ref_white_mask = cv2.morphologyEx(ref_white_mask, cv2.MORPH_CLOSE, kernel, iterations=2)
-        ref_white_mask = cv2.morphologyEx(ref_white_mask, cv2.MORPH_OPEN, kernel, iterations=1)
-
-        contours, _ = cv2.findContours(ref_white_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-
-        strip_h = label_strip_bottom - label_strip_top
-        min_area = strip_h * w * 0.0012
-        max_area = strip_h * w * 0.05
-
-        for cnt in contours:
-            area = cv2.contourArea(cnt)
-            if area < min_area or area > max_area:
-                continue
-
-            x, y, bw, bh = cv2.boundingRect(cnt)
-            if bh < 6 or bw < 8:
-                continue
-
-            ref_cell = ref_strip[y:y + bh, x:x + bw]
-            tar_cell = tar_strip[y:y + bh, x:x + bw]
+    for band_top, band_bot in label_bands:
+        cells = segment_label_cells(ref_gray, band_top, band_bot)
+        for (x, y, bw, bh) in cells:
+            ref_cell = ref_gray[y:y + bh, x:x + bw]
+            tar_cell = tar_gray[y:y + bh, x:x + bw]
             if ref_cell.size == 0 or tar_cell.size == 0:
                 continue
 
@@ -336,18 +404,17 @@ def detect_empty_labels(ref_gray, tar_gray, result_img, top_y, bottom_y, shelf_h
             tar_std = float(np.std(tar_cell))
             tar_mean = float(np.mean(tar_cell))
 
-            # Referansta gerçek yazı/metin var (yüksek varyans),
-            # sahada aynı hücre parlak (etiket kağıdı orada) ama İÇİ BOŞ (düşük varyans) -> eksik/boş etiket
-            if ref_std > 16 and tar_mean > 110 and tar_std < 9:
+            # Referans hücrede belirgin metin/desen var (yüksek varyans),
+            # sahadaki aynı hücre hâlâ parlak (etiket kağıdı yerinde duruyor)
+            # ama üzerinde neredeyse hiç yazı yok (varyans referansın çok altında).
+            if ref_std > 20 and tar_mean > 140 and tar_std < 35 and tar_std < ref_std * 0.72:
                 eksik_etiket_sayisi += 1
-                abs_y1 = label_strip_top + y
-                abs_y2 = abs_y1 + bh
 
-                cv2.rectangle(result_img, (x, abs_y1), (x + bw, abs_y2), (0, 255, 0), 3)
+                cv2.rectangle(result_img, (x, y), (x + bw, y + bh), (0, 255, 0), 3)
                 cv2.putText(
                     result_img,
                     f"EKSIK ETIKET #{eksik_etiket_sayisi}",
-                    (x, max(15, abs_y1 - 5)),
+                    (x, max(15, y - 5)),
                     cv2.FONT_HERSHEY_SIMPLEX,
                     0.35,
                     (0, 255, 0),
@@ -355,7 +422,7 @@ def detect_empty_labels(ref_gray, tar_gray, result_img, top_y, bottom_y, shelf_h
                     cv2.LINE_AA,
                 )
                 eksik_etiket_results.append(
-                    {"id": eksik_etiket_sayisi, "durum": "EKSIK ETIKET", "x": x, "y": abs_y1, "w": bw, "h": bh, "alan": area}
+                    {"id": eksik_etiket_sayisi, "durum": "EKSIK ETIKET", "x": x, "y": y, "w": bw, "h": bh, "alan": bw * bh}
                 )
 
     return eksik_etiket_sayisi, eksik_etiket_results
@@ -459,11 +526,12 @@ def analyze_planogram_grid_free(reference, field, roi_top_ratio=0.05, roi_bottom
             results.append({"id": fark_sayisi, "durum": etiket_turu, "x": x, "y": abs_y, "w": bw, "h": bh, "alan": area})
 
     # =====================================================
-    # GENEL TARAMA: TÜM RAFLARDAKİ TÜM ETİKET HÜCRELERİNİ KONTROL ET
-    # (Referansta yazılı/dolu iken sahada içi boş kalan her etiketi bulur)
+    # GENEL TARAMA: TÜM ROI İÇİNDEKİ GERÇEK ETİKET ŞERİTLERİNİ BUL VE KONTROL ET
+    # (Raf yükseklikleri eşit olmadığından sabit bant varsayımı yerine
+    #  etiketler içeriklerine göre otomatik tespit edilir)
     # =====================================================
     eksik_etiket_sayisi, eksik_etiket_results = detect_empty_labels(
-        ref_gray, tar_gray, result_img, top_y, bottom_y, shelf_height, w, raf_sayisi=6
+        ref_gray, tar_gray, result_img, top_y, bottom_y, w
     )
     results.extend(eksik_etiket_results)
     fark_sayisi += eksik_etiket_sayisi

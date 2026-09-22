@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """
 ÖZÇELİK STAND KONTROL UYGULAMASI
-Raf Bazlı Hassas Analiz + Etiketsiz/Boş Raflar İçin Beyaz Çerçeve Eklemesi
+Raf Bazlı (Satır Satır) Hassas Hizalama ve Paket Fark Analizi
 """
 
 import difflib
@@ -234,7 +234,7 @@ def get_reference_image(public_key, dealer_path):
 
 
 # =========================================================
-# HASSAS RAF BAZLI HİZALAMA VE ANALİZ + BEYAZ ÇERÇEVE
+# HASSAS RAF BAZLI HİZALAMA VE ANALİZ
 # =========================================================
 def gray_normalize(img):
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
@@ -243,6 +243,7 @@ def gray_normalize(img):
 
 
 def align_images_feature(reference, target):
+    """Global ORB+RANSAC tabanlı ilk hizalama"""
     h, w = reference.shape[:2]
     if target.shape[:2] != (w, h):
         target = cv2.resize(target, (w, h), interpolation=cv2.INTER_AREA)
@@ -285,9 +286,10 @@ def analyze_planogram_grid_free(reference, field, roi_top_ratio=0.05, roi_bottom
     h, w = reference.shape[:2]
     field = cv2.resize(field, (w, h), interpolation=cv2.INTER_AREA)
 
+    # 1. Adım: Genel Akıllı Hizalama
     aligned, aligned_ok = align_images_feature(reference, field)
+
     result_img = aligned.copy()
-    
     ref_gray = cv2.cvtColor(reference, cv2.COLOR_BGR2GRAY)
     tar_gray = cv2.cvtColor(aligned, cv2.COLOR_BGR2GRAY)
 
@@ -295,6 +297,7 @@ def analyze_planogram_grid_free(reference, field, roi_top_ratio=0.05, roi_bottom
     ref_gray = clahe.apply(ref_gray)
     tar_gray = clahe.apply(tar_gray)
 
+    # 2. Adım: İlk 6 Rafın dikey aralıklarını belirleme (Eşit 6 bölmeye ayırma mantığı)
     top_y = int(h * roi_top_ratio)
     bottom_y = int(h * roi_bottom_ratio)
     shelf_height = (bottom_y - top_y) // 6
@@ -302,8 +305,8 @@ def analyze_planogram_grid_free(reference, field, roi_top_ratio=0.05, roi_bottom
     results = []
     fark_sayisi = 0
     paket_eksigi_sayisi = 0
-    etiketsiz_sayisi = 0
 
+    # Her rafı bağımsız dilimler halinde incele (Perspektif kaymalarını yok eder)
     for i in range(6):
         s_top = top_y + (i * shelf_height)
         s_bottom = s_top + shelf_height if i < 5 else bottom_y
@@ -311,10 +314,11 @@ def analyze_planogram_grid_free(reference, field, roi_top_ratio=0.05, roi_bottom
         ref_roi = ref_gray[s_top:s_bottom, :]
         tar_roi = tar_gray[s_top:s_bottom, :]
 
-        ref_roi_blur = cv2.GaussianBlur(ref_roi, (5, 5), 0)
-        tar_roi_blur = cv2.GaussianBlur(tar_roi, (5, 5), 0)
+        # Gürültü azaltma
+        ref_roi = cv2.GaussianBlur(ref_roi, (5, 5), 0)
+        tar_roi = cv2.GaussianBlur(tar_roi, (5, 5), 0)
 
-        diff = cv2.absdiff(ref_roi_blur, tar_roi_blur)
+        diff = cv2.absdiff(ref_roi, tar_roi)
         _, thresh = cv2.threshold(diff, 50, 255, cv2.THRESH_BINARY)
 
         kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (7, 7))
@@ -325,12 +329,14 @@ def analyze_planogram_grid_free(reference, field, roi_top_ratio=0.05, roi_bottom
 
         for cnt in contours:
             area = cv2.contourArea(cnt)
+            # Paket boyutlarına uygun filtreleme (Çok küçük gürültüleri ve devasa alanı ele)
             if area < (w * h * 0.0012) or area > (w * h * 0.08):
                 continue
 
             x, y, bw, bh = cv2.boundingRect(cnt)
             abs_y = s_top + y
 
+            # Kenar taşmalarını engelle
             if x < 10 or (x + bw) > (w - 10):
                 continue
 
@@ -340,68 +346,30 @@ def analyze_planogram_grid_free(reference, field, roi_top_ratio=0.05, roi_bottom
             if 0.2 < aspect_ratio < 2.0:
                 paket_eksigi_sayisi += 1
                 etiket_turu = f"EKSİK #{paket_eksigi_sayisi}"
-                box_color = (0, 0, 255) # Kırmızı (Normal paket eksiği)
             else:
                 etiket_turu = f"FARK #{fark_sayisi}"
-                box_color = (0, 0, 255)
 
-            cv2.rectangle(result_img, (x, abs_y), (x + bw, abs_y + bh), box_color, 2)
+            cv2.rectangle(result_img, (x, abs_y), (x + bw, abs_y + bh), (0, 0, 255), 2)
             cv2.putText(
                 result_img,
                 etiket_turu,
                 (x, max(15, abs_y - 5)),
                 cv2.FONT_HERSHEY_SIMPLEX,
                 0.35,
-                box_color,
+                (0, 0, 255),
                 1,
                 cv2.LINE_AA,
             )
 
             results.append({"id": fark_sayisi, "durum": "FARK", "x": x, "y": abs_y, "w": bw, "h": bh, "alan": area})
 
-        # =====================================================
-        # ETİKETSİZ / BOŞ RAF ALANLARI İÇİN BEYAZ ÇERÇEVE KONTROLÜ
-        # =====================================================
-        # Rafın alt kısımlarındaki etiket şerit bölgesini analiz et
-        label_strip_top = s_bottom - int(shelf_height * 0.28)
-        label_strip = tar_gray[label_strip_top:s_bottom, int(w*0.05):int(w*0.95)]
-        
-        # Etiket şeridinde aşırı koyu/boş veya eksik alan taraması (Eşik bazlı)
-        _, label_thresh = cv2.threshold(label_strip, 40, 255, cv2.THRESH_BINARY_INV)
-        label_contours, _ = cv2.findContours(label_thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-        
-        # Eğer rafta etiket yerleşimi için beklenen doluluk yoksa veya büyük boşluklar varsa
-        for l_cnt in label_contours:
-            l_area = cv2.contourArea(l_cnt)
-            if l_area > (w * h * 0.015): # Belirli bir eşiğin altındaki boşluklar/eksik etiket alanları
-                lx, ly, lbw, lbh = cv2.boundingRect(l_cnt)
-                abs_lx = int(w*0.05) + lx
-                abs_ly = label_strip_top + ly
-                
-                # Çok küçük gürültüleri ele
-                if lbw > 20 and lbh > 8:
-                    etiketsiz_sayisi += 1
-                    # BEYAZ ÇERÇEVE İŞARETLEMESİ
-                    cv2.rectangle(result_img, (abs_lx, abs_ly), (abs_lx + lbw, abs_ly + lbh), (255, 255, 255), 2)
-                    cv2.putText(
-                        result_img,
-                        f"ETİKETSİZ",
-                        (abs_lx, max(15, abs_ly - 4)),
-                        cv2.FONT_HERSHEY_SIMPLEX,
-                        0.3,
-                        (255, 255, 255),
-                        1,
-                        cv2.LINE_AA,
-                    )
-
     summary = {
         "fark": fark_sayisi,
         "paket_eksigi": paket_eksigi_sayisi,
-        "etiketsiz": etiketsiz_sayisi,
         "supheli": 0,
         "uyumlu": 0,
         "hizalama_ok": aligned_ok,
-        "hizalama": "Raf Bazlı Hibrit + Beyaz Etiket",
+        "hizalama": "Raf Bazlı Hibrit",
         "inliers": 0,
     }
 
@@ -416,7 +384,6 @@ def build_report(dealer, results, summary):
         "Tarih: " + datetime.now().strftime("%d.%m.%Y %H:%M:%S"),
         "",
         "Eksik Sigara Paketi Sayısı (İlk 6 Raf): " + str(summary.get('paket_eksigi', 0)),
-        "Etiketsiz/Boş Alan Sayısı: " + str(summary.get('etiketsiz', 0)),
         "Toplam Tespit Edilen Fark: " + str(summary['fark']),
         "",
         "--- FARK BÖLGELERİ ---"
@@ -514,7 +481,7 @@ with refresh_col:
         clear_yandex_cache()
         st.rerun()
 
-st.subheader("1. Şehir dan Bayi Seçiniz")
+st.subheader("1. Şehir ve Bayi Seçiniz")
 cities, city_error = get_cities(YANDEX_ROOT_PUBLIC_KEY)
 if city_error:
     st.warning("Yandex şehir listesi alınamadı: " + str(city_error))
@@ -592,7 +559,7 @@ if st.button("🚀 KONTROLE BAŞLA", type="primary", use_container_width=True, d
     st.session_state.summary = None
     st.session_state.report = ""
 
-    with st.spinner("İlk 6 raf ve etiket alanları hassas analizle inceleniyor..."):
+    with st.spinner("İlk 6 raf raf bazlı hassas analizle inceleniyor..."):
         try:
             result_img, results, summary, aligned_field = analyze_planogram_grid_free(
                 ref_img, field_img
@@ -607,10 +574,9 @@ if st.button("🚀 KONTROLE BAŞLA", type="primary", use_container_width=True, d
 
 if st.session_state.result_img is not None and st.session_state.summary:
     summary = st.session_state.summary
-    m1, m2, m3 = st.columns(3)
-    m1.metric("Eksik Paket", summary.get("paket_eksigi", 0))
-    m2.metric("Etiketsiz Alan", summary.get("etiketsiz", 0))
-    m3.metric("Toplam Tespit", summary.get("fark", 0))
+    m1, m2 = st.columns(2)
+    m1.metric("Eksik Paket / Fark", summary.get("paket_eksigi", 0))
+    m2.metric("Toplam Tespit", summary.get("fark", 0))
 
     st.image(st.session_state.result_img, channels="BGR", use_container_width=True)
 

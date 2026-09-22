@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-ÖZÇELİK STAND KONTROL UYGULAMASI (SFA & POG Analiz Entegreli)
+ÖZÇELİK STAND KONTROL UYGULAMASI (SFA & POG & BULUNURLUK & ETİKET ENTEGRELI)
 """
 
 import difflib
@@ -241,7 +241,7 @@ def get_reference_image(public_key, dealer_path):
 
 
 # =========================================================
-# GÖRSEL HİZALAMA VE POG / SFA ANALİZ MOTORU
+# GÖRSEL HİZALAMA VE POG / SFA & BULUNURLUK/ETİKET ANALİZ MOTORU
 # =========================================================
 def gray_normalize(img):
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
@@ -312,6 +312,8 @@ def analyze_planogram_grid_free(reference, field, roi_top_ratio=0.05, roi_bottom
     fark_sayisi = 0
     farkli_meyve_sayisi = 0
     asiri_raf_ihlali = 0
+    out_of_stock_count = 0  # Bulunurluk eksikliği
+    missing_label_count = 0 # Etiket eksikliği
 
     for i in range(total_estimated_shelves):
         s_top = top_y + (i * shelf_height)
@@ -348,11 +350,27 @@ def analyze_planogram_grid_free(reference, field, roi_top_ratio=0.05, roi_bottom
                     continue
 
                 fark_sayisi += 1
-                farkli_meyve_sayisi += 1
-                etiket_turu = f"POG UYUMSUZLUGU / FARKLI ÜRÜN #{farkli_meyve_sayisi}"
                 
-                box_color = (255, 255, 255) 
-                box_thickness = 4
+                # --- BULUNURLUK (OUT-OF-STOCK) VE ETİKET KONTROLÜ AYRIMI ---
+                # Referans görselde dolu olan alan hedef görselde aşırı koyu/boşluksa "Bulunurluk Eksikliği" sayılır.
+                # Hedef bölgedeki ortalama parlaklık kontrolü (örneğin eşik altı boşluk/kutu yokluğu demektir)
+                roi_target_piece = tar_roi[y:y+bh, x:x+bw]
+                mean_brightness = np.mean(roi_target_piece) if roi_target_piece.size > 0 else 128
+
+                if mean_brightness < 45: # Koyu/boş alan -> Ürün Bulunmuyor (Out-of-Stock)
+                    out_of_stock_count += 1
+                    etiket_turu = f"BULUNURLUK EKSİK (OOS) #{out_of_stock_count}"
+                    box_color = (0, 0, 255) # Kırmızı
+                elif mean_brightness > 210: # Çok parlak/beyaz alan -> Etiket Eksik veya Hatalı Etiket
+                    missing_label_count += 1
+                    etiket_turu = f"EKSİK/HATALI ETİKET #{missing_label_count}"
+                    box_color = (0, 165, 255) # Turuncu
+                else:
+                    farkli_meyve_sayisi += 1
+                    etiket_turu = f"POG UYUMSUZLUGU #{farkli_meyve_sayisi}"
+                    box_color = (255, 255, 255) # Beyaz
+
+                box_thickness = 3
 
                 cv2.rectangle(result_img, (x, abs_y), (x + bw, abs_y + bh), box_color, box_thickness)
                 cv2.putText(
@@ -395,11 +413,12 @@ def analyze_planogram_grid_free(reference, field, roi_top_ratio=0.05, roi_bottom
 
     summary = {
         "fark": fark_sayisi,
-        "paket_eksigi": 0,
+        "paket_eksigi": out_of_stock_count,
+        "etiket_eksigi": missing_label_count,
         "farkli_gorsel": farkli_meyve_sayisi,
         "asiri_raf_ihlali": asiri_raf_ihlali,
         "hizalama_ok": aligned_ok,
-        "hizalama": "SFA & POG Hibrit Motor",
+        "hizalama": "SFA & POG & Bulunurluk Hibrit Motor",
     }
 
     return result_img, results, summary, aligned
@@ -408,14 +427,16 @@ def analyze_planogram_grid_free(reference, field, roi_top_ratio=0.05, roi_bottom
 def build_report(dealer, results, summary):
     from datetime import datetime
     lines = [
-        "=== ÖZÇELİK SFA & PLANOGRAM (POG) DENETİM RAPORU ===",
+        "=== ÖZÇELİK SFA & PLANOGRAM & BULUNURLUK DENETİM RAPORU ===",
         f"Bayi: {dealer}",
         "Tarih: " + datetime.now().strftime("%d.%m.%Y %H:%M:%S"),
         "",
-        "SFA / İlk 6 Rafta Tespit Edilen Planogram Uyumsuzluğu: " + str(summary.get('farkli_gorsel', 0)),
-        "SFA / 6. Raf Sonrası Tespit Edilen Çarpı Atılan İhlal Sayısı: " + str(summary.get('asiri_raf_ihlali', 0)),
+        "Bulunurluk Eksikliği (OOS) Sayısı: " + str(summary.get('paket_eksigi', 0)),
+        "Eksik/Hatalı Etiket Sayısı: " + str(summary.get('etiket_eksigi', 0)),
+        "Planogram (POG) Uyumsuzluğu: " + str(summary.get('farkli_gorsel', 0)),
+        "6. Raf Sonrası Yetkisiz Ürün İhlali: " + str(summary.get('asiri_raf_ihlali', 0)),
         "",
-        "--- DETAYLI İHLAL KAYITLARI ---"
+        "--- DETAYLI İHLAL / EKSİK KAYITLARI ---"
     ]
     for item in results:
         lines.append(f"ID #{item.get('id')} ({item.get('durum')}) | Konum: X={item.get('x')}, Y={item.get('y')} | Boyut: {item.get('w')}x{item.get('h')}")
@@ -574,13 +595,13 @@ st.divider()
 
 ready = ref_img is not None and field_img is not None
 
-if st.button("🚀 SFA & POG KONTROLÜNÜ BAŞLAT", type="primary", use_container_width=True, disabled=not ready):
+if st.button("🚀 SFA & POG & BULUNURLUK KONTROLÜNÜ BAŞLAT", type="primary", use_container_width=True, disabled=not ready):
     st.session_state.result_img = None
     st.session_state.results = []
     st.session_state.summary = None
     st.session_state.report = ""
 
-    with st.spinner("SFA algoritmaları ve POG şablon eşleştirmesi çalıştırılıyor..."):
+    with st.spinner("SFA algoritmaları, bulunurluk ve etiket analizi çalıştırılıyor..."):
         try:
             result_img, results, summary, aligned_field = analyze_planogram_grid_free(
                 ref_img, field_img
@@ -591,13 +612,16 @@ if st.button("🚀 SFA & POG KONTROLÜNÜ BAŞLAT", type="primary", use_containe
             st.session_state.summary = summary
             st.session_state.report = build_report(dealer_name or "Manuel", results, summary)
         except Exception as exc:
-            st.error("SFA & POG analiz motorunda hata oluştu: " + str(exc))
+            st.error("Analiz motorunda hata oluştu: " + str(exc))
 
 if st.session_state.result_img is not None and st.session_state.summary:
     summary = st.session_state.summary
-    m1, m2 = st.columns(2)
-    m1.metric("POG İlk 6 Raftaki Uyumsuzluk/Farklı Ürün", summary.get("farkli_gorsel", 0))
-    m2.metric("SFA 6. Raf Sonrası İhlal/Çarpı Atılan Ürün", summary.get("asiri_raf_ihlali", 0))
+    
+    m1, m2, m3, m4 = st.columns(4)
+    m1.metric("Bulunurluk Eksikliği (OOS)", summary.get("paket_eksigi", 0))
+    m2.metric("Eksik/Hatalı Etiket", summary.get("etiket_eksigi", 0))
+    m3.metric("POG Uyumsuzluğu", summary.get("farkli_gorsel", 0))
+    m4.metric("Yetkisiz Ürün İhlali", summary.get("asiri_raf_ihlali", 0))
 
     st.image(st.session_state.result_img, channels="BGR", use_container_width=True)
 
@@ -605,9 +629,9 @@ if st.session_state.result_img is not None and st.session_state.summary:
     ok, encoded = cv2.imencode(".jpg", st.session_state.result_img)
     if ok:
         with d1:
-            st.download_button("📥 SFA Denetim Görselini İndir", data=encoded.tobytes(), file_name="sfa_pog_denetim_sonuc.jpg", mime="image/jpeg", use_container_width=True)
+            st.download_button("📥 Denetim Görselini İndir", data=encoded.tobytes(), file_name="sfa_bulunurluk_sonuc.jpg", mime="image/jpeg", use_container_width=True)
     if st.session_state.report:
         with d2:
-            st.download_button("📄 SFA Raporunu İndir", data=st.session_state.report.encode("utf-8"), file_name="sfa_pog_rapor.txt", mime="text/plain", use_container_width=True)
+            st.download_button("📄 Detaylı Raporu İndir", data=st.session_state.report.encode("utf-8"), file_name="sfa_bulunurluk_rapor.txt", mime="text/plain", use_container_width=True)
 else:
-    st.info("Denetim için POG referans ve SFA saha fotoğraflarını yükleyin, ardından 'SFA & POG KONTROLÜNÜ BAŞLAT' düğmesine basın.")
+    st.info("Denetim için POG referans ve SFA saha fotoğraflarını yükleyin, ardından kontrolü başlatın.")

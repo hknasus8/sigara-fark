@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-ÖZÇELİK STAND KONTROL UYGULAMASI (Güncellenmiş Tam Kod)
+ÖZÇELİK STAND KONTROL UYGULAMASI (Otomatik Önbellek Temizleme Sürümü)
 """
 
 import difflib
@@ -310,50 +310,19 @@ def analyze_planogram_grid_free(reference, field, roi_top_ratio=0.05, roi_bottom
     fark_sayisi = 0
     paket_eksigi_sayisi = 0
     farkli_gorsel_sayisi = 0
-    eksik_etiket_sayisi = 0
 
     for i in range(6):
         s_top = top_y + (i * shelf_height)
         s_bottom = s_top + shelf_height if i < 5 else bottom_y
 
-        # Etiket bandı sınırını net olarak ayırıyoruz (Rafın en alt kısmı)
-        label_band_height = int(shelf_height * 0.18)
-        label_band_top = s_bottom - label_band_height
-        
-        # 1. ETİKET BANDI KONTROLÜ (Sadece burada yeşil etiket aranır)
-        ref_label_roi = ref_gray[label_band_top:s_bottom, :]
-        tar_label_roi = tar_gray[label_band_top:s_bottom, :]
-        
-        label_diff = cv2.absdiff(ref_label_roi, tar_label_roi)
-        _, label_thresh = cv2.threshold(label_diff, 65, 255, cv2.THRESH_BINARY)
-        l_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (9, 3))
-        label_thresh = cv2.morphologyEx(label_thresh, cv2.MORPH_CLOSE, l_kernel, iterations=1)
-        
-        l_contours, _ = cv2.findContours(label_thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-        for l_cnt in l_contours:
-            l_area = cv2.contourArea(l_cnt)
-            if (w * h * 0.0004) < l_area < (w * h * 0.012):
-                lx, ly, lbw, lbh = cv2.boundingRect(l_cnt)
-                abs_ly = label_band_top + ly
-                if lx > 15 and (lx + lbw) < (w - 15):
-                    fark_sayisi += 1
-                    eksik_etiket_sayisi += 1
-                    etiket_turu = f"EKSİK ETİKET #{eksik_etiket_sayisi}"
-                    
-                    cv2.rectangle(result_img, (lx, abs_ly), (lx + lbw, abs_ly + lbh), (0, 255, 0), 2)
-                    cv2.putText(result_img, etiket_turu, (lx, max(15, abs_ly - 5)), cv2.FONT_HERSHEY_SIMPLEX, 0.35, (0, 255, 0), 1, cv2.LINE_AA)
-                    results.append({"id": fark_sayisi, "durum": etiket_turu, "x": lx, "y": abs_ly, "w": lbw, "h": lbh, "alan": l_area})
-
-        # 2. ÜRÜN ALANI KONTROLÜ (Etiket bandından güvenli bir mesafe ile tamamen izole edildi)
-        product_bottom = label_band_top - int(shelf_height * 0.06)
-        ref_roi = ref_gray[s_top:product_bottom, :]
-        tar_roi = tar_gray[s_top:product_bottom, :]
+        ref_roi = ref_gray[s_top:s_bottom, :]
+        tar_roi = tar_gray[s_top:s_bottom, :]
 
         ref_roi_blur = cv2.GaussianBlur(ref_roi, (5, 5), 0)
         tar_roi_blur = cv2.GaussianBlur(tar_roi, (5, 5), 0)
 
         diff = cv2.absdiff(ref_roi_blur, tar_roi_blur)
-        _, thresh = cv2.threshold(diff, 55, 255, cv2.THRESH_BINARY)
+        _, thresh = cv2.threshold(diff, 50, 255, cv2.THRESH_BINARY)
 
         kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (7, 7))
         thresh = cv2.morphologyEx(thresh, cv2.MORPH_CLOSE, kernel, iterations=2)
@@ -363,14 +332,13 @@ def analyze_planogram_grid_free(reference, field, roi_top_ratio=0.05, roi_bottom
 
         for cnt in contours:
             area = cv2.contourArea(cnt)
-            if area < (w * h * 0.002) or area > (w * h * 0.08):
+            if area < (w * h * 0.0012) or area > (w * h * 0.08):
                 continue
 
             x, y, bw, bh = cv2.boundingRect(cnt)
             abs_y = s_top + y
 
-            # Kenarlara veya ürün alt sınırına (etiket bölgesine) taşanları kesin olarak ele
-            if x < 15 or (x + bw) > (w - 15) or (y + bh) > (product_bottom - s_top - 5):
+            if x < 10 or (x + bw) > (w - 10):
                 continue
 
             fark_sayisi += 1
@@ -379,7 +347,7 @@ def analyze_planogram_grid_free(reference, field, roi_top_ratio=0.05, roi_bottom
             if 0.2 < aspect_ratio < 2.0:
                 farkli_gorsel_sayisi += 1
                 etiket_turu = f"FARKLI GÖRSEL #{farkli_gorsel_sayisi}"
-                box_color = (0, 0, 255)
+                box_color = (0, 0, 255) # Kırmızı
                 box_thickness = 4
             else:
                 paket_eksigi_sayisi += 1
@@ -388,14 +356,23 @@ def analyze_planogram_grid_free(reference, field, roi_top_ratio=0.05, roi_bottom
                 box_thickness = 2
 
             cv2.rectangle(result_img, (x, abs_y), (x + bw, abs_y + bh), box_color, box_thickness)
-            cv2.putText(result_img, etiket_turu, (x, max(15, abs_y - 5)), cv2.FONT_HERSHEY_SIMPLEX, 0.35, box_color, 1, cv2.LINE_AA)
+            cv2.putText(
+                result_img,
+                etiket_turu,
+                (x, max(15, abs_y - 5)),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.35,
+                box_color,
+                1,
+                cv2.LINE_AA,
+            )
+
             results.append({"id": fark_sayisi, "durum": etiket_turu, "x": x, "y": abs_y, "w": bw, "h": bh, "alan": area})
 
     summary = {
         "fark": fark_sayisi,
         "paket_eksigi": paket_eksigi_sayisi,
         "farkli_gorsel": farkli_gorsel_sayisi,
-        "eksik_etiket": eksik_etiket_sayisi,
         "supheli": 0,
         "uyumlu": 0,
         "hizalama_ok": aligned_ok,
@@ -413,7 +390,6 @@ def build_report(dealer, results, summary):
         f"Bayi: {dealer}",
         "Tarih: " + datetime.now().strftime("%d.%m.%Y %H:%M:%S"),
         "",
-        "Eksik Etiket Sayısı (Yeşil): " + str(summary.get('eksik_etiket', 0)),
         "Eksik Paket Sayısı: " + str(summary.get('paket_eksigi', 0)),
         "Farklı Görsel Sayısı (Kırmızı): " + str(summary.get('farkli_gorsel', 0)),
         "Toplam Tespit Edilen Fark: " + str(summary['fark']),
@@ -505,7 +481,7 @@ with refresh_col:
         clear_yandex_cache()
         st.rerun()
 
-st.subheader("1. Şehirden Bayi Seçiniz")
+st.subheader("1. Şehir dan Bayi Seçiniz")
 cities, city_error = get_cities(YANDEX_ROOT_PUBLIC_KEY)
 if city_error:
     st.warning("Yandex şehir listesi alınamadı: " + str(city_error))
@@ -583,7 +559,7 @@ if st.button("🚀 KONTROLE BAŞLA", type="primary", use_container_width=True, d
     st.session_state.summary = None
     st.session_state.report = ""
 
-    with st.spinner("İlk 6 raf analiz ediliyor (Etiket, Planogram ve paket farkları taranıyor)..."):
+    with st.spinner("İlk 6 raf analiz ediliyor (Planogram ve paket farkları taranıyor)..."):
         try:
             result_img, results, summary, aligned_field = analyze_planogram_grid_free(
                 ref_img, field_img
@@ -598,10 +574,9 @@ if st.button("🚀 KONTROLE BAŞLA", type="primary", use_container_width=True, d
 
 if st.session_state.result_img is not None and st.session_state.summary:
     summary = st.session_state.summary
-    m1, m2, m3 = st.columns(3)
-    m1.metric("Eksik Etiket (Yeşil)", summary.get("eksik_etiket", 0))
-    m2.metric("Farklı Görsel (Kırmızı)", summary.get("farkli_gorsel", 0))
-    m3.metric("Paket Eksiği", summary.get("paket_eksigi", 0))
+    m1, m2 = st.columns(2)
+    m1.metric("Farklı Görsel (Kırmızı)", summary.get("farkli_gorsel", 0))
+    m2.metric("Paket Eksiği", summary.get("paket_eksigi", 0))
 
     st.image(st.session_state.result_img, channels="BGR", use_container_width=True)
 

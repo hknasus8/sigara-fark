@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """
 ÖZÇELİK STAND KONTROL UYGULAMASI
-Gelişmiş Etiket ve Paket Sayımı Sürümü (İlk 6 Raf Modülü + Raf 5 Özel İç Kalibre Çubuğu)
+İlk 6 Raf Modülü ve Etiket Kontrol Sürümü
 """
 
 import difflib
@@ -16,7 +16,7 @@ import numpy as np
 import requests
 import streamlit as st
 
-# OCR (etiket / ürün adı okuma) modülü opsiyoneldir.
+# OCR (etiket / ürün adı okuma) modülü
 try:
     import pytesseract
     OCR_AVAILABLE = True
@@ -362,7 +362,7 @@ def align_images(reference, target):
 
 
 # =========================================================
-# KONTUR ANALİZİ (İPUCU: DÜZELTİLMİŞ IŞIK VE EŞİKLEME)
+# KONTUR ANALİZİ
 # =========================================================
 def analyze_planogram_grid_free(
     reference,
@@ -370,7 +370,6 @@ def analyze_planogram_grid_free(
     roi_top_ratio=0.0,
     roi_bottom_ratio=0.85,
     edge_margin_ratio=0.025,
-    illumination_normalize=True,
 ):
     h, w = reference.shape[:2]
 
@@ -386,19 +385,14 @@ def analyze_planogram_grid_free(
     ref_gray = cv2.cvtColor(reference, cv2.COLOR_BGR2GRAY)
     tar_gray = cv2.cvtColor(aligned, cv2.COLOR_BGR2GRAY)
 
-    if illumination_normalize:
-        # Gelişmiş aydınlatma dengelemesi (Histogram Eşitleme / CLAHE ile parlamaları bastırma)
-        clahe = cv2.createCLAHE(clipLimit=1.5, tileGridSize=(8, 8))
-        ref_gray = clahe.apply(ref_gray)
-        tar_gray = clahe.apply(tar_gray)
+    clahe = cv2.createCLAHE(clipLimit=1.5, tileGridSize=(8, 8))
+    ref_gray = clahe.apply(ref_gray)
+    tar_gray = clahe.apply(tar_gray)
 
-    # Gürültüyü azaltmak için yumuşatma filtresi güçlendirildi (Ufak pikseltaşımlarını engeller)
     ref_gray = cv2.GaussianBlur(ref_gray, (7, 7), 0)
     tar_gray = cv2.GaussianBlur(tar_gray, (7, 7), 0)
 
     diff = cv2.absdiff(ref_gray, tar_gray)
-    
-    # Eşik değeri yükseltildi: Çok küçük renk tonu ve ışık farkları artık hata sayılmayacak.
     _, thresh = cv2.threshold(diff, 55, 255, cv2.THRESH_BINARY)
 
     thresh[roi_bottom:, :] = 0
@@ -409,7 +403,6 @@ def analyze_planogram_grid_free(
     if margin_y > 0:
         thresh[:margin_y, :] = 0
 
-    # Morfolojik işlemler ile küçük parazit noktaları tamamen temizlenir
     kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (9, 9))
     thresh = cv2.morphologyEx(thresh, cv2.MORPH_CLOSE, kernel, iterations=2)
     thresh = cv2.morphologyEx(thresh, cv2.MORPH_OPEN, kernel, iterations=2)
@@ -424,7 +417,6 @@ def analyze_planogram_grid_free(
 
     for cnt in contours:
         area = cv2.contourArea(cnt)
-        # Minimum alan filtresi büyütüldü: Ufak kutucukların ve yanlış alarmların önüne geçildi.
         if area < (w * h * 0.0006) or area > (w * h * 0.15):
             continue
 
@@ -651,10 +643,6 @@ def draw_label_results(result_img, band_results, x_offset, y_offset):
                 cv2.arrowedLine(result_img, (arrow_x, arrow_bottom), (arrow_x, arrow_top), color, 2, tipLength=0.35)
 
 
-def draw_band_preview(img, roi_top_pct, roi_bottom_pct, band_bounds_pct, raf5_alt_pct):
-    return img.copy()
-
-
 def split_bands(roi_top_px, roi_bottom_px, boundaries_ratio):
     total = roi_bottom_px - roi_top_px
     cuts = [roi_top_px]
@@ -845,7 +833,7 @@ with c2:
         dealer_path = dealer_choices[selected_raw_dealer]["path"]
 
 st.divider()
-st.subheader("2. Orijinal Referans Fotoğraf")
+st.subheader("2. Orijinal Referans Fotoğraf ve Saha Fotoğrafı")
 
 ref_img = None
 if dealer_path:
@@ -882,77 +870,24 @@ if ref_img is not None and field_img is not None:
     except Exception:
         auto_top_pct = 0
 
-roi_widget_key = "roi_slider_" + (dealer_path if dealer_path else "manuel")
+# Sabit varsayılan analiz ve etiket oranları (Gelişmiş ayarlar kaldırıldı)
+roi_top_ratio = float(auto_top_pct) / 100.0
+roi_bottom_ratio = 0.85
+label_check_enabled = True
+label_sim_threshold = DEFAULT_LABEL_SIM_THRESHOLD
 
-with st.expander("⚙️ Gelişmiş Analiz Ayarları", expanded=False):
-    roi_range = st.slider("Analiz Edilecek Raf Bölgesi (%)", min_value=0, max_value=100, value=(auto_top_pct, 85), step=1, key=roi_widget_key)
-    illumination_normalize = st.checkbox("Işık/Parlaklık Farkını Otomatik Dengele", value=True)
-    
-    if OCR_AVAILABLE:
-        label_check_enabled = st.checkbox("🏷️ Etiket / Ürün Adı Kontrolünü Etkinleştir (OCR)", value=True)
-        label_sim_threshold = st.slider("Etiket Eşleşme Hassasiyeti", min_value=0.30, max_value=0.90, value=DEFAULT_LABEL_SIM_THRESHOLD, step=0.05, disabled=not label_check_enabled)
-    else:
-        label_check_enabled = False
-        label_sim_threshold = DEFAULT_LABEL_SIM_THRESHOLD
-
-roi_top_ratio = roi_range[0] / 100.0
-roi_bottom_ratio = roi_range[1] / 100.0
-
+# 6 raf sınırlarının otomatik eşit aralıklarla bölünmesi
 band_widget_key = "band_boundaries_" + (dealer_path if dealer_path else "manuel")
-
-default_span = (roi_range[1] - roi_range[0])
-default_upper_bounds = [int(roi_range[0] + default_span * (i / 6.0)) for i in range(1, 6)]
-default_raf5_alt = int(roi_range[1])
-
-with st.expander("📐 Raf Sınırları ve Raf 5 İç Kalibre Çubuğu Ayarı", expanded=True):
-    st.caption("1 ile 5. raflar arası otomatik bölüştürülür. **Raf 5 İç Kalibre Çubuğu (%)** ise doğrudan **5. rafa ait** alt sınırı hassasiyetle kalibre eder:")
-    
-    cal_col1, cal_col2 = st.columns([1, 1.3])
-    
-    with cal_col1:
-        raw_bounds = []
-        last_val = max(5, roi_range[0])
-        
-        for i in range(5):
-            min_v = max(roi_range[0] + 1, last_val + 1)
-            max_v = min(roi_range[1] - (5 - i), 95)
-            default_val = min(max(default_upper_bounds[i], min_v), max_v)
-            
-            val = st.number_input(
-                f"Sınır {i + 1} (%)", 
-                min_value=int(min_v), 
-                max_value=int(max_v), 
-                value=int(default_val), 
-                step=1, 
-                key=f"{band_widget_key}_num_{i}"
-            )
-            raw_bounds.append(val)
-            last_val = val
-        
-        raf5_min_v = max(raw_bounds[-1] + 1, roi_range[0] + 5)
-        raf5_max_v = 99
-        default_raf5_val = min(max(roi_range[1], raf5_min_v), raf5_max_v)
-        
-        raf5_alt_pct = st.number_input(
-            "Raf 5 İç Kalibre Çubuğu (%)",
-            min_value=int(raf5_min_v),
-            max_value=int(raf5_max_v),
-            value=int(default_raf5_val),
-            step=1,
-            key=f"{band_widget_key}_raf5_alt"
-        )
-            
-    band_bounds_pct = sorted(raw_bounds)
-
-    with cal_col2:
-        if ref_img is not None:
-            st.image(draw_band_preview(ref_img, roi_range[0], roi_range[1], band_bounds_pct, raf5_alt_pct), channels="BGR", use_container_width=True, caption="Orijinal Referans Görsel Önizlemesi")
+default_span = (85 - auto_top_pct)
+default_upper_bounds = [int(auto_top_pct + default_span * (i / 6.0)) for i in range(1, 6)]
+band_bounds_pct = default_upper_bounds
+raf5_alt_pct = 85
 
 all_pct_cuts = band_bounds_pct + [raf5_alt_pct]
 band_boundaries_ratio = []
-roi_span_pct = max(1, (raf5_alt_pct - roi_range[0]))
+roi_span_pct = max(1, (raf5_alt_pct - auto_top_pct))
 for pct in all_pct_cuts:
-    rel = (pct - roi_range[0]) / max(1, (roi_range[1] - roi_range[0]))
+    rel = (pct - auto_top_pct) / max(1, (85 - auto_top_pct))
     band_boundaries_ratio.append(max(0.0, min(1.0, rel)))
 
 ready = ref_img is not None and field_img is not None and roi_bottom_ratio > roi_top_ratio
@@ -963,17 +898,15 @@ if st.button("🚀 KONTROLE BAŞLA", type="primary", use_container_width=True, d
     st.session_state.summary = None
     st.session_state.report = ""
 
-    with st.spinner("İlk 6 raf için analiz yapılıyor..."):
+    with st.spinner("İlk 6 raf için analiz yapılıyor ve etiketler kontrol ediliyor..."):
         try:
             result_img, results, summary, aligned_field = analyze_planogram_grid_free(
-                ref_img, field_img, roi_top_ratio=roi_top_ratio, roi_bottom_ratio=roi_bottom_ratio, illumination_normalize=illumination_normalize
+                ref_img, field_img, roi_top_ratio=roi_top_ratio, roi_bottom_ratio=roi_bottom_ratio
             )
 
             h_aligned = aligned_field.shape[0]
             roi_top_px = int(h_aligned * roi_top_ratio)
-            
-            custom_bottom_ratio = min(1.0, max(roi_top_ratio + 0.05, raf5_alt_pct / 100.0))
-            roi_bottom_px = int(h_aligned * custom_bottom_ratio)
+            roi_bottom_px = int(h_aligned * roi_bottom_ratio)
             
             bands = split_bands(roi_top_px, roi_bottom_px, band_boundaries_ratio)
 

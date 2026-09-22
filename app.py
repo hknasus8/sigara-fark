@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """
 ÖZÇELİK STAND KONTROL UYGULAMASI
-Raf Bazlı Analiz + Kalın Kırmızı ("FARKLI GÖRSEL") + Ürün Altı Nokta Atışı Kalın Yeşil (Eksik Etiket)
+Raf Bazlı Analiz + Kalın Kırmızı ("FARKLI GÖRSEL") + Nokta Atışı Yeşil (Eksik Etiketler)
 """
 
 import difflib
@@ -335,7 +335,7 @@ def analyze_planogram_grid_free(reference, field, roi_top_ratio=0.05, roi_bottom
             if x < 10 or (x + bw) > (w - 10):
                 continue
 
-            # Etiket şeridi varlığı kontrolü (ürün altı)
+            # Ürünün altındaki etiket şeridinin dolu olup olmadığını kontrol et
             check_label_y1 = min(s_bottom - 5, abs_y + bh - int(bh * 0.2))
             check_label_y2 = min(s_bottom, abs_y + bh + int(bh * 0.3))
             label_strip_region = tar_gray[check_label_y1:check_label_y2, max(0, x-5):min(w, x+bw+5)]
@@ -382,17 +382,16 @@ def analyze_planogram_grid_free(reference, field, roi_top_ratio=0.05, roi_bottom
             results.append({"id": fark_sayisi, "durum": etiket_turu, "x": x, "y": abs_y, "w": bw, "h": bh, "alan": area})
 
         # =====================================================
-        # ÜRÜNLERİN ALTINDAKİ ETİKET ŞERİDİ (Eksik / Boş Etiket Taraması)
+        # SADECE GÖSTERDİĞİNİZ ÜRÜN ALTI ETİKET BÖLGELERİ (Yeşil Ok Odaklı)
         # =====================================================
-        # Etiket şeridi rafın hemen alt bölümündedir (ürünlerin bittiği yer ile raf çizgisi arası)
-        label_strip_top = s_bottom - int(shelf_height * 0.22)
-        label_strip_bottom = s_bottom - int(shelf_height * 0.05)
+        # Etiket şeridi rafın hemen alt zemininde yer alır
+        label_strip_top = s_bottom - int(shelf_height * 0.18)
+        label_strip_bottom = s_bottom - int(shelf_height * 0.03)
         
         target_label_strip = tar_gray[label_strip_top:label_strip_bottom, int(w*0.05):int(w*0.95)]
         reference_label_strip = ref_gray[label_strip_top:label_strip_bottom, int(w*0.05):int(w*0.95)]
         
         if target_label_strip.size > 0 and reference_label_strip.size > 0:
-            # Slot bazlı hassas kontrol (Standın yatay sütunları boyunca)
             num_slots = 18  
             slot_width = target_label_strip.shape[1] // num_slots
             
@@ -403,15 +402,15 @@ def analyze_planogram_grid_free(reference, field, roi_top_ratio=0.05, roi_bottom
                 ref_slot = reference_label_strip[:, sx_start:sx_end]
                 tar_slot = target_label_strip[:, sx_start:sx_end]
                 
-                # Referansta dolu (etiket var) olan slot, sahada boş/karanlık/beyaz değilse (eksik etiket)
-                if np.mean(ref_slot) > 60 and np.mean(tar_slot) < 35:
+                # Referansta dolu olan slot sahada yoksa veya boşsa -> NOKTA ATIŞI YEŞİL KUTU
+                if np.mean(ref_slot) > 65 and np.mean(tar_slot) < 32:
                     eksik_etiket_sayisi += 1
                     abs_lx = int(w*0.05) + sx_start
                     abs_ly = label_strip_top
                     lw_box = slot_width
                     lh_box = label_strip_bottom - label_strip_top
                     
-                    # ÜRÜNÜN ALTINDAKİ ETİKET ALANI -> KALIN YEŞİL ÇERÇEVE (Kalınlık: 3)
+                    # DOĞRU YERDEKİ ÜRÜN ALTI ETİKET KUTUSU (Kalın Yeşil Çerçeve)
                     cv2.rectangle(result_img, (abs_lx, abs_ly), (abs_lx + lw_box, abs_ly + lh_box), (0, 255, 0), 3)
                     cv2.putText(
                         result_img,

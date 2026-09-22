@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-ÖZÇELİK STAND KONTROL UYGULAMASI (Güncellenmiş Etiket ve Ürün Ayrımı)
+ÖZÇELİK STAND KONTROL UYGULAMASI (Güncellenmiş Tam Kod)
 """
 
 import difflib
@@ -317,7 +317,7 @@ def analyze_planogram_grid_free(reference, field, roi_top_ratio=0.05, roi_bottom
         s_bottom = s_top + shelf_height if i < 5 else bottom_y
 
         # Etiket bandı sınırını net olarak ayırıyoruz (Rafın en alt kısmı)
-        label_band_height = int(shelf_height * 0.15)
+        label_band_height = int(shelf_height * 0.18)
         label_band_top = s_bottom - label_band_height
         
         # 1. ETİKET BANDI KONTROLÜ (Sadece burada yeşil etiket aranır)
@@ -325,17 +325,17 @@ def analyze_planogram_grid_free(reference, field, roi_top_ratio=0.05, roi_bottom
         tar_label_roi = tar_gray[label_band_top:s_bottom, :]
         
         label_diff = cv2.absdiff(ref_label_roi, tar_label_roi)
-        _, label_thresh = cv2.threshold(label_diff, 60, 255, cv2.THRESH_BINARY)
-        l_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (11, 3))
+        _, label_thresh = cv2.threshold(label_diff, 65, 255, cv2.THRESH_BINARY)
+        l_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (9, 3))
         label_thresh = cv2.morphologyEx(label_thresh, cv2.MORPH_CLOSE, l_kernel, iterations=1)
         
         l_contours, _ = cv2.findContours(label_thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
         for l_cnt in l_contours:
             l_area = cv2.contourArea(l_cnt)
-            if (w * h * 0.0005) < l_area < (w * h * 0.01):
+            if (w * h * 0.0004) < l_area < (w * h * 0.012):
                 lx, ly, lbw, lbh = cv2.boundingRect(l_cnt)
                 abs_ly = label_band_top + ly
-                if lx > 20 and (lx + lbw) < (w - 20):
+                if lx > 15 and (lx + lbw) < (w - 15):
                     fark_sayisi += 1
                     eksik_etiket_sayisi += 1
                     etiket_turu = f"EKSİK ETİKET #{eksik_etiket_sayisi}"
@@ -344,8 +344,8 @@ def analyze_planogram_grid_free(reference, field, roi_top_ratio=0.05, roi_bottom
                     cv2.putText(result_img, etiket_turu, (lx, max(15, abs_ly - 5)), cv2.FONT_HERSHEY_SIMPLEX, 0.35, (0, 255, 0), 1, cv2.LINE_AA)
                     results.append({"id": fark_sayisi, "durum": etiket_turu, "x": lx, "y": abs_ly, "w": lbw, "h": lbh, "alan": l_area})
 
-        # 2. ÜRÜN ALANI KONTROLÜ (Etiket bandı kesinlikle dahil edilmez, üst sınır korundu)
-        product_bottom = label_band_top - 2
+        # 2. ÜRÜN ALANI KONTROLÜ (Etiket bandından güvenli bir mesafe ile tamamen izole edildi)
+        product_bottom = label_band_top - int(shelf_height * 0.06)
         ref_roi = ref_gray[s_top:product_bottom, :]
         tar_roi = tar_gray[s_top:product_bottom, :]
 
@@ -353,7 +353,7 @@ def analyze_planogram_grid_free(reference, field, roi_top_ratio=0.05, roi_bottom
         tar_roi_blur = cv2.GaussianBlur(tar_roi, (5, 5), 0)
 
         diff = cv2.absdiff(ref_roi_blur, tar_roi_blur)
-        _, thresh = cv2.threshold(diff, 50, 255, cv2.THRESH_BINARY)
+        _, thresh = cv2.threshold(diff, 55, 255, cv2.THRESH_BINARY)
 
         kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (7, 7))
         thresh = cv2.morphologyEx(thresh, cv2.MORPH_CLOSE, kernel, iterations=2)
@@ -363,13 +363,14 @@ def analyze_planogram_grid_free(reference, field, roi_top_ratio=0.05, roi_bottom
 
         for cnt in contours:
             area = cv2.contourArea(cnt)
-            if area < (w * h * 0.0015) or area > (w * h * 0.08):
+            if area < (w * h * 0.002) or area > (w * h * 0.08):
                 continue
 
             x, y, bw, bh = cv2.boundingRect(cnt)
             abs_y = s_top + y
 
-            if x < 10 or (x + bw) > (w - 10):
+            # Kenarlara veya ürün alt sınırına (etiket bölgesine) taşanları kesin olarak ele
+            if x < 15 or (x + bw) > (w - 15) or (y + bh) > (product_bottom - s_top - 5):
                 continue
 
             fark_sayisi += 1

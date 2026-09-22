@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """
 ÖZÇELİK STAND KONTROL UYGULAMASI
-Raf Bazlı Hassas Analiz + Etiketi Olup İçi Boş Alanlar İçin Kalın Kırmızı Çerçeve ("FARKLI GÖRSEL")
+Raf Bazlı Analiz + Kalın Kırmızı ("FARKLI GÖRSEL") + Kalın Yeşil (Eksik Etiket)
 """
 
 import difflib
@@ -234,7 +234,7 @@ def get_reference_image(public_key, dealer_path):
 
 
 # =========================================================
-# HASSAS RAF BAZLI HİZALAMA VE ANALİZ (KALIN KIRMIZI + FARKLI GÖRSEL)
+# HASSAS RAF BAZLI HİZALAMA VE ANALİZ 
 # =========================================================
 def gray_normalize(img):
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
@@ -303,6 +303,7 @@ def analyze_planogram_grid_free(reference, field, roi_top_ratio=0.05, roi_bottom
     fark_sayisi = 0
     paket_eksigi_sayisi = 0
     farkli_gorsel_sayisi = 0
+    eksik_etiket_sayisi = 0
 
     for i in range(6):
         s_top = top_y + (i * shelf_height)
@@ -350,13 +351,13 @@ def analyze_planogram_grid_free(reference, field, roi_top_ratio=0.05, roi_bottom
             
             if 0.2 < aspect_ratio < 2.0:
                 if has_label:
-                    # ETİKETİ VAR AMA İÇİ BOŞ -> "FARKLI GÖRSEL" + KALIN KIRMIZI (Kalınlık: 4)
+                    # ETİKETİ VAR AMA İÇİ BOŞ -> "FARKLI GÖRSEL" (Kalın Kırmızı)
                     farkli_gorsel_sayisi += 1
                     etiket_turu = f"FARKLI GÖRSEL #{farkli_gorsel_sayisi}"
                     box_color = (0, 0, 255) # Kırmızı
-                    box_thickness = 4        # KALIN ÇERÇEVE
+                    box_thickness = 4
                 else:
-                    # NORMAL EKSİK PAKET -> KIRMIZI
+                    # NORMAL EKSİK PAKET -> Kırmızı
                     paket_eksigi_sayisi += 1
                     etiket_turu = f"EKSİK #{paket_eksigi_sayisi}"
                     box_color = (0, 0, 255)
@@ -380,10 +381,42 @@ def analyze_planogram_grid_free(reference, field, roi_top_ratio=0.05, roi_bottom
 
             results.append({"id": fark_sayisi, "durum": etiket_turu, "x": x, "y": abs_y, "w": bw, "h": bh, "alan": area})
 
+        # =====================================================
+        # EKSİK ETİKET KONTROLÜ (Kalın Yeşil Çerçeve)
+        # =====================================================
+        label_strip_top = s_bottom - int(shelf_height * 0.28)
+        label_strip = tar_gray[label_strip_top:s_bottom, int(w*0.05):int(w*0.95)]
+        
+        _, label_thresh = cv2.threshold(label_strip, 40, 255, cv2.THRESH_BINARY_INV)
+        label_contours, _ = cv2.findContours(label_thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        
+        for l_cnt in label_contours:
+            l_area = cv2.contourArea(l_cnt)
+            if l_area > (w * h * 0.012): 
+                lx, ly, lbw, lbh = cv2.boundingRect(l_cnt)
+                abs_lx = int(w*0.05) + lx
+                abs_ly = label_strip_top + ly
+                
+                if lbw > 18 and lbh > 6:
+                    eksik_etiket_sayisi += 1
+                    # KALIN YEŞİL ÇERÇEVE
+                    cv2.rectangle(result_img, (abs_lx, abs_ly), (abs_lx + lbw, abs_ly + lbh), (0, 255, 0), 3)
+                    cv2.putText(
+                        result_img,
+                        f"EKSİK ETİKET",
+                        (abs_lx, max(15, abs_ly - 4)),
+                        cv2.FONT_HERSHEY_SIMPLEX,
+                        0.3,
+                        (0, 255, 0),
+                        1,
+                        cv2.LINE_AA,
+                    )
+
     summary = {
         "fark": fark_sayisi,
         "paket_eksigi": paket_eksigi_sayisi,
         "farkli_gorsel": farkli_gorsel_sayisi,
+        "eksik_etiket": eksik_etiket_sayisi,
         "supheli": 0,
         "uyumlu": 0,
         "hizalama_ok": aligned_ok,
@@ -402,7 +435,8 @@ def build_report(dealer, results, summary):
         "Tarih: " + datetime.now().strftime("%d.%m.%Y %H:%M:%S"),
         "",
         "Eksik Paket Sayısı: " + str(summary.get('paket_eksigi', 0)),
-        "Etiketi Olup İçi Boş Alan Sayısı (Farklı Görsel): " + str(summary.get('farkli_gorsel', 0)),
+        "Farklı Görsel Sayısı (Kalın Kırmızı): " + str(summary.get('farkli_gorsel', 0)),
+        "Eksik Etiket Sayısı (Kalın Yeşil): " + str(summary.get('eksik_etiket', 0)),
         "Toplam Tespit Edilen Fark: " + str(summary['fark']),
         "",
         "--- FARK BÖLGELERİ ---"
@@ -578,7 +612,7 @@ if st.button("🚀 KONTROLE BAŞLA", type="primary", use_container_width=True, d
     st.session_state.summary = None
     st.session_state.report = ""
 
-    with st.spinner("İlk 6 raf analiz ediliyor (Etiketi olan boş alanlar kalın kırmızı çerçeveleniyor)..."):
+    with st.spinner("İlk 6 raf analiz ediliyor (Farklı görseller ve eksik etiketler taranıyor)..."):
         try:
             result_img, results, summary, aligned_field = analyze_planogram_grid_free(
                 ref_img, field_img
@@ -594,9 +628,9 @@ if st.button("🚀 KONTROLE BAŞLA", type="primary", use_container_width=True, d
 if st.session_state.result_img is not None and st.session_state.summary:
     summary = st.session_state.summary
     m1, m2, m3 = st.columns(3)
-    m1.metric("Eksik Paket", summary.get("paket_eksigi", 0))
-    m2.metric("Farklı Görsel (Etiketli Boş)", summary.get("farkli_gorsel", 0))
-    m3.metric("Toplam Tespit", summary.get("fark", 0))
+    m1.metric("Farklı Görsel (Kırmızı)", summary.get("farkli_gorsel", 0))
+    m2.metric("Eksik Etiket (Yeşil)", summary.get("eksik_etiket", 0))
+    m3.metric("Paket Eksiği", summary.get("paket_eksigi", 0))
 
     st.image(st.session_state.result_img, channels="BGR", use_container_width=True)
 

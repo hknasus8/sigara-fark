@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """
 ÖZÇELİK STAND KONTROL UYGULAMASI
-Raf Bazlı Analiz + Kalın Kırmızı ("FARKLI GÖRSEL") + Kalın Yeşil (Eksik Etiket)
+Raf Bazlı Analiz + Kalın Kırmızı ("FARKLI GÖRSEL") + Tekil Kalın Yeşil (Eksik Etiketler)
 """
 
 import difflib
@@ -382,25 +382,40 @@ def analyze_planogram_grid_free(reference, field, roi_top_ratio=0.05, roi_bottom
             results.append({"id": fark_sayisi, "durum": etiket_turu, "x": x, "y": abs_y, "w": bw, "h": bh, "alan": area})
 
         # =====================================================
-        # EKSİK ETİKET KONTROLÜ (Kalın Yeşil Çerçeve)
+        # TEKİL EKSİK ETİKET KONTROLÜ (Kalın Yeşil Çerçeve)
         # =====================================================
-        label_strip_top = s_bottom - int(shelf_height * 0.28)
-        label_strip = tar_gray[label_strip_top:s_bottom, int(w*0.05):int(w*0.95)]
+        label_strip_top = s_bottom - int(shelf_height * 0.30)
+        label_strip_roi = tar_gray[label_strip_top:s_bottom, int(w*0.05):int(w*0.95)]
         
-        _, label_thresh = cv2.threshold(label_strip, 40, 255, cv2.THRESH_BINARY_INV)
-        label_contours, _ = cv2.findContours(label_thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        # Referans etiket bandı ile karşılaştırma yaparak boşlukları bul
+        ref_label_strip = ref_gray[label_strip_top:s_bottom, int(w*0.05):int(w*0.95)]
         
-        for l_cnt in label_contours:
-            l_area = cv2.contourArea(l_cnt)
-            if l_area > (w * h * 0.012): 
-                lx, ly, lbw, lbh = cv2.boundingRect(l_cnt)
-                abs_lx = int(w*0.05) + lx
-                abs_ly = label_strip_top + ly
+        if label_strip_roi.size > 0 and ref_label_strip.size > 0:
+            # Referansta dolu olup sahada boş (koyu/eksik) olan etiket alanlarını tespiti
+            _, ref_th = cv2.threshold(ref_label_strip, 80, 255, cv2.THRESH_BINARY)
+            _, tar_th = cv2.threshold(label_strip_roi, 80, 255, cv2.THRESH_BINARY)
+            
+            # Referansta var olan etiketlerin slot konumu analizi
+            num_slots = 18  # Raftaki yaklaşık etiket slot sayısı
+            slot_width = label_strip_roi.shape[1] // num_slots
+            
+            for s_idx in range(num_slots):
+                sx_start = s_idx * slot_width
+                sx_end = (s_idx + 1) * slot_width
                 
-                if lbw > 18 and lbh > 6:
+                ref_slot = ref_th[:, sx_start:sx_end]
+                tar_slot = tar_th[:, sx_start:sx_end]
+                
+                # Eğer referansta bu slotta etiket var ama sahada yoksa / karanlıksa
+                if np.mean(ref_slot) > 50 and np.mean(tar_slot) < 30:
                     eksik_etiket_sayisi += 1
-                    # KALIN YEŞİL ÇERÇEVE
-                    cv2.rectangle(result_img, (abs_lx, abs_ly), (abs_lx + lbw, abs_ly + lbh), (0, 255, 0), 3)
+                    abs_lx = int(w*0.05) + sx_start
+                    abs_ly = label_strip_top
+                    lw_box = slot_width
+                    lh_box = s_bottom - label_strip_top
+                    
+                    # KALIN YEŞİL ÇERÇEVE (Kalınlık: 3)
+                    cv2.rectangle(result_img, (abs_lx, abs_ly), (abs_lx + lw_box, abs_ly + lh_box), (0, 255, 0), 3)
                     cv2.putText(
                         result_img,
                         f"EKSİK ETİKET",
@@ -534,7 +549,7 @@ with refresh_col:
         clear_yandex_cache()
         st.rerun()
 
-st.subheader("1. Şehir ve Bayi Seçiniz")
+st.subheader("1. Şehir dan Bayi Seçiniz")
 cities, city_error = get_cities(YANDEX_ROOT_PUBLIC_KEY)
 if city_error:
     st.warning("Yandex şehir listesi alınamadı: " + str(city_error))
@@ -612,7 +627,7 @@ if st.button("🚀 KONTROLE BAŞLA", type="primary", use_container_width=True, d
     st.session_state.summary = None
     st.session_state.report = ""
 
-    with st.spinner("İlk 6 raf analiz ediliyor (Farklı görseller ve eksik etiketler taranıyor)..."):
+    with st.spinner("İlk 6 raf analiz ediliyor (Farklı görseller ve tekil eksik etiketler taranıyor)..."):
         try:
             result_img, results, summary, aligned_field = analyze_planogram_grid_free(
                 ref_img, field_img

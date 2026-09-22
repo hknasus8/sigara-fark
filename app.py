@@ -234,7 +234,7 @@ def get_reference_image(public_key, dealer_path):
 
 
 # =========================================================
-# HASSAS RAF BAZLI HİZALAMA VE ANALİZ (GÜNCELLENMİŞ ESNEK YAPI)
+# HASSAS RAF BAZLI HİZALAMA VE ANALİZ (GÜNCELLENMİŞ TABAN BANT YAPISI)
 # =========================================================
 def gray_normalize(img):
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
@@ -296,12 +296,14 @@ def _count_wide_segments(binary_row, min_w=15, max_w=90):
     return cnt
 
 
-def find_label_bands(gray, top_y, bottom_y):
-    roi = gray[top_y:bottom_y, :]
+def find_shelf_label_bands(gray, shelf_top, shelf_bot):
+    # Ürünler arasında arama yapmaması için, sadece ilgili rafın alt %35'lik kısmını tarıyoruz
+    h_shelf = shelf_bot - shelf_top
+    band_search_top = shelf_top + int(h_shelf * 0.65)
+    roi = gray[band_search_top:shelf_bot, :]
     if roi.size == 0:
         return []
 
-    # Eşik değeri 120'ye düşürüldü (gölgeli/az ışıklı alanlar için)
     _, bright = cv2.threshold(roi, 120, 255, cv2.THRESH_BINARY)
     bright01 = (bright > 0).astype(np.uint8)
 
@@ -313,8 +315,6 @@ def find_label_bands(gray, top_y, bottom_y):
         return []
 
     smooth = np.convolve(seg_counts, np.ones(5) / 5.0, mode="same")
-    
-    # Yoğunluk kriteri esnetildi (6 yerine 3)
     is_label_row = smooth >= 3
 
     bands = []
@@ -330,8 +330,7 @@ def find_label_bands(gray, top_y, bottom_y):
     if in_band:
         bands.append((start, len(is_label_row)))
 
-    # Yükseklik toleransı genişletildi (10 - 50 piksel)
-    return [(b[0] + top_y, b[1] + top_y) for b in bands if 10 <= (b[1] - b[0]) <= 50]
+    return [(b[0] + band_search_top, b[1] + band_search_top) for b in bands if 8 <= (b[1] - b[0]) <= 40]
 
 
 def segment_label_cells(gray, band_top, band_bot):
@@ -343,7 +342,6 @@ def segment_label_cells(gray, band_top, band_bot):
     mask01 = (mask > 0).astype(np.float32)
     col_frac = mask01.mean(axis=0)
 
-    # Sütun doluluk oranı esnetildi (0.4 yerine 0.25)
     is_label_col = col_frac > 0.25
     x_ranges = []
     in_cell = False
@@ -364,8 +362,6 @@ def segment_label_cells(gray, band_top, band_bot):
         if bw < 10 or bw > 120:
             continue
         row_frac = mask01[:, x1:x2].mean(axis=1)
-        
-        # Satır doluluk oranı esnetildi (0.75 yerine 0.50)
         rows = np.where(row_frac > 0.50)[0]
         if rows.size == 0:
             continue
@@ -375,46 +371,6 @@ def segment_label_cells(gray, band_top, band_bot):
             continue
         cells.append((x1, band_top + y1, bw, bh))
     return cells
-
-
-def detect_empty_labels(ref_gray, tar_gray, result_img, top_y, bottom_y, w):
-    label_bands = find_label_bands(ref_gray, top_y, bottom_y)
-
-    eksik_etiket_sayisi = 0
-    eksik_etiket_results = []
-
-    for band_top, band_bot in label_bands:
-        cells = segment_label_cells(ref_gray, band_top, band_bot)
-        for (x, y, bw, bh) in cells:
-            ref_cell = ref_gray[y:y + bh, x:x + bw]
-            tar_cell = tar_gray[y:y + bh, x:x + bw]
-            if ref_cell.size == 0 or tar_cell.size == 0:
-                continue
-
-            ref_std = float(np.std(ref_cell))
-            tar_std = float(np.std(tar_cell))
-            tar_mean = float(np.mean(tar_cell))
-
-            # Esnetilmiş koşullar (Daha az ışık alan veya hafif gölgeli boş etiketleri kaçırmamak için)
-            if ref_std > 15 and tar_mean > 120 and tar_std < 45:
-                eksik_etiket_sayisi += 1
-
-                cv2.rectangle(result_img, (x, y), (x + bw, y + bh), (0, 255, 0), 3)
-                cv2.putText(
-                    result_img,
-                    f"EKSIK ETIKET #{eksik_etiket_sayisi}",
-                    (x, max(15, y - 5)),
-                    cv2.FONT_HERSHEY_SIMPLEX,
-                    0.35,
-                    (0, 255, 0),
-                    1,
-                    cv2.LINE_AA,
-                )
-                eksik_etiket_results.append(
-                    {"id": eksik_etiket_sayisi, "durum": "EKSIK ETIKET", "x": x, "y": y, "w": bw, "h": bh, "alan": bw * bh}
-                )
-
-    return eksik_etiket_sayisi, eksik_etiket_results
 
 
 def analyze_planogram_grid_free(reference, field, roi_top_ratio=0.05, roi_bottom_ratio=0.82):
@@ -439,6 +395,7 @@ def analyze_planogram_grid_free(reference, field, roi_top_ratio=0.05, roi_bottom
     fark_sayisi = 0
     paket_eksigi_sayisi = 0
     farkli_gorsel_sayisi = 0
+    eksik_etiket_sayisi = 0
 
     for i in range(6):
         s_top = top_y + (i * shelf_height)
@@ -513,10 +470,37 @@ def analyze_planogram_grid_free(reference, field, roi_top_ratio=0.05, roi_bottom
 
             results.append({"id": fark_sayisi, "durum": etiket_turu, "x": x, "y": abs_y, "w": bw, "h": bh, "alan": area})
 
-    eksik_etiket_sayisi, eksik_etiket_results = detect_empty_labels(
-        ref_gray, tar_gray, result_img, top_y, bottom_y, w
-    )
-    results.extend(eksik_etiket_results)
+        # --- Rafın kendi tabanındaki etiketleri kontrol et ---
+        shelf_bands = find_shelf_label_bands(ref_gray, s_top, s_bottom)
+        for band_top, band_bot in shelf_bands:
+            cells = segment_label_cells(ref_gray, band_top, band_bot)
+            for (cx, cy, cbw, cbh) in cells:
+                ref_cell = ref_gray[cy:cy + cbh, cx:cx + cbw]
+                tar_cell = tar_gray[cy:cy + cbh, cx:cx + cbw]
+                if ref_cell.size == 0 or tar_cell.size == 0:
+                    continue
+
+                ref_std = float(np.std(ref_cell))
+                tar_std = float(np.std(tar_cell))
+                tar_mean = float(np.mean(tar_cell))
+
+                if ref_std > 15 and tar_mean > 120 and tar_std < 45:
+                    eksik_etiket_sayisi += 1
+                    cv2.rectangle(result_img, (cx, cy), (cx + cbw, cy + cbh), (0, 255, 0), 3)
+                    cv2.putText(
+                        result_img,
+                        f"EKSIK ETIKET #{eksik_etiket_sayisi}",
+                        (cx, max(15, cy - 5)),
+                        cv2.FONT_HERSHEY_SIMPLEX,
+                        0.35,
+                        (0, 255, 0),
+                        1,
+                        cv2.LINE_AA,
+                    )
+                    results.append(
+                        {"id": fark_sayisi + eksik_etiket_sayisi, "durum": "EKSIK ETIKET", "x": cx, "y": cy, "w": cbw, "h": cbh, "alan": cbw * cbh}
+                    )
+
     fark_sayisi += eksik_etiket_sayisi
 
     summary = {

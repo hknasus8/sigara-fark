@@ -1,7 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-ÖZÇELİK STAND KONTROL UYGULAMASI
-Raf Bazlı Analiz + Kalın Kırmızı ("FARKLI GÖRSEL") + Dinamik Etiket Tespiti (Yeşil)
+ÖZÇELİK STAND KONTROL UYGULAMASI (Sadeleştirilmiş ve Kararlı Sürüm)
 """
 
 import difflib
@@ -234,7 +233,7 @@ def get_reference_image(public_key, dealer_path):
 
 
 # =========================================================
-# HASSAS RAF BAZLI HİZALAMA VE ANALİZ (GÜNCELLENMİŞ TABAN BANT YAPISI)
+# GÖRSEL HİZALAMA VE ANALİZ
 # =========================================================
 def gray_normalize(img):
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
@@ -281,98 +280,6 @@ def align_images_feature(reference, target):
     return aligned, True
 
 
-def _count_wide_segments(binary_row, min_w=15, max_w=90):
-    cnt = 0
-    run = 0
-    for v in binary_row:
-        if v:
-            run += 1
-        else:
-            if min_w <= run <= max_w:
-                cnt += 1
-            run = 0
-    if min_w <= run <= max_w:
-        cnt += 1
-    return cnt
-
-
-def find_shelf_label_bands(gray, shelf_top, shelf_bot):
-    # Ürünler arasında arama yapmaması için, sadece ilgili rafın alt %35'lik kısmını tarıyoruz
-    h_shelf = shelf_bot - shelf_top
-    band_search_top = shelf_top + int(h_shelf * 0.65)
-    roi = gray[band_search_top:shelf_bot, :]
-    if roi.size == 0:
-        return []
-
-    _, bright = cv2.threshold(roi, 120, 255, cv2.THRESH_BINARY)
-    bright01 = (bright > 0).astype(np.uint8)
-
-    seg_counts = np.array(
-        [_count_wide_segments(bright01[y]) for y in range(bright01.shape[0])],
-        dtype=np.float32,
-    )
-    if seg_counts.size == 0:
-        return []
-
-    smooth = np.convolve(seg_counts, np.ones(5) / 5.0, mode="same")
-    is_label_row = smooth >= 3
-
-    bands = []
-    in_band = False
-    start = 0
-    for y, v in enumerate(is_label_row):
-        if v and not in_band:
-            start = y
-            in_band = True
-        elif not v and in_band:
-            bands.append((start, y))
-            in_band = False
-    if in_band:
-        bands.append((start, len(is_label_row)))
-
-    return [(b[0] + band_search_top, b[1] + band_search_top) for b in bands if 8 <= (b[1] - b[0]) <= 40]
-
-
-def segment_label_cells(gray, band_top, band_bot):
-    band = gray[band_top:band_bot, :]
-    if band.size == 0:
-        return []
-
-    _, mask = cv2.threshold(band, 120, 255, cv2.THRESH_BINARY)
-    mask01 = (mask > 0).astype(np.float32)
-    col_frac = mask01.mean(axis=0)
-
-    is_label_col = col_frac > 0.25
-    x_ranges = []
-    in_cell = False
-    start = 0
-    for x, v in enumerate(is_label_col):
-        if v and not in_cell:
-            start = x
-            in_cell = True
-        elif not v and in_cell:
-            x_ranges.append((start, x))
-            in_cell = False
-    if in_cell:
-        x_ranges.append((start, len(is_label_col)))
-
-    cells = []
-    for x1, x2 in x_ranges:
-        bw = x2 - x1
-        if bw < 10 or bw > 120:
-            continue
-        row_frac = mask01[:, x1:x2].mean(axis=1)
-        rows = np.where(row_frac > 0.50)[0]
-        if rows.size == 0:
-            continue
-        y1, y2 = int(rows.min()), int(rows.max()) + 1
-        bh = y2 - y1
-        if bh < 5:
-            continue
-        cells.append((x1, band_top + y1, bw, bh))
-    return cells
-
-
 def analyze_planogram_grid_free(reference, field, roi_top_ratio=0.05, roi_bottom_ratio=0.82):
     h, w = reference.shape[:2]
     field = cv2.resize(field, (w, h), interpolation=cv2.INTER_AREA)
@@ -395,7 +302,6 @@ def analyze_planogram_grid_free(reference, field, roi_top_ratio=0.05, roi_bottom
     fark_sayisi = 0
     paket_eksigi_sayisi = 0
     farkli_gorsel_sayisi = 0
-    eksik_etiket_sayisi = 0
 
     for i in range(6):
         s_top = top_y + (i * shelf_height)
@@ -427,32 +333,18 @@ def analyze_planogram_grid_free(reference, field, roi_top_ratio=0.05, roi_bottom
             if x < 10 or (x + bw) > (w - 10):
                 continue
 
-            check_label_y1 = min(s_bottom - 5, abs_y + bh - int(bh * 0.2))
-            check_label_y2 = min(s_bottom, abs_y + bh + int(bh * 0.3))
-            label_strip_region = tar_gray[check_label_y1:check_label_y2, max(0, x-5):min(w, x+bw+5)]
-            
-            has_label = False
-            if label_strip_region.size > 0:
-                mean_brightness = np.mean(label_strip_region)
-                if mean_brightness > 75: 
-                    has_label = True
-
             fark_sayisi += 1
             aspect_ratio = float(bw) / max(1, bh)
             
             if 0.2 < aspect_ratio < 2.0:
-                if has_label:
-                    farkli_gorsel_sayisi += 1
-                    etiket_turu = f"FARKLI GÖRSEL #{farkli_gorsel_sayisi}"
-                    box_color = (0, 0, 255) # Kırmızı
-                    box_thickness = 4
-                else:
-                    paket_eksigi_sayisi += 1
-                    etiket_turu = f"EKSİK #{paket_eksigi_sayisi}"
-                    box_color = (0, 0, 255)
-                    box_thickness = 2
+                # Sadece gerçek görsel/paket uyumsuzlukları
+                farkli_gorsel_sayisi += 1
+                etiket_turu = f"FARKLI GÖRSEL #{farkli_gorsel_sayisi}"
+                box_color = (0, 0, 255) # Kırmızı
+                box_thickness = 4
             else:
-                etiket_turu = f"FARK #{fark_sayisi}"
+                paket_eksigi_sayisi += 1
+                etiket_turu = f"EKSİK PAKET #{paket_eksigi_sayisi}"
                 box_color = (0, 0, 255)
                 box_thickness = 2
 
@@ -470,44 +362,10 @@ def analyze_planogram_grid_free(reference, field, roi_top_ratio=0.05, roi_bottom
 
             results.append({"id": fark_sayisi, "durum": etiket_turu, "x": x, "y": abs_y, "w": bw, "h": bh, "alan": area})
 
-        # --- Rafın kendi tabanındaki etiketleri kontrol et ---
-        shelf_bands = find_shelf_label_bands(ref_gray, s_top, s_bottom)
-        for band_top, band_bot in shelf_bands:
-            cells = segment_label_cells(ref_gray, band_top, band_bot)
-            for (cx, cy, cbw, cbh) in cells:
-                ref_cell = ref_gray[cy:cy + cbh, cx:cx + cbw]
-                tar_cell = tar_gray[cy:cy + cbh, cx:cx + cbw]
-                if ref_cell.size == 0 or tar_cell.size == 0:
-                    continue
-
-                ref_std = float(np.std(ref_cell))
-                tar_std = float(np.std(tar_cell))
-                tar_mean = float(np.mean(tar_cell))
-
-                if ref_std > 15 and tar_mean > 120 and tar_std < 45:
-                    eksik_etiket_sayisi += 1
-                    cv2.rectangle(result_img, (cx, cy), (cx + cbw, cy + cbh), (0, 255, 0), 3)
-                    cv2.putText(
-                        result_img,
-                        f"EKSIK ETIKET #{eksik_etiket_sayisi}",
-                        (cx, max(15, cy - 5)),
-                        cv2.FONT_HERSHEY_SIMPLEX,
-                        0.35,
-                        (0, 255, 0),
-                        1,
-                        cv2.LINE_AA,
-                    )
-                    results.append(
-                        {"id": fark_sayisi + eksik_etiket_sayisi, "durum": "EKSIK ETIKET", "x": cx, "y": cy, "w": cbw, "h": cbh, "alan": cbw * cbh}
-                    )
-
-    fark_sayisi += eksik_etiket_sayisi
-
     summary = {
         "fark": fark_sayisi,
         "paket_eksigi": paket_eksigi_sayisi,
         "farkli_gorsel": farkli_gorsel_sayisi,
-        "eksik_etiket": eksik_etiket_sayisi,
         "supheli": 0,
         "uyumlu": 0,
         "hizalama_ok": aligned_ok,
@@ -527,7 +385,6 @@ def build_report(dealer, results, summary):
         "",
         "Eksik Paket Sayısı: " + str(summary.get('paket_eksigi', 0)),
         "Farklı Görsel Sayısı (Kalın Kırmızı): " + str(summary.get('farkli_gorsel', 0)),
-        "Eksik Etiket Sayısı (Kalın Yeşil): " + str(summary.get('eksik_etiket', 0)),
         "Toplam Tespit Edilen Fark: " + str(summary['fark']),
         "",
         "--- FARK BÖLGELERİ ---"
@@ -703,7 +560,7 @@ if st.button("🚀 KONTROLE BAŞLA", type="primary", use_container_width=True, d
     st.session_state.summary = None
     st.session_state.report = ""
 
-    with st.spinner("İlk 6 raf analiz ediliyor (Dinamik etiketler ve görseller taranıyor)..."):
+    with st.spinner("İlk 6 raf analiz ediliyor (Planogram ve paket farkları taranıyor)..."):
         try:
             result_img, results, summary, aligned_field = analyze_planogram_grid_free(
                 ref_img, field_img
@@ -718,10 +575,9 @@ if st.button("🚀 KONTROLE BAŞLA", type="primary", use_container_width=True, d
 
 if st.session_state.result_img is not None and st.session_state.summary:
     summary = st.session_state.summary
-    m1, m2, m3 = st.columns(3)
+    m1, m2 = st.columns(2)
     m1.metric("Farklı Görsel (Kırmızı)", summary.get("farkli_gorsel", 0))
-    m2.metric("Eksik Etiket (Yeşil)", summary.get("eksik_etiket", 0))
-    m3.metric("Paket Eksiği", summary.get("paket_eksigi", 0))
+    m2.metric("Paket Eksiği", summary.get("paket_eksigi", 0))
 
     st.image(st.session_state.result_img, channels="BGR", use_container_width=True)
 

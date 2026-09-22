@@ -47,7 +47,7 @@ if "cache_initialized" not in st.session_state:
 # =========================================================
 # SABİTLER
 # =========================================================
-YANDEX_ROOT_PUBLIC_KEY = "[https://disk.yandex.com.tr/d/ikCHPwREiCVv_g](https://disk.yandex.com.tr/d/ikCHPwREiCVv_g)"
+YANDEX_ROOT_PUBLIC_KEY = "https://disk.yandex.com.tr/d/ikCHPwREiCVv_g"
 RAF_SAYISI = 6  
 
 
@@ -127,7 +127,7 @@ def safe_download_image(url, timeout=25):
 def yandex_root_items(public_key):
     try:
         url = (
-            "[https://cloud-api.yandex.net/v1/disk/public/resources](https://cloud-api.yandex.net/v1/disk/public/resources)"
+            "https://cloud-api.yandex.net/v1/disk/public/resources"
             f"?public_key={urllib.parse.quote(public_key, safe='')}"
             "&limit=500"
         )
@@ -143,7 +143,7 @@ def yandex_root_items(public_key):
 def yandex_list_dir(public_key, path):
     try:
         url = (
-            "[https://cloud-api.yandex.net/v1/disk/public/resources](https://cloud-api.yandex.net/v1/disk/public/resources)"
+            "https://cloud-api.yandex.net/v1/disk/public/resources"
             f"?public_key={urllib.parse.quote(public_key, safe='')}"
             f"&path={urllib.parse.quote(path, safe='/')}"
             "&limit=500"
@@ -518,4 +518,96 @@ if city:
 
 with c2:
     st.markdown("**Bayi Arama ve Seçim**")
-    search_term = st.text_input
+    search_term = st.text_input("Bayi ara", placeholder="Jandarma, HTC vb. yazın...", key="dealer_search_box", label_visibility="collapsed")
+    
+    def tr_lower(text):
+        return str(text).replace("İ", "i").replace("I", "ı").lower()
+
+    filtered_dealers = []
+    search_cleaned = tr_lower(search_term).strip()
+    search_words = [w for w in search_cleaned.split() if w]
+    for dealer in dealers:
+        dealer_name_lower = tr_lower(dealer["raw_name"])
+        if not search_words or all(word in dealer_name_lower for word in search_words):
+            filtered_dealers.append(dealer)
+
+    dealer_choices = {x["raw_name"]: x for x in filtered_dealers}
+    dealer_raw_names = list(dealer_choices.keys())
+    selected_raw_dealer = st.selectbox("Bayi", options=[""] + dealer_raw_names, format_func=lambda x: "Arama sonucu eşleşen bayiyi seçin..." if x == "" else x, label_visibility="collapsed")
+    
+    dealer_name = ""
+    dealer_path = ""
+    if selected_raw_dealer in dealer_choices:
+        dealer_name = dealer_choices[selected_raw_dealer]["raw_name"]
+        dealer_path = dealer_choices[selected_raw_dealer]["path"]
+
+st.divider()
+st.subheader("2. POG Referans Planı ve SFA Saha Fotoğrafı")
+
+ref_img = None
+if dealer_path:
+    with st.spinner("Sistemdeki POG orijinal referans fotoğrafı bulunuyor..."):
+        ref_img, ref_error = get_reference_image(YANDEX_ROOT_PUBLIC_KEY, dealer_path)
+
+u1, u2 = st.columns(2)
+with u1:
+    st.markdown("**Planogram (POG) Orijinal Referans Fotoğrafı**")
+    if ref_img is None:
+        ref_upload = st.file_uploader("İsterseniz elle yükleyin", type=["jpg", "jpeg", "png", "webp"], key="ref_upload")
+        if ref_upload is not None:
+            ref_img = prepare_image(decode_uploaded(ref_upload))
+    if ref_img is not None:
+        st.image(ref_img, channels="BGR", use_container_width=True)
+    else:
+        st.info("Şehir/bayi seçin veya POG referans görseli yükleyin.")
+
+with u2:
+    st.markdown("**SFA (Saha Satış) Fotoğrafı**")
+    field_upload = st.file_uploader("Saha fotoğrafını yükleyin", type=["jpg", "jpeg", "png", "webp"], key="field_upload")
+    field_img = prepare_image(decode_uploaded(field_upload)) if field_upload is not None else None
+    if field_img is not None:
+        st.image(field_img, channels="BGR", use_container_width=True)
+    else:
+        st.info("SFA sahadan gelen fotoğrafı yükleyin.")
+
+st.divider()
+
+ready = ref_img is not None and field_img is not None
+
+if st.button("🚀 SFA & POG KONTROLÜNÜ BAŞLAT", type="primary", use_container_width=True, disabled=not ready):
+    st.session_state.result_img = None
+    st.session_state.results = []
+    st.session_state.summary = None
+    st.session_state.report = ""
+
+    with st.spinner("SFA algoritmaları ve POG şablon eşleştirmesi çalıştırılıyor..."):
+        try:
+            result_img, results, summary, aligned_field = analyze_planogram_grid_free(
+                ref_img, field_img
+            )
+
+            st.session_state.result_img = result_app_img = result_img
+            st.session_state.results = results
+            st.session_state.summary = summary
+            st.session_state.report = build_report(dealer_name or "Manuel", results, summary)
+        except Exception as exc:
+            st.error("SFA & POG analiz motorunda hata oluştu: " + str(exc))
+
+if st.session_state.result_img is not None and st.session_state.summary:
+    summary = st.session_state.summary
+    m1, m2 = st.columns(2)
+    m1.metric("POG İlk 6 Raftaki Uyumsuzluk/Farklı Ürün", summary.get("farkli_gorsel", 0))
+    m2.metric("SFA 6. Raf Sonrası İhlal/Çarpı Atılan Ürün", summary.get("asiri_raf_ihlali", 0))
+
+    st.image(st.session_state.result_img, channels="BGR", use_container_width=True)
+
+    d1, d2 = st.columns(2)
+    ok, encoded = cv2.imencode(".jpg", st.session_state.result_img)
+    if ok:
+        with d1:
+            st.download_button("📥 SFA Denetim Görselini İndir", data=encoded.tobytes(), file_name="sfa_pog_denetim_sonuc.jpg", mime="image/jpeg", use_container_width=True)
+    if st.session_state.report:
+        with d2:
+            st.download_button("📄 SFA Raporunu İndir", data=st.session_state.report.encode("utf-8"), file_name="sfa_pog_rapor.txt", mime="text/plain", use_container_width=True)
+else:
+    st.info("Denetim için POG referans ve SFA saha fotoğraflarını yükleyin, ardından 'SFA & POG KONTROLÜNÜ BAŞLAT' düğmesine basın.")

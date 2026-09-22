@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-ÖZÇELİK STAND KONTROL UYGULAMASI (Otomatik Önbellek Temizleme ve Meyve Analiz Sürümü)
+ÖZÇELİK STAND KONTROL UYGULAMASI (İlk 6 Raf Kontrolü + Sonraki Raflara Çarpı Sürümü)
 """
 
 import difflib
@@ -225,7 +225,7 @@ def get_reference_image(public_key, dealer_path):
         if item.get("type") != "file":
             continue
         name = normalize_text(item.get("name", ""))
-        if name.endswith((".JPG", ".JPEG", ".PNG", ".WEBP")):
+.       if name.endswith((".JPG", ".JPEG", ".PNG", ".WEBP")):
             image_items.append(item)
     image_items.sort(
         key=lambda x: (
@@ -241,7 +241,7 @@ def get_reference_image(public_key, dealer_path):
 
 
 # =========================================================
-# GÖRSEL HİZALAMA VE ANALİZ (BEYAZ ÇERÇEVELİ MEYVE TESPİTİ)
+# GÖRSEL HİZALAMA VE ANALİZ
 # =========================================================
 def gray_normalize(img):
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
@@ -304,73 +304,110 @@ def analyze_planogram_grid_free(reference, field, roi_top_ratio=0.05, roi_bottom
 
     top_y = int(h * roi_top_ratio)
     bottom_y = int(h * roi_bottom_ratio)
-    shelf_height = (bottom_y - top_y) // 6
+    
+    # Tüm stand boyu (örneğin 9 raf veya toplam yükseklik) üzerinden raf aralığını hesapla
+    # İlk 6 raf üst kısımda kalır, 6. raftan sonrası alt kısımda kalır.
+    total_estimated_shelves = 9  # Standın tamamındaki yaklaşık raf sayısı
+    shelf_height = (bottom_y - top_y) // 6  # İlk 6 rafın toplam yüksekliğe oranı
 
     results = []
     fark_sayisi = 0
     farkli_meyve_sayisi = 0
+    asiri_raf_ihlali = 0
 
-    for i in range(6):
+    for i in range(total_estimated_shelves):
         s_top = top_y + (i * shelf_height)
-        s_bottom = s_top + shelf_height if i < 5 else bottom_y
+        s_bottom = s_top + shelf_height if i < total_estimated_shelves - 1 else bottom_y
 
-        ref_roi = ref_gray[s_top:s_bottom, :]
-        tar_roi = tar_gray[s_top:s_bottom, :]
+        if s_top >= h:
+            break
 
-        ref_roi_blur = cv2.GaussianBlur(ref_roi, (5, 5), 0)
-        tar_roi_blur = cv2.GaussianBlur(tar_roi, (5, 5), 0)
+        # KONTROL EDİLECEK ALAN: Sadece ilk 6 raf (0, 1, 2, 3, 4, 5 indeksleri)
+        if i < 6:
+            ref_roi = ref_gray[s_top:s_bottom, :]
+            tar_roi = tar_gray[s_top:s_bottom, :]
 
-        diff = cv2.absdiff(ref_roi_blur, tar_roi_blur)
-        _, thresh = cv2.threshold(diff, 50, 255, cv2.THRESH_BINARY)
+            ref_roi_blur = cv2.GaussianBlur(ref_roi, (5, 5), 0)
+            tar_roi_blur = cv2.GaussianBlur(tar_roi, (5, 5), 0)
 
-        kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (7, 7))
-        thresh = cv2.morphologyEx(thresh, cv2.MORPH_CLOSE, kernel, iterations=2)
-        thresh = cv2.morphologyEx(thresh, cv2.MORPH_OPEN, kernel, iterations=1)
+            diff = cv2.absdiff(ref_roi_blur, tar_roi_blur)
+            _, thresh = cv2.threshold(diff, 50, 255, cv2.THRESH_BINARY)
 
-        contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+            kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (7, 7))
+            thresh = cv2.morphologyEx(thresh, cv2.MORPH_CLOSE, kernel, iterations=2)
+            thresh = cv2.morphologyEx(thresh, cv2.MORPH_OPEN, kernel, iterations=1)
 
-        for cnt in contours:
-            area = cv2.contourArea(cnt)
-            if area < (w * h * 0.0012) or area > (w * h * 0.08):
-                continue
+            contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
-            x, y, bw, bh = cv2.boundingRect(cnt)
-            abs_y = s_top + y
+            for cnt in contours:
+                area = cv2.contourArea(cnt)
+                if area < (w * h * 0.0012) or area > (w * h * 0.08):
+                    continue
 
-            if x < 10 or (x + bw) > (w - 10):
-                continue
+                x, y, bw, bh = cv2.boundingRect(cnt)
+                abs_y = s_top + y
 
-            fark_sayisi += 1
-            farkli_meyve_sayisi += 1
-            etiket_turu = f"FARKLI MEYVE #{farkli_meyve_sayisi}"
+                if x < 10 or (x + bw) > (w - 10):
+                    continue
+
+                fark_sayisi += 1
+                farkli_meyve_sayisi += 1
+                etiket_turu = f"FARKLI MEYVE #{farkli_meyve_sayisi}"
+                
+                # İstendiği üzere BEYAZ renk ve KALIN (kalınlık: 4) çerçeve
+                box_color = (255, 255, 255) # BEYAZ (BGR)
+                box_thickness = 4
+
+                cv2.rectangle(result_img, (x, abs_y), (x + bw, abs_y + bh), box_color, box_thickness)
+                cv2.putText(
+                    result_img,
+                    etiket_turu,
+                    (x, max(15, abs_y - 5)),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    0.35,
+                    (0, 0, 0),
+                    1,
+                    cv2.LINE_AA,
+                )
+
+                results.append({"id": fark_sayisi, "durum": etiket_turu, "x": x, "y": abs_y, "w": bw, "h": bh, "alan": area})
+
+        else:
+            # 6. RAFIN SONRASI (7., 8., 9. raflar vb.) -> Üzerine X (Çarpı işareti) koy
+            # Bu raflardaki ürün gruplarını veya raf şeritlerini tarayarak üzerlerine çarpı atalım
+            tar_roi = tar_gray[s_top:s_bottom, :]
+            tar_roi_blur = cv2.GaussianBlur(tar_roi, (5, 5), 0)
             
-            # İstendiği üzere BEYAZ renk ve KALIN (kalınlık: 4) çerçeve
-            box_color = (255, 255, 255) # BEYAZ (BGR formatında)
-            box_thickness = 4
+            # Alt raflardaki ürün/paket bloklarını bulmak için eşikleme
+            _, thresh = cv2.threshold(tar_roi_blur, 100, 255, cv2.THRESH_BINARY_INV)
+            kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (10, 10))
+            thresh = cv2.morphologyEx(thresh, cv2.MORPH_CLOSE, kernel, iterations=2)
+            
+            contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+            for cnt in contours:
+                area = cv2.contourArea(cnt)
+                if area < (w * h * 0.001):
+                    continue
+                x, y, bw, bh = cv2.boundingRect(cnt)
+                abs_y = s_top + y
+                
+                if x < 10 or (x + bw) > (w - 10) or bw < 20 or bh < 20:
+                    continue
 
-            cv2.rectangle(result_img, (x, abs_y), (x + bw, abs_y + bh), box_color, box_thickness)
-            cv2.putText(
-                result_img,
-                etiket_turu,
-                (x, max(15, abs_y - 5)),
-                cv2.FONT_HERSHEY_SIMPLEX,
-                0.35,
-                (0, 0, 0), # Yazının arka planda okunabilmesi için siyah renk gölge/metin
-                1,
-                cv2.LINE_AA,
-            )
-
-            results.append({"id": fark_sayisi, "durum": etiket_turu, "x": x, "y": abs_y, "w": bw, "h": bh, "alan": area})
+                asiri_raf_ihlali += 1
+                # Kırmızı renkte kalın X işareti çizimi
+                cv2.line(result_img, (x, abs_y), (x + bw, abs_y + bh), (0, 0, 255), 3)
+                cv2.line(result_img, (x, abs_y + bh), (x + bw, abs_y), (0, 0, 255), 3)
+                
+                results.append({"id": f"X_{asiri_raf_ihlali}", "durum": "6. RAF DIŞI ÜRÜN", "x": x, "y": abs_y, "w": bw, "h": bh, "alan": area})
 
     summary = {
         "fark": fark_sayisi,
         "paket_eksigi": 0,
         "farkli_gorsel": farkli_meyve_sayisi,
-        "supheli": 0,
-        "uyumlu": 0,
+        "asiri_raf_ihlali": asiri_raf_ihlali,
         "hizalama_ok": aligned_ok,
         "hizalama": "Raf Bazlı Hibrit",
-        "inliers": 0,
     }
 
     return result_img, results, summary, aligned
@@ -383,12 +420,13 @@ def build_report(dealer, results, summary):
         f"Bayi: {dealer}",
         "Tarih: " + datetime.now().strftime("%d.%m.%Y %H:%M:%S"),
         "",
-        "Tespit Edilen Farklı Meyve Sayısı (Beyaz Çerçeveli): " + str(summary.get('farkli_gorsel', 0)),
+        "İlk 6 Rafta Tespit Edilen Farklı Meyve Sayısı (Beyaz Çerçeveli): " + str(summary.get('farkli_gorsel', 0)),
+        "6. Raf Sonrası Tespit Edilen ve Çarpı Atılan Ürün Sayısı: " + str(summary.get('asiri_raf_ihlali', 0)),
         "",
-        "--- FARKLI MEYVE BÖLGELERİ ---"
+        "--- DETAYLAR ---"
     ]
     for item in results:
-        lines.append(f"Fark ID #{item.get('id')} ({item.get('durum')}) | Konum: X={item.get('x')}, Y={item.get('y')} | Boyut: {item.get('w')}x{item.get('h')}")
+        lines.append(f"ID #{item.get('id')} ({item.get('durum')}) | Konum: X={item.get('x')}, Y={item.get('y')} | Boyut: {item.get('w')}x{item.get('h')}")
     return "\n".join(lines)
 
 
@@ -550,7 +588,7 @@ if st.button("🚀 KONTROLE BAŞLA", type="primary", use_container_width=True, d
     st.session_state.summary = None
     st.session_state.report = ""
 
-    with st.spinner("İlk 6 raf analiz ediliyor (Elma standı baz alınarak farklı meyveler taranıyor)..."):
+    with st.spinner("Sadece ilk 6 raf kontrol ediliyor, sonraki raflar işaretleniyor..."):
         try:
             result_img, results, summary, aligned_field = analyze_planogram_grid_free(
                 ref_img, field_img
@@ -566,7 +604,8 @@ if st.button("🚀 KONTROLE BAŞLA", type="primary", use_container_width=True, d
 if st.session_state.result_img is not None and st.session_state.summary:
     summary = st.session_state.summary
     m1, m2 = st.columns(2)
-    m1.metric("Tespit Edilen Farklı Meyve (Beyaz Çerçeveli)", summary.get("farkli_gorsel", 0))
+    m1.metric("İlk 6 Raftaki Farklı Meyve (Beyaz Çerçeveli)", summary.get("farkli_gorsel", 0))
+    m2.metric("6. Raf Sonrası Çarpı Atılan Ürün", summary.get("asiri_raf_ihlali", 0))
 
     st.image(st.session_state.result_img, channels="BGR", use_container_width=True)
 

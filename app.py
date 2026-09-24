@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-ÖZÇELİK STAND KONTROL UYGULAMASI (GELİŞTİRİLMİŞ HASSAS ANALİZ MOTORU)
+ÖZÇELİK STAND KONTROL UYGULAMASI (SFA & POG & BULUNURLUK & ETİKET ENTEGRELI)
 """
 
 import difflib
@@ -241,11 +241,11 @@ def get_reference_image(public_key, dealer_path):
 
 
 # =========================================================
-# GÖRSEL HİZALAMA VE POG / KESİN ETİKET ANALİZ MOTORU
+# GÖRSEL HİZALAMA VE POG / SFA & BULUNURLUK/ETİKET ANALİZ MOTORU
 # =========================================================
 def gray_normalize(img):
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-    clahe = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8, 8))
+    clahe = cv2.createCLAHE(clipLimit=2.5, tileGridSize=(8, 8))
     return clahe.apply(gray)
 
 
@@ -257,11 +257,11 @@ def align_images_feature(reference, target):
     ref_gray = gray_normalize(reference)
     tar_gray = gray_normalize(target)
 
-    orb = cv2.ORB_create(nfeatures=12000, scaleFactor=1.12, nlevels=8, edgeThreshold=8, fastThreshold=5)
+    orb = cv2.ORB_create(nfeatures=10000, scaleFactor=1.15, nlevels=8, edgeThreshold=10, fastThreshold=7)
     kp1, des1 = orb.detectAndCompute(ref_gray, None)
     kp2, des2 = orb.detectAndCompute(tar_gray, None)
 
-    if des1 is None or des2 is None or len(kp1) < 8 or len(kp2) < 8:
+    if des1 is None or des2 is None or len(kp1) < 10 or len(kp2) < 10:
         return target, False
 
     matcher = cv2.BFMatcher(cv2.NORM_HAMMING)
@@ -271,16 +271,16 @@ def align_images_feature(reference, target):
         if len(pair) != 2:
             continue
         m, n = pair
-        if m.distance < 0.82 * n.distance:
+        if m.distance < 0.80 * n.distance:
             good.append(m)
 
-    if len(good) < 8:
+    if len(good) < 10:
         return target, False
 
     src = np.float32([kp2[m.queryIdx].pt for m in good]).reshape(-1, 1, 2)
     dst = np.float32([kp1[m.trainIdx].pt for m in good]).reshape(-1, 1, 2)
 
-    matrix, mask = cv2.findHomography(src, dst, cv2.RANSAC, 3.5)
+    matrix, mask = cv2.findHomography(src, dst, cv2.RANSAC, 4.0)
     if matrix is None:
         return target, False
 
@@ -288,7 +288,7 @@ def align_images_feature(reference, target):
     return aligned, True
 
 
-def analyze_planogram_grid_free(reference, field, roi_top_ratio=0.03, roi_bottom_ratio=0.88):
+def analyze_planogram_grid_free(reference, field, roi_top_ratio=0.05, roi_bottom_ratio=0.82):
     h, w = reference.shape[:2]
     field = cv2.resize(field, (w, h), interpolation=cv2.INTER_AREA)
 
@@ -298,99 +298,127 @@ def analyze_planogram_grid_free(reference, field, roi_top_ratio=0.03, roi_bottom
     ref_gray = cv2.cvtColor(reference, cv2.COLOR_BGR2GRAY)
     tar_gray = cv2.cvtColor(aligned, cv2.COLOR_BGR2GRAY)
 
-    clahe = cv2.createCLAHE(clipLimit=2.5, tileGridSize=(8, 8))
+    clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
     ref_gray = clahe.apply(ref_gray)
     tar_gray = clahe.apply(tar_gray)
 
     top_y = int(h * roi_top_ratio)
     bottom_y = int(h * roi_bottom_ratio)
     
-    shelf_height = (bottom_y - top_y) // RAF_SAYISI  
+    total_estimated_shelves = 9  
+    shelf_height = (bottom_y - top_y) // 6  
 
     results = []
     fark_sayisi = 0
     farkli_meyve_sayisi = 0
-    missing_label_count = 0 
+    asiri_raf_ihlali = 0
+    out_of_stock_count = 0  # Bulunurluk eksikliği
+    missing_label_count = 0 # Etiket eksikliği
 
-    for i in range(RAF_SAYISI):
+    for i in range(total_estimated_shelves):
         s_top = top_y + (i * shelf_height)
-        s_bottom = s_top + shelf_height if i < RAF_SAYISI - 1 else bottom_y
+        s_bottom = s_top + shelf_height if i < total_estimated_shelves - 1 else bottom_y
 
         if s_top >= h:
             break
 
-        ref_roi = ref_gray[s_top:s_bottom, :]
-        tar_roi = tar_gray[s_top:s_bottom, :]
+        if i < 6:
+            ref_roi = ref_gray[s_top:s_bottom, :]
+            tar_roi = tar_gray[s_top:s_bottom, :]
 
-        ref_roi_blur = cv2.GaussianBlur(ref_roi, (3, 3), 0)
-        tar_roi_blur = cv2.GaussianBlur(tar_roi, (3, 3), 0)
+            ref_roi_blur = cv2.GaussianBlur(ref_roi, (5, 5), 0)
+            tar_roi_blur = cv2.GaussianBlur(tar_roi, (5, 5), 0)
 
-        # Gelişmiş piksel fark hassasiyeti
-        diff = cv2.absdiff(ref_roi_blur, tar_roi_blur)
-        _, thresh = cv2.threshold(diff, 20, 255, cv2.THRESH_BINARY)
+            diff = cv2.absdiff(ref_roi_blur, tar_roi_blur)
+            _, thresh = cv2.threshold(diff, 50, 255, cv2.THRESH_BINARY)
 
-        kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
-        thresh = cv2.morphologyEx(thresh, cv2.MORPH_CLOSE, kernel, iterations=2)
-        thresh = cv2.morphologyEx(thresh, cv2.MORPH_OPEN, kernel, iterations=1)
+            kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (7, 7))
+            thresh = cv2.morphologyEx(thresh, cv2.MORPH_CLOSE, kernel, iterations=2)
+            thresh = cv2.morphologyEx(thresh, cv2.MORPH_OPEN, kernel, iterations=1)
 
-        contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+            contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
-        for cnt in contours:
-            area = cv2.contourArea(cnt)
-            x, y, bw, bh = cv2.boundingRect(cnt)
+            for cnt in contours:
+                area = cv2.contourArea(cnt)
+                if area < (w * h * 0.0012) or area > (w * h * 0.08):
+                    continue
+
+                x, y, bw, bh = cv2.boundingRect(cnt)
+                abs_y = s_top + y
+
+                if x < 10 or (x + bw) > (w - 10):
+                    continue
+
+                fark_sayisi += 1
+                
+                # --- BULUNURLUK (OUT-OF-STOCK) VE ETİKET KONTROLÜ AYRIMI ---
+                # Referans görselde dolu olan alan hedef görselde aşırı koyu/boşluksa "Bulunurluk Eksikliği" sayılır.
+                # Hedef bölgedeki ortalama parlaklık kontrolü (örneğin eşik altı boşluk/kutu yokluğu demektir)
+                roi_target_piece = tar_roi[y:y+bh, x:x+bw]
+                mean_brightness = np.mean(roi_target_piece) if roi_target_piece.size > 0 else 128
+
+                if mean_brightness < 45: # Koyu/boş alan -> Ürün Bulunmuyor (Out-of-Stock)
+                    out_of_stock_count += 1
+                    etiket_turu = f"BULUNURLUK EKSİK (OOS) #{out_of_stock_count}"
+                    box_color = (0, 0, 255) # Kırmızı
+                elif mean_brightness > 210: # Çok parlak/beyaz alan -> Etiket Eksik veya Hatalı Etiket
+                    missing_label_count += 1
+                    etiket_turu = f"EKSİK/HATALI ETİKET #{missing_label_count}"
+                    box_color = (0, 165, 255) # Turuncu
+                else:
+                    farkli_meyve_sayisi += 1
+                    etiket_turu = f"POG UYUMSUZLUGU #{farkli_meyve_sayisi}"
+                    box_color = (255, 255, 255) # Beyaz
+
+                box_thickness = 3
+
+                cv2.rectangle(result_img, (x, abs_y), (x + bw, abs_y + bh), box_color, box_thickness)
+                cv2.putText(
+                    result_img,
+                    etiket_turu,
+                    (x, max(15, abs_y - 5)),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    0.35,
+                    (0, 0, 0),
+                    1,
+                    cv2.LINE_AA,
+                )
+
+                results.append({"id": fark_sayisi, "durum": etiket_turu, "x": x, "y": abs_y, "w": bw, "h": bh, "alan": area})
+
+        else:
+            tar_roi = tar_gray[s_top:s_bottom, :]
+            tar_roi_blur = cv2.GaussianBlur(tar_roi, (5, 5), 0)
             
-            # Etiket kuşağı toleransları (3. raf 7. sıra vb. tüm küçük etiketleri yakalamak için genişletildi)
-            is_label_zone = (y > (shelf_height * 0.45))
-            min_area_limit = (w * h * 0.00008) if is_label_zone else (w * h * 0.0005)
+            _, thresh = cv2.threshold(tar_roi_blur, 100, 255, cv2.THRESH_BINARY_INV)
+            kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (10, 10))
+            thresh = cv2.morphologyEx(thresh, cv2.MORPH_CLOSE, kernel, iterations=2)
             
-            if area < min_area_limit or area > (w * h * 0.10):
-                continue
+            contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+            for cnt in contours:
+                area = cv2.contourArea(cnt)
+                if area < (w * h * 0.001):
+                    continue
+                x, y, bw, bh = cv2.boundingRect(cnt)
+                abs_y = s_top + y
+                
+                if x < 10 or (x + bw) > (w - 10) or bw < 20 or bh < 20:
+                    continue
 
-            abs_y = s_top + y
-
-            if x < 3 or (x + bw) > (w - 3):
-                continue
-
-            fark_sayisi += 1
-            
-            ref_roi_piece = ref_roi[y:y+bh, x:x+bw]
-            tar_roi_piece = tar_roi[y:y+bh, x:x+bw]
-            
-            ref_mean = np.mean(ref_roi_piece) if ref_roi_piece.size > 0 else 128
-            tar_mean = np.mean(tar_roi_piece) if tar_roi_piece.size > 0 else 128
-
-            # Parlaklık eşik hatalarını önleyen esnek kontrol
-            if is_label_zone and ref_mean > 95 and tar_mean < (ref_mean * 0.85):
-                missing_label_count += 1
-                etiket_turu = f"EKSİK ETİKET #{missing_label_count}"
-                box_color = (0, 165, 255) # Turuncu
-            else:
-                farkli_meyve_sayisi += 1
-                etiket_turu = f"POG UYUMSUZLUGU #{farkli_meyve_sayisi}"
-                box_color = (255, 255, 255) # Beyaz
-
-            box_thickness = 3
-
-            cv2.rectangle(result_img, (x, abs_y), (x + bw, abs_y + bh), box_color, box_thickness)
-            cv2.putText(
-                result_img,
-                etiket_turu,
-                (x, max(15, abs_y - 5)),
-                cv2.FONT_HERSHEY_SIMPLEX,
-                0.35,
-                (0, 0, 0),
-                1,
-                cv2.LINE_AA,
-            )
-
-            results.append({"id": fark_sayisi, "durum": etiket_turu, "x": x, "y": abs_y, "w": bw, "h": bh, "alan": area})
+                asiri_raf_ihlali += 1
+                cv2.line(result_img, (x, abs_y), (x + bw, abs_y + bh), (0, 0, 255), 3)
+                cv2.line(result_img, (x, abs_y + bh), (x + bw, abs_y), (0, 0, 255), 3)
+                
+                results.append({"id": f"X_{asiri_raf_ihlali}", "durum": "SFA / 6. RAF DIŞI YETKİSİZ ÜRÜN İHLALİ", "x": x, "y": abs_y, "w": bw, "h": bh, "alan": area})
 
     summary = {
         "fark": fark_sayisi,
+        "paket_eksigi": out_of_stock_count,
         "etiket_eksigi": missing_label_count,
         "farkli_gorsel": farkli_meyve_sayisi,
+        "asiri_raf_ihlali": asiri_raf_ihlali,
         "hizalama_ok": aligned_ok,
-        "hizalama": "POG & Optimize Edilmiş Hassas Etiket Analiz Motoru",
+        "hizalama": "SFA & POG & Bulunurluk Hibrit Motor",
     }
 
     return result_img, results, summary, aligned
@@ -399,14 +427,16 @@ def analyze_planogram_grid_free(reference, field, roi_top_ratio=0.03, roi_bottom
 def build_report(dealer, results, summary):
     from datetime import datetime
     lines = [
-        "=== ÖZÇELİK PLANOGRAM & ETİKET DENETİM RAPORU ===",
+        "=== ÖZÇELİK SFA & PLANOGRAM & BULUNURLUK DENETİM RAPORU ===",
         f"Bayi: {dealer}",
         "Tarih: " + datetime.now().strftime("%d.%m.%Y %H:%M:%S"),
         "",
-        "Eksik Etiket Sayısı: " + str(summary.get('etiket_eksigi', 0)),
+        "Bulunurluk Eksikliği (OOS) Sayısı: " + str(summary.get('paket_eksigi', 0)),
+        "Eksik/Hatalı Etiket Sayısı: " + str(summary.get('etiket_eksigi', 0)),
         "Planogram (POG) Uyumsuzluğu: " + str(summary.get('farkli_gorsel', 0)),
+        "6. Raf Sonrası Yetkisiz Ürün İhlali: " + str(summary.get('asiri_raf_ihlali', 0)),
         "",
-        "--- DETAYLI UYUMSUZLUK / EKSİK KAYITLARI ---"
+        "--- DETAYLI İHLAL / EKSİK KAYITLARI ---"
     ]
     for item in results:
         lines.append(f"ID #{item.get('id')} ({item.get('durum')}) | Konum: X={item.get('x')}, Y={item.get('y')} | Boyut: {item.get('w')}x{item.get('h')}")
@@ -453,7 +483,7 @@ if not st.session_state.authenticated:
 # SIDEBAR VE ARAYÜZ
 # =========================================================
 with st.sidebar:
-    st.header("⚙️ POG Ayarları")
+    st.header("⚙️ SFA & POG Ayarları")
     if st.button("🔄 Yandex Önbelleğini Yenile", use_container_width=True):
         try:
             st.cache_data.clear()
@@ -486,7 +516,7 @@ def clear_yandex_cache():
 
 title_col, refresh_col = st.columns([5, 1])
 with title_col:
-    st.title("📊 ÖZÇELİK POG & ETİKET KONTROL UYGULAMASI")
+    st.title("📊 ÖZÇELİK SFA & POG STAND KONTROL UYGULAMASI")
 with refresh_col:
     st.write("")
     if st.button("🔄 Yenile", use_container_width=True, key="main_refresh_btn"):
@@ -565,13 +595,13 @@ st.divider()
 
 ready = ref_img is not None and field_img is not None
 
-if st.button("🚀 POG & ETİKET KONTROLÜNÜ BAŞLAT", type="primary", use_container_width=True, disabled=not ready):
+if st.button("🚀 SFA & POG & BULUNURLUK KONTROLÜNÜ BAŞLAT", type="primary", use_container_width=True, disabled=not ready):
     st.session_state.result_img = None
     st.session_state.results = []
     st.session_state.summary = None
     st.session_state.report = ""
 
-    with st.spinner("Planogram ve optimize edilmiş etiket analizi çalıştırılıyor..."):
+    with st.spinner("SFA algoritmaları, bulunurluk ve etiket analizi çalıştırılıyor..."):
         try:
             result_img, results, summary, aligned_field = analyze_planogram_grid_free(
                 ref_img, field_img
@@ -587,9 +617,11 @@ if st.button("🚀 POG & ETİKET KONTROLÜNÜ BAŞLAT", type="primary", use_cont
 if st.session_state.result_img is not None and st.session_state.summary:
     summary = st.session_state.summary
     
-    m1, m2 = st.columns(2)
-    m1.metric("Eksik Etiket Sayısı", summary.get("etiket_eksigi", 0))
-    m2.metric("POG Uyumsuzluğu", summary.get("farkli_gorsel", 0))
+    m1, m2, m3, m4 = st.columns(4)
+    m1.metric("Bulunurluk Eksikliği (OOS)", summary.get("paket_eksigi", 0))
+    m2.metric("Eksik/Hatalı Etiket", summary.get("etiket_eksigi", 0))
+    m3.metric("POG Uyumsuzluğu", summary.get("farkli_gorsel", 0))
+    m4.metric("Yetkisiz Ürün İhlali", summary.get("asiri_raf_ihlali", 0))
 
     st.image(st.session_state.result_img, channels="BGR", use_container_width=True)
 
@@ -597,9 +629,9 @@ if st.session_state.result_img is not None and st.session_state.summary:
     ok, encoded = cv2.imencode(".jpg", st.session_state.result_img)
     if ok:
         with d1:
-            st.download_button("📥 Denetim Görselini İndir", data=encoded.tobytes(), file_name="pog_etiket_sonuc.jpg", mime="image/jpeg", use_container_width=True)
+            st.download_button("📥 Denetim Görselini İndir", data=encoded.tobytes(), file_name="sfa_bulunurluk_sonuc.jpg", mime="image/jpeg", use_container_width=True)
     if st.session_state.report:
         with d2:
-            st.download_button("📄 Detaylı Raporu İndir", data=st.session_state.report.encode("utf-8"), file_name="pog_etiket_rapor.txt", mime="text/plain", use_container_width=True)
+            st.download_button("📄 Detaylı Raporu İndir", data=st.session_state.report.encode("utf-8"), file_name="sfa_bulunurluk_rapor.txt", mime="text/plain", use_container_width=True)
 else:
     st.info("Denetim için POG referans ve SFA saha fotoğraflarını yükleyin, ardından kontrolü başlatın.")

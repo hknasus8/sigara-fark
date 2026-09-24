@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-ÖZÇELİK STAND KONTROL UYGULAMASI (BULUNURLUK & ETİKET ENTEGRELI)
+ÖZÇELİK STAND KONTROL UYGULAMASI (ETİKET & UYUM ENTEGRELI)
 """
 
 import difflib
@@ -241,7 +241,7 @@ def get_reference_image(public_key, dealer_path):
 
 
 # =========================================================
-# GÖRSEL HİZALAMA VE POG / SFA & BULUNURLUK/ETİKET ANALİZ MOTORU
+# GÖRSEL HİZALAMA VE POG / SFA & ETİKET ANALİZ MOTORU
 # =========================================================
 def gray_normalize(img):
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
@@ -312,9 +312,8 @@ def analyze_planogram_grid_free(reference, field, roi_top_ratio=0.05, roi_bottom
     fark_sayisi = 0
     farkli_meyve_sayisi = 0
     asiri_raf_ihlali = 0
-    out_of_stock_count = 0  
     missing_label_count = 0 
-    label_mismatch_count = 0  # Ürün adı ile altındaki etiket adı uyuşmazlığı
+    label_mismatch_count = 0  
 
     for i in range(total_estimated_shelves):
         s_top = top_y + (i * shelf_height)
@@ -355,23 +354,16 @@ def analyze_planogram_grid_free(reference, field, roi_top_ratio=0.05, roi_bottom
                 roi_target_piece = tar_roi[y:y+bh, x:x+bw]
                 mean_brightness = np.mean(roi_target_piece) if roi_target_piece.size > 0 else 128
 
-                # Ürün-Etiket Eşleşme Kontrolü (Ürün adı ile altındaki etiket uyuşmuyorsa SARI yap)
-                # Referans ile hedef arasındaki alt etiket bölgesi uyuşmazlığını simüle eden hassas kontrol:
                 ref_piece = ref_roi[y:y+bh, x:x+bw] if (y+bh <= ref_roi.shape[0] and x+bw <= ref_roi.shape[1]) else None
                 
-                if mean_brightness < 45: 
-                    out_of_stock_count += 1
-                    etiket_turu = f"BULUNURLUK EKSİK (OOS) #{out_of_stock_count}"
-                    box_color = (0, 0, 255) # Kırmızı
-                elif mean_brightness > 190: 
+                if mean_brightness > 190: 
                     missing_label_count += 1
                     etiket_turu = f"EKSİK/HATALI ETİKET #{missing_label_count}"
                     box_color = (0, 165, 255) # Turuncu
                 elif ref_piece is not None and np.mean(np.abs(ref_piece.astype(np.float32) - roi_target_piece.astype(np.float32))) > 40:
-                    # Ürün ve etiket adı/modeli eşleşmiyor koşulu
                     label_mismatch_count += 1
                     etiket_turu = f"ÜRÜN-ETİKET UYUŞMAZLIĞI #{label_mismatch_count}"
-                    box_color = (0, 255, 255) # Sarı (BGR formatında sarı)
+                    box_color = (0, 255, 255) # Sarı
                 else:
                     farkli_meyve_sayisi += 1
                     etiket_turu = f"POG UYUMSUZLUGU #{farkli_meyve_sayisi}"
@@ -420,7 +412,6 @@ def analyze_planogram_grid_free(reference, field, roi_top_ratio=0.05, roi_bottom
 
     summary = {
         "fark": fark_sayisi,
-        "paket_eksigi": out_of_stock_count,
         "etiket_eksigi": missing_label_count,
         "urun_etiket_uyumsuzluk": label_mismatch_count,
         "farkli_gorsel": farkli_meyve_sayisi,
@@ -439,7 +430,6 @@ def build_report(dealer, results, summary):
         f"Bayi: {dealer}",
         "Tarih: " + datetime.now().strftime("%d.%m.%Y %H:%M:%S"),
         "",
-        "Bulunurluk Eksikliği (OOS) Sayısı: " + str(summary.get('paket_eksigi', 0)),
         "Eksik/Hatalı Etiket Sayısı: " + str(summary.get('etiket_eksigi', 0)),
         "Ürün-Etiket Uyuşmazlığı Sayısı: " + str(summary.get('urun_etiket_uyumsuzluk', 0)),
         "Planogram (POG) Uyumsuzluğu: " + str(summary.get('farkli_gorsel', 0)),
@@ -618,7 +608,7 @@ if st.button("🚀 KONTROLÜ BAŞLAT", type="primary", use_container_width=True,
     st.session_state.summary = None
     st.session_state.report = ""
 
-    with st.spinner("Algoritmalar, bulunurluk, etiket ve ürün-etiket uyum analizi çalıştırılıyor..."):
+    with st.spinner("Etiket ve ürün-etiket uyum analizi çalıştırılıyor..."):
         try:
             result_img, results, summary, aligned_field = analyze_planogram_grid_free(
                 ref_img, field_img
@@ -634,12 +624,11 @@ if st.button("🚀 KONTROLÜ BAŞLAT", type="primary", use_container_width=True,
 if st.session_state.result_img is not None and st.session_state.summary:
     summary = st.session_state.summary
     
-    m1, m2, m3, m4, m5 = st.columns(5)
-    m1.metric("Bulunurluk (OOS)", summary.get("paket_eksigi", 0))
-    m2.metric("Eksik Etiket", summary.get("etiket_eksigi", 0))
-    m3.metric("Ürün-Etiket Uyumsuz", summary.get("urun_etiket_uyumsuzluk", 0))
-    m4.metric("POG Uyumsuzluğu", summary.get("farkli_gorsel", 0))
-    m5.metric("Yetkisiz Ürün", summary.get("asiri_raf_ihlali", 0))
+    m1, m2, m3, m4 = st.columns(4)
+    m1.metric("Eksik Etiket", summary.get("etiket_eksigi", 0))
+    m2.metric("Ürün-Etiket Uyuşmaz", summary.get("urun_etiket_uyumsuzluk", 0))
+    m3.metric("POG Uyumsuzluğu", summary.get("farkli_gorsel", 0))
+    m4.metric("Yetkisiz Ürün", summary.get("asiri_raf_ihlali", 0))
 
     st.image(st.session_state.result_img, channels="BGR", use_container_width=True)
 
@@ -647,9 +636,9 @@ if st.session_state.result_img is not None and st.session_state.summary:
     ok, encoded = cv2.imencode(".jpg", st.session_state.result_img)
     if ok:
         with d1:
-            st.download_button("📥 Denetim Görselini İndir", data=encoded.tobytes(), file_name="stand_bulunurluk_sonuc.jpg", mime="image/jpeg", use_container_width=True)
+            st.download_button("📥 Denetim Görselini İndir", data=encoded.tobytes(), file_name="stand_kontrol_sonuc.jpg", mime="image/jpeg", use_container_width=True)
     if st.session_state.report:
         with d2:
-            st.download_button("📄 Detaylı Raporu İndir", data=st.session_state.report.encode("utf-8"), file_name="stand_bulunurluk_rapor.txt", mime="text/plain", use_container_width=True)
+            st.download_button("📄 Detaylı Raporu İndir", data=st.session_state.report.encode("utf-8"), file_name="stand_kontrol_rapor.txt", mime="text/plain", use_container_width=True)
 else:
     st.info("Denetim için referans ve saha fotoğraflarını yükleyin, ardından kontrolü başlatın.")

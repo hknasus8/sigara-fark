@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-ÖZÇELİK STAND KONTROL UYGULAMASI (ETİKET & UYUM ENTEGRELI)
+ÖZÇELİK STAND KONTROL UYGULAMASI (ETİKET, UYUM & POLİGRAM DİZİLİM ENTEGRELI)
 """
 
 import difflib
@@ -241,6 +241,32 @@ def get_reference_image(public_key, dealer_path):
     return None, "Bayi klasöründe okunabilir JPG/PNG görsel bulunamadı."
 
 
+@st.cache_data(ttl=600, show_spinner=False)
+def get_polygram_files(public_key):
+    root_items, error = yandex_root_items(public_key)
+    if error:
+        return [], error
+    poly_item = None
+    for item in root_items:
+        if item.get("type") == "dir" and "poligram" in normalize_text(item.get("name", "")):
+            poly_item = item
+            break
+    if poly_item is None:
+        return [], "Yandex'te 'poligram' klasörü bulunamadı."
+    
+    sub_items, error = yandex_list_dir(public_key, poly_item.get("path", ""))
+    if error:
+        return [], error
+    
+    polygrams = []
+    for item in sub_items:
+        if item.get("type") == "file":
+            name = item.get("name", "")
+            if name.lower().endswith((".jpg", ".jpeg", ".png", ".webp")):
+                polygrams.append({"name": name, "file": item.get("file")})
+    return polygrams, None
+
+
 # =========================================================
 # GÖRSEL HİZALAMA VE POG / İHLAL & ETİKET ANALİZ MOTORU
 # =========================================================
@@ -433,6 +459,90 @@ def analyze_planogram_grid_free(reference, field, roi_top_ratio=0.05, roi_bottom
     return result_img, results, summary, aligned
 
 
+# =========================================================
+# YENİ MODÜL: STAND DİZİLİM SIRALAMASI KONTROLÜ (POLİGRAM)
+# =========================================================
+def analyze_polygram_sequence_control(polygram_img, field_img, shelf_count):
+    h, w = polygram_img.shape[:2]
+    field_resized = cv2.resize(field_img, (w, h), interpolation=cv2.INTER_AREA)
+
+    aligned, aligned_ok = align_images_feature(polygram_img, field_resized)
+    result_img = aligned.copy()
+
+    poly_gray = cv2.cvtColor(polygram_img, cv2.COLOR_BGR2GRAY)
+    tar_gray = cv2.cvtColor(aligned, cv2.COLOR_BGR2GRAY)
+
+    clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+    poly_gray = clahe.apply(poly_gray)
+    tar_gray = clahe.apply(tar_gray)
+
+    # Kat sayısına göre bölgeleme (5, 6, 7 katlı standlar ve 6-15 sıra esnekliği)
+    top_y = int(h * 0.05)
+    bottom_y = int(h * 0.90)
+    row_height = (bottom_y - top_y) // max(5, shelf_count)
+
+    discrepancy_count = 0
+    results = []
+
+    for i in range(shelf_count):
+        s_top = top_y + (i * row_height)
+        s_bottom = s_top + row_height if i < shelf_count - 1 else bottom_y
+
+        if s_top >= h:
+            break
+
+        poly_roi = poly_gray[s_top:s_bottom, :]
+        tar_roi = tar_gray[s_top:s_bottom, :]
+
+        poly_blur = cv2.GaussianBlur(poly_roi, (5, 5), 0)
+        tar_blur = cv2.GaussianBlur(tar_roi, (5, 5), 0)
+
+        diff = cv2.absdiff(poly_blur, tar_blur)
+        _, thresh = cv2.threshold(diff, 60, 255, cv2.THRESH_BINARY)
+
+        kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (5, 5))
+        thresh = cv2.morphologyEx(thresh, cv2.MORPH_CLOSE, kernel, iterations=2)
+
+        contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+
+        for cnt in contours:
+            area = cv2.contourArea(cnt)
+            if area < (w * h * 0.0003) or area > (w * h * 0.05):
+                continue
+
+            x, y, bw, bh = cv2.boundingRect(cnt)
+            abs_y = s_top + y
+
+            if x < 5 or (x + bw) > (w - 5):
+                continue
+
+            discrepancy_count += 1
+            label_text = f"KAT {i+1} SIRALAMA HATASI #{discrepancy_count}"
+            box_color = (0, 140, 255)  # Turuncu Renk
+
+            # Turuncu Yanıp Sönme Efekti / Kutulama
+            cv2.rectangle(result_img, (x, abs_y), (x + bw, abs_y + bh), box_color, 3)
+            cv2.putText(
+                result_img,
+                label_text,
+                (x, max(15, abs_y - 5)),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.35,
+                (0, 0, 0),
+                1,
+                cv2.LINE_AA,
+            )
+
+            results.append({"id": discrepancy_count, "durum": label_text, "x": x, "y": abs_y, "w": bw, "h": bh})
+
+    summary = {
+        "discrepancy_count": discrepancy_count,
+        "shelf_count": shelf_count,
+        "hizalama_ok": aligned_ok
+    }
+    return result_img, results, summary, aligned
+
+
 def build_report(dealer, results, summary):
     from datetime import datetime
     lines = [
@@ -462,6 +572,9 @@ DEFAULT_STATE = {
     "summary": None,
     "report": "",
     "analysis_key": "",
+    "poly_result_img": None,
+    "poly_summary": None,
+    "poly_aligned": None
 }
 
 for key, value in DEFAULT_STATE.items():
@@ -503,6 +616,7 @@ with st.sidebar:
         st.session_state.results = []
         st.session_state.summary = None
         st.session_state.report = ""
+        st.session_state.poly_result_img = None
         st.rerun()
 
     if st.button("🚪 Çıkış Yap", use_container_width=True, key="sidebar_logout"):
@@ -524,6 +638,7 @@ def clear_yandex_cache():
     st.session_state.results = []
     st.session_state.summary = None
     st.session_state.report = ""
+    st.session_state.poly_result_img = None
 
 
 title_col, refresh_col, logout_col = st.columns([4, 1, 1])
@@ -584,7 +699,7 @@ with c2:
         dealer_path = dealer_choices[selected_raw_dealer]["path"]
 
 st.divider()
-st.subheader("2. Orijinal Referans Fotoğrafı")
+st.subheader("2. Orijinal Referans Fotoğrafı & Saha Fotoğrafı")
 
 ref_img = None
 if dealer_path:
@@ -593,7 +708,7 @@ if dealer_path:
 
 u1, u2 = st.columns(2)
 with u1:
-    st.markdown("**Orijinal Referans Fotoğrafı**")
+    st.markdown("**Orijinal Referans Fotoğrafı (Otomatik Yandex)**")
     if ref_img is None:
         ref_upload = st.file_uploader("İsterseniz elle yükleyin", type=["jpg", "jpeg", "png", "webp"], key="ref_upload")
         if ref_upload is not None:
@@ -614,9 +729,80 @@ with u2:
 
 st.divider()
 
+# =========================================================
+# YENİ MODÜL ARAYÜZÜ: POLİGRAM SEÇİMİ VE SIRALAMA KONTROLÜ
+# =========================================================
+st.subheader("3. Stand Dizilim Sıralaması Kontrolü (Poligram Modülü)")
+
+poly_files, poly_error = get_polygram_files(YANDEX_ROOT_PUBLIC_KEY)
+poly_options = {item["name"]: item["file"] for item in poly_files}
+
+p1, p2, p3 = st.columns([2, 1, 1])
+with p1:
+    selected_poly_name = st.selectbox(
+        "Yandex Poligram Klasöründen Poligram Seçiniz",
+        options=[""] + list(poly_options.keys()),
+        format_func=lambda x: "Poligram seçin..." if x == "" else x
+    )
+with p2:
+    stand_kat_sayisi = st.selectbox(
+        "Stand / Kat Yapısı",
+        options=[5, 6, 7] + list(range(8, 16)),
+        index=1, # Varsayılan 6 kat
+        format_func=lambda x: f"{x} Katlı Stand"
+    )
+with p3:
+    st.write("")
+    st.write("")
+    poly_kontrol_btn = st.button("🔍 Poligramı Kontrol Et", type="secondary", use_container_width=True)
+
+selected_poly_url = poly_options.get(selected_poly_name)
+poly_img = safe_download_image(selected_poly_url) if selected_poly_url else None
+
+if poly_kontrol_btn:
+    if poly_img is None or field_img is None:
+        st.warning("⚠️ Lütfen geçerli bir poligram seçin ve saha fotoğrafı yükleyin.")
+    else:
+        st.session_state.poly_result_img = None
+        st.session_state.poly_summary = None
+        with st.spinner("Poligram dizilim sıralaması ve etiket uyumu kontrol ediliyor..."):
+            try:
+                p_res_img, p_results, p_summary, p_aligned = analyze_polygram_sequence_control(
+                    prepare_image(poly_img), field_img, stand_kat_sayisi
+                )
+                st.session_state.poly_result_img = p_res_img
+                st.session_state.poly_summary = p_summary
+                st.session_state.poly_aligned = p_aligned
+            except Exception as exc:
+                st.error("Poligram analiz modülünde hata oluştu: " + str(exc))
+
+if st.session_state.poly_result_img is not None and st.session_state.poly_summary:
+    p_sum = st.session_state.poly_summary
+    st.success(f"✅ Poligram Kontrolü Tamamlandı! Toplam Farklılık/Sıralama Hatası: **{p_sum.get('discrepancy_count', 0)}**")
+    
+    # Turuncu yanıp sönme animasyonu (GIF) oluşturma
+    if p_sum.get('discrepancy_count', 0) > 0 and st.session_state.get("poly_aligned") is not None:
+        f_clean = Image.fromarray(cv2.cvtColor(st.session_state.poly_aligned, cv2.COLOR_BGR2RGB))
+        f_marked = Image.fromarray(cv2.cvtColor(st.session_state.poly_result_img, cv2.COLOR_BGR2RGB))
+        
+        gif_bytes = io.BytesIO()
+        f_marked.save(
+            gif_bytes,
+            format="GIF",
+            save_all=True,
+            append_images=[f_clean],
+            duration=400,  # Turuncu yanıp sönme hızı
+            loop=0
+        )
+        st.image(gif_bytes.getvalue(), use_container_width=True)
+    else:
+        st.image(st.session_state.poly_result_img, channels="BGR", use_container_width=True)
+
+st.divider()
+
 ready = ref_img is not None and field_img is not None
 
-if st.button("🚀 KONTROLÜ BAŞLAT", type="primary", use_container_width=True, disabled=not ready):
+if st.button("🚀 GENEL KONTROLÜ BAŞLAT", type="primary", use_container_width=True, disabled=not ready):
     st.session_state.result_img = None
     st.session_state.aligned_field = None
     st.session_state.results = []
@@ -647,7 +833,6 @@ if st.session_state.result_img is not None and st.session_state.summary:
 
     has_issues = (summary.get("etiket_eksigi", 0) > 0) or (summary.get("urun_etiket_uyumsuzluk", 0) > 0)
 
-    # Eğer eksik/fark varsa, kutuların görünüp kaybolduğu (yanıp söndüğü) bir Animasyonlu GIF oluşturuyoruz
     if has_issues and st.session_state.get("aligned_field") is not None:
         frame_clean = Image.fromarray(cv2.cvtColor(st.session_state.aligned_field, cv2.COLOR_BGR2RGB))
         frame_marked = Image.fromarray(cv2.cvtColor(st.session_state.result_img, cv2.COLOR_BGR2RGB))
@@ -658,7 +843,7 @@ if st.session_state.result_img is not None and st.session_state.summary:
             format="GIF",
             save_all=True,
             append_images=[frame_clean],
-            duration=500,  # Her karenin süresi (milisaniye cinsinden)
+            duration=500,
             loop=0
         )
         st.image(gif_io.getvalue(), use_container_width=True)
@@ -674,4 +859,4 @@ if st.session_state.result_img is not None and st.session_state.summary:
         with d2:
             st.download_button("📄 Detaylı Raporu İndir", data=st.session_state.report.encode("utf-8"), file_name="stand_kontrol_rapor.txt", mime="text/plain", use_container_width=True)
 else:
-    st.info("Saha fotoğraflarını yükleyin, ardından kontrolü başlatın.")
+    st.info("Saha fotoğraflarını yükleyin ve isteğe bağlı Poligram kontrolünü çalıştırın.")

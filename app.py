@@ -9,12 +9,12 @@ import hmac
 import re
 import urllib.parse
 from PIL import Image
+import io
 
 import cv2
 import numpy as np
 import requests
 import streamlit as st
-import base64
 
 
 # =========================================================
@@ -31,17 +31,6 @@ st.markdown(
     """
 <style>
 .block-container {padding-top:1rem;padding-bottom:2rem;}
-
-@keyframes blink-effect {
-  0% { opacity: 1.0; filter: drop-shadow(0px 0px 0px rgba(255, 165, 0, 0)); }
-  50% { opacity: 0.4; filter: drop-shadow(0px 0px 15px rgba(255, 165, 0, 0.9)); }
-  100% { opacity: 1.0; filter: drop-shadow(0px 0px 0px rgba(255, 165, 0, 0)); }
-}
-
-.blink-image {
-  animation: blink-effect 1.5s infinite ease-in-out;
-  border-radius: 8px;
-}
 </style>
 """,
     unsafe_allow_html=True,
@@ -468,6 +457,7 @@ def build_report(dealer, results, summary):
 DEFAULT_STATE = {
     "authenticated": False,
     "result_img": None,
+    "aligned_field": None,
     "results": [],
     "summary": None,
     "report": "",
@@ -509,6 +499,7 @@ with st.sidebar:
         except Exception:
             pass
         st.session_state.result_img = None
+        st.session_state.aligned_field = None
         st.session_state.results = []
         st.session_state.summary = None
         st.session_state.report = ""
@@ -517,6 +508,7 @@ with st.sidebar:
     if st.button("🚪 Çıkış Yap", use_container_width=True, key="sidebar_logout"):
         st.session_state.authenticated = False
         st.session_state.result_img = None
+        st.session_state.aligned_field = None
         st.session_state.results = []
         st.session_state.summary = None
         st.rerun()
@@ -528,6 +520,7 @@ def clear_yandex_cache():
     except Exception:
         pass
     st.session_state.result_img = None
+    st.session_state.aligned_field = None
     st.session_state.results = []
     st.session_state.summary = None
     st.session_state.report = ""
@@ -546,6 +539,7 @@ with logout_col:
     if st.button("🚪 Çıkış", use_container_width=True, key="main_logout_btn"):
         st.session_state.authenticated = False
         st.session_state.result_img = None
+        st.session_state.aligned_field = None
         st.session_state.results = []
         st.session_state.summary = None
         st.rerun()
@@ -624,6 +618,7 @@ ready = ref_img is not None and field_img is not None
 
 if st.button("🚀 KONTROLÜ BAŞLAT", type="primary", use_container_width=True, disabled=not ready):
     st.session_state.result_img = None
+    st.session_state.aligned_field = None
     st.session_state.results = []
     st.session_state.summary = None
     st.session_state.report = ""
@@ -634,7 +629,8 @@ if st.button("🚀 KONTROLÜ BAŞLAT", type="primary", use_container_width=True,
                 ref_img, field_img
             )
 
-            st.session_state.result_img = result_app_img = result_img
+            st.session_state.result_img = result_img
+            st.session_state.aligned_field = aligned_field
             st.session_state.results = results
             st.session_state.summary = summary
             st.session_state.report = build_report(dealer_name or "Manuel", results, summary)
@@ -649,22 +645,23 @@ if st.session_state.result_img is not None and st.session_state.summary:
     m2.metric("🟪 Farklılıklar", summary.get("urun_etiket_uyumsuzluk", 0))
     m3.metric("⬜ Kontrol Edilmeyen Rakip Raf", summary.get("kontrol_edilmeyen_rakip_raf", 0))
 
-    # Yanıp sönme (Blinking) efekti kontrolü: Eksik etiket veya farklılık varsa CSS animasyonu eklenir
     has_issues = (summary.get("etiket_eksigi", 0) > 0) or (summary.get("urun_etiket_uyumsuzluk", 0) > 0)
-    
-    success_img_rgb = cv2.cvtColor(st.session_state.result_img, cv2.COLOR_BGR2RGB)
-    pil_img = Image.fromarray(success_img_rgb)
-    
-    import io
-    buffered = io.BytesIO()
-    pil_img.save(buffered, format="JPEG")
-    img_str = base64.b64encode(buffered.getvalue()).decode()
-    
-    if has_issues:
-        st.markdown(
-            f'<div style="text-align: center;"><img src="data:image/jpeg;base64,{img_str}" class="blink-image" style="max-width: 100%; height: auto;"></div>',
-            unsafe_allow_html=True
+
+    # Eğer eksik/fark varsa, kutuların görünüp kaybolduğu (yanıp söndüğü) bir Animasyonlu GIF oluşturuyoruz
+    if has_issues and st.session_state.get("aligned_field") is not None:
+        frame_clean = Image.fromarray(cv2.cvtColor(st.session_state.aligned_field, cv2.COLOR_BGR2RGB))
+        frame_marked = Image.fromarray(cv2.cvtColor(st.session_state.result_img, cv2.COLOR_BGR2RGB))
+        
+        gif_io = io.BytesIO()
+        frame_marked.save(
+            gif_io,
+            format="GIF",
+            save_all=True,
+            append_images=[frame_clean],
+            duration=500,  # Her karenin süresi (milisaniye cinsinden)
+            loop=0
         )
+        st.image(gif_io.getvalue(), use_container_width=True)
     else:
         st.image(st.session_state.result_img, channels="BGR", use_container_width=True)
 

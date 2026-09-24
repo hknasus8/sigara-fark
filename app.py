@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-ÖZÇELİK STAND KONTROL UYGULAMASI (POG & GELİŞMİŞ ETİKET ANALİZİ)
+ÖZÇELİK STAND KONTROL UYGULAMASI (POG & HASSAS ETİKET ANALİZİ)
 """
 
 import difflib
@@ -241,7 +241,7 @@ def get_reference_image(public_key, dealer_path):
 
 
 # =========================================================
-# GÖRSEL HİZALAMA VE POG / ETİKET ANALİZ MOTORU
+# GÖRSEL HİZALAMA VE POG / HASSAS ETİKET ANALİZ MOTORU
 # =========================================================
 def gray_normalize(img):
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
@@ -288,7 +288,7 @@ def align_images_feature(reference, target):
     return aligned, True
 
 
-def analyze_planogram_grid_free(reference, field, roi_top_ratio=0.05, roi_bottom_ratio=0.82):
+def analyze_planogram_grid_free(reference, field, roi_top_ratio=0.04, roi_bottom_ratio=0.85):
     h, w = reference.shape[:2]
     field = cv2.resize(field, (w, h), interpolation=cv2.INTER_AREA)
 
@@ -310,7 +310,7 @@ def analyze_planogram_grid_free(reference, field, roi_top_ratio=0.05, roi_bottom
     results = []
     fark_sayisi = 0
     farkli_meyve_sayisi = 0
-    missing_label_count = 0 # Eksik Etiket Sayısı
+    missing_label_count = 0 
 
     for i in range(RAF_SAYISI):
         s_top = top_y + (i * shelf_height)
@@ -322,13 +322,14 @@ def analyze_planogram_grid_free(reference, field, roi_top_ratio=0.05, roi_bottom
         ref_roi = ref_gray[s_top:s_bottom, :]
         tar_roi = tar_gray[s_top:s_bottom, :]
 
-        ref_roi_blur = cv2.GaussianBlur(ref_roi, (5, 5), 0)
-        tar_roi_blur = cv2.GaussianBlur(tar_roi, (5, 5), 0)
+        ref_roi_blur = cv2.GaussianBlur(ref_roi, (3, 3), 0)
+        tar_roi_blur = cv2.GaussianBlur(tar_roi, (3, 3), 0)
 
+        # Fark eşiği hassaslaştırıldı (35 -> 25)
         diff = cv2.absdiff(ref_roi_blur, tar_roi_blur)
-        _, thresh = cv2.threshold(diff, 35, 255, cv2.THRESH_BINARY)
+        _, thresh = cv2.threshold(diff, 25, 255, cv2.THRESH_BINARY)
 
-        kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (5, 5))
+        kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
         thresh = cv2.morphologyEx(thresh, cv2.MORPH_CLOSE, kernel, iterations=2)
         thresh = cv2.morphologyEx(thresh, cv2.MORPH_OPEN, kernel, iterations=1)
 
@@ -338,16 +339,16 @@ def analyze_planogram_grid_free(reference, field, roi_top_ratio=0.05, roi_bottom
             area = cv2.contourArea(cnt)
             x, y, bw, bh = cv2.boundingRect(cnt)
             
-            # Etiket kuşağı (rafın alt kısımları) için daha esnek/küçük alan filtrelemesi
-            is_label_zone = (y > (shelf_height * 0.55))
-            min_area_limit = (w * h * 0.0002) if is_label_zone else (w * h * 0.0008)
+            # Etiket kuşağı (rafın alt bölümleri) için toleranslar genişletildi
+            is_label_zone = (y > (shelf_height * 0.50))
+            min_area_limit = (w * h * 0.0001) if is_label_zone else (w * h * 0.0006)
             
-            if area < min_area_limit or area > (w * h * 0.08):
+            if area < min_area_limit or area > (w * h * 0.09):
                 continue
 
             abs_y = s_top + y
 
-            if x < 10 or (x + bw) > (w - 10):
+            if x < 5 or (x + bw) > (w - 5):
                 continue
 
             fark_sayisi += 1
@@ -358,8 +359,8 @@ def analyze_planogram_grid_free(reference, field, roi_top_ratio=0.05, roi_bottom
             ref_mean = np.mean(ref_roi_piece) if ref_roi_piece.size > 0 else 128
             tar_mean = np.mean(tar_roi_piece) if tar_roi_piece.size > 0 else 128
 
-            # Etiket analizi (Eksik Etiket tespiti)
-            if is_label_zone and ref_mean > 140 and tar_mean < 95:
+            # Etiket eksikliği koşulu hassaslaştırıldı (ref_mean > 110 ve tar_mean < 110)
+            if is_label_zone and ref_mean > 110 and tar_mean < 110:
                 missing_label_count += 1
                 etiket_turu = f"EKSİK ETİKET #{missing_label_count}"
                 box_color = (0, 165, 255) # Turuncu
@@ -389,7 +390,7 @@ def analyze_planogram_grid_free(reference, field, roi_top_ratio=0.05, roi_bottom
         "etiket_eksigi": missing_label_count,
         "farkli_gorsel": farkli_meyve_sayisi,
         "hizalama_ok": aligned_ok,
-        "hizalama": "POG & Hassas Etiket Analiz Motoru",
+        "hizalama": "POG & Yüksek Hassasiyetli Etiket Analiz Motoru",
     }
 
     return result_img, results, summary, aligned
@@ -570,7 +571,7 @@ if st.button("🚀 POG & ETİKET KONTROLÜNÜ BAŞLAT", type="primary", use_cont
     st.session_state.summary = None
     st.session_state.report = ""
 
-    with st.spinner("Planogram ve gelişmiş etiket analizi çalıştırılıyor..."):
+    with st.spinner("Planogram ve yüksek hassasiyetli etiket analizi çalıştırılıyor..."):
         try:
             result_img, results, summary, aligned_field = analyze_planogram_grid_free(
                 ref_img, field_img

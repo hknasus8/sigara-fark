@@ -360,7 +360,7 @@ def analyze_planogram_grid_free(reference, field, roi_top_ratio=0.05, roi_bottom
                 elif ref_piece is not None and np.mean(np.abs(ref_piece.astype(np.float32) - roi_target_piece.astype(np.float32))) > 40:
                     product_label_mismatch_count += 1
                     fark_sayisi += 1
-                    etiket_turu = f"ÜRÜN-ETİKET UYUŞMAZLIĞI #{product_label_mismatch_count}"
+                    etiket_turu = f"FARKLILIK #{product_label_mismatch_count}"
                     box_color = (255, 0, 255) # Mor/Pembe
                 else:
                     continue
@@ -440,7 +440,7 @@ def build_report(dealer, results, summary):
         "Tarih: " + datetime.now().strftime("%d.%m.%Y %H:%M:%S"),
         "",
         "Eksik Etiket Sayısı: " + str(summary.get('etiket_eksigi', 0)),
-        "Ürün-Etiket Uyuşmazlığı Sayısı: " + str(summary.get('urun_etiket_uyumsuzluk', 0)),
+        "Farklılık Sayısı: " + str(summary.get('urun_etiket_uyumsuzluk', 0)),
         "Kontrol Edilmeyen Rakip Raf Sayısı: " + str(summary.get('kontrol_edilmeyen_rakip_raf', 0)),
         "",
         "--- DETAYLI İHLAL / EKSİK KAYITLARI ---"
@@ -634,7 +634,7 @@ if st.session_state.result_img is not None and st.session_state.summary:
     
     m1, m2, m3 = st.columns(3)
     m1.metric("🟧 Eksik Etiket", summary.get("etiket_eksigi", 0))
-    m2.metric("🟪 Ürün-Etiket Uyuşmaz", summary.get("urun_etiket_uyumsuzluk", 0))
+    m2.metric("🟪 Farklılıklar", summary.get("urun_etiket_uyumsuzluk", 0))
     m3.metric("⬜ Kontrol Edilmeyen Rakip Raf", summary.get("kontrol_edilmeyen_rakip_raf", 0))
 
     st.image(st.session_state.result_img, channels="BGR", use_container_width=True)

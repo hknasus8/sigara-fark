@@ -357,7 +357,7 @@ def analyze_planogram_grid_free(reference, field, roi_top_ratio=0.05, roi_bottom
 
                 ref_piece = ref_roi[y:y+bh, x:x+bw] if (y+bh <= ref_roi.shape[0] and x+bw <= ref_roi.shape[1]) else None
                 
-                # Ayrıştırılmış mantık: Etiket yoksa, Etiket-Ürün uyuşmazlığı varsa veya ürün farklılığı varsa
+                # Her bir hata türü ayrı renk ve etiketle kodlandı
                 if mean_brightness > 190: 
                     missing_label_count += 1
                     etiket_turu = f"EKSİK ETİKET #{missing_label_count}"
@@ -369,7 +369,7 @@ def analyze_planogram_grid_free(reference, field, roi_top_ratio=0.05, roi_bottom
                 elif ref_piece is not None and np.mean(np.abs(ref_piece.astype(np.float32) - roi_target_piece.astype(np.float32))) > 40:
                     product_difference_count += 1
                     etiket_turu = f"ÜRÜN FARKLILIĞI #{product_difference_count}"
-                    box_color = (0, 255, 255) # Sarı
+                    box_color = (0, 255, 255) # Sarı (Sarı tonu ile farklılık netleştirildi)
                 else:
                     farkli_meyve_sayisi += 1
                     etiket_turu = f"POG UYUMSUZLUGU #{farkli_meyve_sayisi}"
@@ -413,7 +413,7 @@ def analyze_planogram_grid_free(reference, field, roi_top_ratio=0.05, roi_bottom
                 planogram_disi_ihlal += 1
                 etiket_turu = f"PLANOGRAM KURALLARINA UYMAYAN #{planogram_disi_ihlal}"
                 
-                # BGR formatında BEYAZ (255, 255, 255)
+                # BEYAZ ÇERÇEVE VE ÇARPI İŞARETİ (Kurallara Uymayanlar İçin Özel Tasarım)
                 cv2.line(result_img, (x, abs_y), (x + bw, abs_y + bh), (255, 255, 255), 3)
                 cv2.line(result_img, (x, abs_y + bh), (x + bw, abs_y), (255, 255, 255), 3)
                 cv2.rectangle(result_img, (x, abs_y), (x + bw, abs_y + bh), (255, 255, 255), 2)

@@ -2,10 +2,8 @@ name: Keep Streamlit Alive
 
 on:
   schedule:
-    # Streamlit Cloud'un mevcut hareketsizlik eşiği ~12 saat.
-    # Bunu güvenle geçmemek için her 6 saatte bir çalıştırıyoruz.
     - cron: "0 */6 * * *"
-  workflow_dispatch: {} # Manuel tetikleme için
+  workflow_dispatch: {}
 
 jobs:
   wake-up:
@@ -22,6 +20,7 @@ jobs:
       - name: Bağımlılıkları kur
         run: |
           pip install playwright
+          pip install requests
           playwright install --with-deps chromium
 
       - name: Uygulamayı uyandır

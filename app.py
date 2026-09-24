@@ -380,6 +380,7 @@ if "app_password" not in st.secrets:
     st.error("Kritik: Streamlit Secrets içine app_password eklenmemiş.")
     st.stop()
 
+# GİRİŞ KONTROLÜ
 if not st.session_state.authenticated:
     st.title("🔐 Özçelik Stand Kontrol Uygulaması")
     password = st.text_input("Şifre", type="password")
@@ -393,7 +394,7 @@ if not st.session_state.authenticated:
 
 
 # =========================================================
-# KENAR ÇUBUĞU (SİDEBAR) - KONTROL BUTONLARI
+# GİRİŞ YAPILDIKTSONRA SOL KISIMDA (SİDEBAR) GÖRÜNECEK BUTONLAR
 # =========================================================
 with st.sidebar:
     st.subheader("⚙️ Sistem Kontrolleri")
@@ -414,6 +415,7 @@ with st.sidebar:
         st.rerun()
 
 
+# ANA UYGULAMA EKRANI
 st.title("📊 ÖZÇELİK STAND KONTROL UYGULAMASI")
 
 # 1. ŞEHİR VE BAYİ SEÇİMİ

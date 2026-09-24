@@ -369,7 +369,7 @@ def analyze_planogram_grid_free(reference, field, roi_top_ratio=0.05, roi_bottom
                 elif ref_piece is not None and np.mean(np.abs(ref_piece.astype(np.float32) - roi_target_piece.astype(np.float32))) > 40:
                     product_difference_count += 1
                     etiket_turu = f"ÜRÜN FARKLILIĞI #{product_difference_count}"
-                    box_color = (0, 255, 255) # Sarı (Sarı tonu ile farklılık netleştirildi)
+                    box_color = (0, 255, 255) # Sarı
                 else:
                     farkli_meyve_sayisi += 1
                     etiket_turu = f"POG UYUMSUZLUGU #{farkli_meyve_sayisi}"
@@ -413,7 +413,7 @@ def analyze_planogram_grid_free(reference, field, roi_top_ratio=0.05, roi_bottom
                 planogram_disi_ihlal += 1
                 etiket_turu = f"PLANOGRAM KURALLARINA UYMAYAN #{planogram_disi_ihlal}"
                 
-                # BEYAZ ÇERÇEVE VE ÇARPI İŞARETİ (Kurallara Uymayanlar İçin Özel Tasarım)
+                # BEYAZ ÇERÇEVE VE ÇARPI İŞARETİ
                 cv2.line(result_img, (x, abs_y), (x + bw, abs_y + bh), (255, 255, 255), 3)
                 cv2.line(result_img, (x, abs_y + bh), (x + bw, abs_y), (255, 255, 255), 3)
                 cv2.rectangle(result_img, (x, abs_y), (x + bw, abs_y + bh), (255, 255, 255), 2)
@@ -647,12 +647,13 @@ if st.button("🚀 KONTROLÜ BAŞLAT", type="primary", use_container_width=True,
 if st.session_state.result_img is not None and st.session_state.summary:
     summary = st.session_state.summary
     
+    # METRİKLER RENKLERİ İLE GÜNCELLENDİ
     m1, m2, m3, m4, m5 = st.columns(5)
-    m1.metric("Eksik Etiket", summary.get("etiket_eksigi", 0))
-    m2.metric("Ürün-Etiket Uyuşmaz", summary.get("urun_etiket_uyumsuzluk", 0))
-    m3.metric("Ürün Farklılığı", summary.get("urun_farkliligi", 0))
-    m4.metric("POG Uyumsuzluğu", summary.get("farkli_gorsel", 0))
-    m5.metric("Kurallara Uymayan", summary.get("planogram_disi_ihlal", 0))
+    m1.metric("🟧 Eksik Etiket", summary.get("etiket_eksigi", 0))
+    m2.metric("🟪 Ürün-Etiket Uyuşmaz", summary.get("urun_etiket_uyumsuzluk", 0))
+    m3.metric("🟨 Ürün Farklılığı", summary.get("urun_farkliligi", 0))
+    m4.metric("🟥 POG Uyumsuzluğu", summary.get("farkli_gorsel", 0))
+    m5.metric("⬜ Kurallara Uymayan", summary.get("planogram_disi_ihlal", 0))
 
     st.image(st.session_state.result_img, channels="BGR", use_container_width=True)
 

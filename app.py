@@ -313,7 +313,6 @@ def analyze_planogram_grid_free(reference, field, roi_top_ratio=0.05, roi_bottom
     planogram_disi_ihlal = 0
     missing_label_count = 0 
     product_label_mismatch_count = 0  
-    empty_label_count = 0
 
     for i in range(total_estimated_shelves):
         s_top = top_y + (i * shelf_height)
@@ -353,24 +352,18 @@ def analyze_planogram_grid_free(reference, field, roi_top_ratio=0.05, roi_bottom
                 mean_brightness = np.mean(roi_target_piece) if roi_target_piece.size > 0 else 128
                 ref_piece = ref_roi[y:y+bh, x:x+bw] if (y+bh <= ref_roi.shape[0] and x+bw <= ref_roi.shape[1]) else None
                 
-                # Sadece diğer etiket/uyumsuzluk durumlarını işleme alıyoruz (POG Uyumsuzluğu kaldırıldı)
                 if mean_brightness > 190: 
                     missing_label_count += 1
                     fark_sayisi += 1
                     etiket_turu = f"EKSİK ETİKET #{missing_label_count}"
                     box_color = (0, 165, 255) # Turuncu
-                elif ref_piece is not None and np.mean(np.abs(ref_piece.astype(np.float32) - roi_target_piece.astype(np.float32))) > 60:
+                elif ref_piece is not None and np.mean(np.abs(ref_piece.astype(np.float32) - roi_target_piece.astype(np.float32))) > 40:
+                    # Ürün-Etiket uyuşmazlığı ve eski boş etiketler tek bir çatı altında (Mor/Pembe) birleştirildi
                     product_label_mismatch_count += 1
                     fark_sayisi += 1
                     etiket_turu = f"ÜRÜN-ETİKET UYUŞMAZLIĞI #{product_label_mismatch_count}"
                     box_color = (255, 0, 255) # Mor/Pembe
-                elif ref_piece is not None and np.mean(np.abs(ref_piece.astype(np.float32) - roi_target_piece.astype(np.float32))) > 40:
-                    empty_label_count += 1
-                    fark_sayisi += 1
-                    etiket_turu = f"BOŞ ETİKET #{empty_label_count}"
-                    box_color = (0, 255, 255) # Sarı
                 else:
-                    # POG Uyumsuzluğu kriteri tamamen devre dışı bırakıldı (kutu çizilmiyor ve sayılmıyor)
                     continue
 
                 box_thickness = 3
@@ -433,7 +426,6 @@ def analyze_planogram_grid_free(reference, field, roi_top_ratio=0.05, roi_bottom
         "fark": fark_sayisi,
         "etiket_eksigi": missing_label_count,
         "urun_etiket_uyumsuzluk": product_label_mismatch_count,
-        "bos_etiket": empty_label_count,
         "planogram_disi_ihlal": planogram_disi_ihlal,
         "hizalama_ok": aligned_ok,
         "hizalama": "Hibrit Motor",
@@ -451,7 +443,6 @@ def build_report(dealer, results, summary):
         "",
         "Eksik Etiket Sayısı: " + str(summary.get('etiket_eksigi', 0)),
         "Ürün-Etiket Uyuşmazlığı Sayısı: " + str(summary.get('urun_etiket_uyumsuzluk', 0)),
-        "Boş Etiket Sayısı: " + str(summary.get('bos_etiket', 0)),
         "Planogram Kurallarına Uymayan Sayısı: " + str(summary.get('planogram_disi_ihlal', 0)),
         "",
         "--- DETAYLI İHLAL / EKSİK KAYITLARI ---"
@@ -643,12 +634,11 @@ if st.button("🚀 KONTROLÜ BAŞLAT", type="primary", use_container_width=True,
 if st.session_state.result_img is not None and st.session_state.summary:
     summary = st.session_state.summary
     
-    # 4 Sütunlu Metrik Yapısı (POG Uyumsuzluğu kaldırıldı)
-    m1, m2, m3, m4 = st.columns(4)
+    # 3 Sütunlu Metrik Yapısına Geri Döndürüldü
+    m1, m2, m3 = st.columns(3)
     m1.metric("🟧 Eksik Etiket", summary.get("etiket_eksigi", 0))
     m2.metric("🟪 Ürün-Etiket Uyuşmaz", summary.get("urun_etiket_uyumsuzluk", 0))
-    m3.metric("🟨 Boş Etiket", summary.get("bos_etiket", 0))
-    m4.metric("⬜ Kurallara Uymayan", summary.get("planogram_disi_ihlal", 0))
+    m3.metric("⬜ Kurallara Uymayan", summary.get("planogram_disi_ihlal", 0))
 
     st.image(st.session_state.result_img, channels="BGR", use_container_width=True)
 

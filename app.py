@@ -332,7 +332,7 @@ def analyze_planogram_grid_free(reference, field, roi_top_ratio=0.05, roi_bottom
             diff = cv2.absdiff(ref_roi_blur, tar_roi_blur)
             _, thresh = cv2.threshold(diff, 50, 255, cv2.THRESH_BINARY)
 
-            kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (7, 7))
+            kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (5, 5))
             thresh = cv2.morphologyEx(thresh, cv2.MORPH_CLOSE, kernel, iterations=2)
             thresh = cv2.morphologyEx(thresh, cv2.MORPH_OPEN, kernel, iterations=1)
 
@@ -340,7 +340,8 @@ def analyze_planogram_grid_free(reference, field, roi_top_ratio=0.05, roi_bottom
 
             for cnt in contours:
                 area = cv2.contourArea(cnt)
-                if area < (w * h * 0.0012) or area > (w * h * 0.08):
+                # Küçük etiketlerin filtrelere takılmaması için minimum alan eşiği düşürüldü
+                if area < (w * h * 0.0002) or area > (w * h * 0.08):
                     continue
 
                 x, y, bw, bh = cv2.boundingRect(cnt)

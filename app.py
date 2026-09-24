@@ -312,8 +312,8 @@ def analyze_planogram_grid_free(reference, field, roi_top_ratio=0.05, roi_bottom
     fark_sayisi = 0
     farkli_meyve_sayisi = 0
     asiri_raf_ihlali = 0
-    out_of_stock_count = 0  # Bulunurluk eksikliği
-    missing_label_count = 0 # Etiket eksikliği
+    out_of_stock_count = 0  
+    missing_label_count = 0 
 
     for i in range(total_estimated_shelves):
         s_top = top_y + (i * shelf_height)
@@ -340,7 +340,6 @@ def analyze_planogram_grid_free(reference, field, roi_top_ratio=0.05, roi_bottom
 
             for cnt in contours:
                 area = cv2.contourArea(cnt)
-                # Küçük etiketlerin filtrelere takılmaması için minimum alan eşiği düşürüldü
                 if area < (w * h * 0.0002) or area > (w * h * 0.08):
                     continue
 
@@ -352,22 +351,21 @@ def analyze_planogram_grid_free(reference, field, roi_top_ratio=0.05, roi_bottom
 
                 fark_sayisi += 1
                 
-                # --- BULUNURLUK (OUT-OF-STOCK) VE ETİKET KONTROLÜ AYRIMI ---
                 roi_target_piece = tar_roi[y:y+bh, x:x+bw]
                 mean_brightness = np.mean(roi_target_piece) if roi_target_piece.size > 0 else 128
 
-                if mean_brightness < 45: # Koyu/boş alan -> Ürün Bulunmuyor (Out-of-Stock)
+                if mean_brightness < 45: 
                     out_of_stock_count += 1
                     etiket_turu = f"BULUNURLUK EKSİK (OOS) #{out_of_stock_count}"
-                    box_color = (0, 0, 255) # Kırmızı
-                elif mean_brightness > 190: # Çok parlak/beyaz ve boş alan -> EKSİK/HATALI ETİKET
+                    box_color = (0, 0, 255) 
+                elif mean_brightness > 190: 
                     missing_label_count += 1
                     etiket_turu = f"EKSİK/HATALI ETİKET #{missing_label_count}"
-                    box_color = (0, 165, 255) # Turuncu
+                    box_color = (0, 165, 255) 
                 else:
                     farkli_meyve_sayisi += 1
                     etiket_turu = f"POG UYUMSUZLUGU #{farkli_meyve_sayisi}"
-                    box_color = (0, 0, 255) # Kırmızı
+                    box_color = (0, 0, 255) 
 
                 box_thickness = 3
 
@@ -494,7 +492,7 @@ with st.sidebar:
         st.session_state.report = ""
         st.rerun()
 
-    if st.button("🚪 Çıkış Yap", use_container_width=True):
+    if st.button("🚪 Çıkış Yap", use_container_width=True, key="sidebar_logout"):
         st.session_state.authenticated = False
         st.session_state.result_img = None
         st.session_state.results = []
@@ -513,13 +511,21 @@ def clear_yandex_cache():
     st.session_state.report = ""
 
 
-title_col, refresh_col = st.columns([5, 1])
+title_col, refresh_col, logout_col = st.columns([4, 1, 1])
 with title_col:
     st.title("📊 ÖZÇELİK STAND KONTROL UYGULAMASI")
 with refresh_col:
     st.write("")
     if st.button("🔄 Yenile", use_container_width=True, key="main_refresh_btn"):
         clear_yandex_cache()
+        st.rerun()
+with logout_col:
+    st.write("")
+    if st.button("🚪 Çıkış", use_container_width=True, key="main_logout_btn"):
+        st.session_state.authenticated = False
+        st.session_state.result_img = None
+        st.session_state.results = []
+        st.session_state.summary = None
         st.rerun()
 
 st.subheader("1. Şehir ve Bayi Seçiniz")

@@ -366,7 +366,7 @@ def analyze_planogram_grid_free(reference, field, roi_top_ratio=0.05, roi_bottom
                 else:
                     farkli_meyve_sayisi += 1
                     etiket_turu = f"POG UYUMSUZLUGU #{farkli_meyve_sayisi}"
-                    box_color = (255, 255, 255) # Beyaz
+                    box_color = (0, 0, 255) # Kırmızı (Beyaz yerine kırmızı yapıldı)
 
                 box_thickness = 3
 

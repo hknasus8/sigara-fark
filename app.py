@@ -280,39 +280,6 @@ def get_polygram_files(public_key):
 # =========================================================
 # GÖRSEL HİZALAMA VE ANALİZ MOTORU
 # =========================================================
-def align_images_feature(reference, target):
-    h, w = reference.shape[:2]
-    if target.shape[:2] != (w, h):
-        target = cv2.resize(target, (w, h), interpolation=cv2.INTER_AREA)
-    
-    ref_gray = cv2.cvtColor(reference, cv2.COLOR_BGR2GRAY)
-    tar_gray = cv2.cvtColor(target, cv2.COLOR_BGR2GRAY)
-
-    orb = cv2.ORB_create(nfeatures=10000, scaleFactor=1.15, nlevels=8)
-    kp1, des1 = orb.detectAndCompute(ref_gray, None)
-    kp2, des2 = orb.detectAndCompute(tar_gray, None)
-
-    if des1 is None or des2 is None or len(kp1) < 10 or len(kp2) < 10:
-        return target, False
-
-    matcher = cv2.BFMatcher(cv2.NORM_HAMMING)
-    pairs = matcher.knnMatch(des2, des1, k=2)
-    good = [m for m, n in pairs if len(pairs[0]) == 2 and m.distance < 0.80 * n.distance]
-
-    if len(good) < 10:
-        return target, False
-
-    src = np.float32([kp2[m.queryIdx].pt for m in good]).reshape(-1, 1, 2)
-    dst = np.float32([kp1[m.trainIdx].pt for m in good]).reshape(-1, 1, 2)
-
-    matrix, _ = cv2.findHomography(src, dst, cv2.RANSAC, 4.0)
-    if matrix is None:
-        return target, False
-
-    aligned = cv2.warpPerspective(target, matrix, (w, h), flags=cv2.INTER_LINEAR, borderMode=cv2.BORDER_REPLICATE)
-    return aligned, True
-
-
 def analyze_polygram_excel_sequence_control(excel_bytes, field_img, selected_shelf_count):
     """
     Seçilen raf sıra sayısına (örn: 7) göre Excel içindeki ilgili şemayı baz alır 
@@ -423,6 +390,29 @@ if not st.session_state.authenticated:
         else:
             st.error("❌ Hatalı şifre.")
     st.stop()
+
+
+# =========================================================
+# KENAR ÇUBUĞU (SİDEBAR) - KONTROL BUTONLARI
+# =========================================================
+with st.sidebar:
+    st.subheader("⚙️ Sistem Kontrolleri")
+    
+    # 1. Yandex Önbelleğini Yenile Butonu
+    if st.button("🔄 Yandex Önbelleğini Yenile", use_container_width=True):
+        st.cache_data.clear()
+        st.success("Önbellek başarıyla temizlendi!")
+        st.rerun()
+        
+    st.divider()
+    
+    # 2. Çıkış Yap Butonu
+    if st.button("🚪 Çıkış Yap", type="primary", use_container_width=True):
+        st.session_state.authenticated = False
+        st.session_state.result_img = None
+        st.session_state.poly_result_img = None
+        st.rerun()
+
 
 st.title("📊 ÖZÇELİK STAND KONTROL UYGULAMASI")
 

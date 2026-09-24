@@ -313,7 +313,7 @@ def analyze_planogram_grid_free(reference, field, roi_top_ratio=0.05, roi_bottom
     farkli_meyve_sayisi = 0
     planogram_disi_ihlal = 0
     missing_label_count = 0 
-    label_mismatch_count = 0  
+    product_difference_count = 0  
 
     for i in range(total_estimated_shelves):
         s_top = top_y + (i * shelf_height)
@@ -361,8 +361,8 @@ def analyze_planogram_grid_free(reference, field, roi_top_ratio=0.05, roi_bottom
                     etiket_turu = f"EKSİK/HATALI ETİKET #{missing_label_count}"
                     box_color = (0, 165, 255) # Turuncu
                 elif ref_piece is not None and np.mean(np.abs(ref_piece.astype(np.float32) - roi_target_piece.astype(np.float32))) > 40:
-                    label_mismatch_count += 1
-                    etiket_turu = f"ÜRÜN-ETİKET UYUŞMAZLIĞI #{label_mismatch_count}"
+                    product_difference_count += 1
+                    etiket_turu = f"ÜRÜN FARKLILIĞI #{product_difference_count}"
                     box_color = (0, 255, 255) # Sarı
                 else:
                     farkli_meyve_sayisi += 1
@@ -428,7 +428,7 @@ def analyze_planogram_grid_free(reference, field, roi_top_ratio=0.05, roi_bottom
     summary = {
         "fark": fark_sayisi,
         "etiket_eksigi": missing_label_count,
-        "urun_etiket_uyumsuzluk": label_mismatch_count,
+        "urun_farkliligi": product_difference_count,
         "farkli_gorsel": farkli_meyve_sayisi,
         "planogram_disi_ihlal": planogram_disi_ihlal,
         "hizalama_ok": aligned_ok,
@@ -446,7 +446,7 @@ def build_report(dealer, results, summary):
         "Tarih: " + datetime.now().strftime("%d.%m.%Y %H:%M:%S"),
         "",
         "Eksik/Hatalı Etiket Sayısı: " + str(summary.get('etiket_eksigi', 0)),
-        "Ürün-Etiket Uyuşmazlığı Sayısı: " + str(summary.get('urun_etiket_uyumsuzluk', 0)),
+        "Ürün Farklılığı Sayısı: " + str(summary.get('urun_farkliligi', 0)),
         "Planogram (POG) Uyumsuzluğu: " + str(summary.get('farkli_gorsel', 0)),
         "Planogram Kurallarına Uymayan Sayısı: " + str(summary.get('planogram_disi_ihlal', 0)),
         "",
@@ -641,7 +641,7 @@ if st.session_state.result_img is not None and st.session_state.summary:
     
     m1, m2, m3, m4 = st.columns(4)
     m1.metric("Eksik Etiket", summary.get("etiket_eksigi", 0))
-    m2.metric("Ürün-Etiket Uyuşmaz", summary.get("urun_etiket_uyumsuzluk", 0))
+    m2.metric("Ürün Farklılığı", summary.get("urun_farkliligi", 0))
     m3.metric("POG Uyumsuzluğu", summary.get("farkli_gorsel", 0))
     m4.metric("Kurallara Uymayan", summary.get("planogram_disi_ihlal", 0))
 

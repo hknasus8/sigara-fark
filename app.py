@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-ÖZÇELİK STAND KONTROL UYGULAMASI (SEKMELİ / MODÜLER YAPI)
+ÖZÇELİK STAND KONTROL UYGULAMASI (SEKMELİ & POLİGRAM SIRALAMA KAYMA KONTROLÜ)
 """
 
 import difflib
@@ -318,6 +318,7 @@ def analyze_reference_comparison(ref_img, field_img):
 
 
 def analyze_polygram_excel_sequence_control(excel_bytes, field_img, selected_shelf_count):
+    """Excel poligramındaki raf satırlarını okur ve sahadaki soldan sağa etiket/ürün dizilimini (kaymaları) kontrol eder"""
     try:
         xls = pd.ExcelFile(io.BytesIO(excel_bytes))
         sheet_name = xls.sheet_names[0]
@@ -340,6 +341,12 @@ def analyze_polygram_excel_sequence_control(excel_bytes, field_img, selected_she
     gray_field = clahe.apply(gray_field)
 
     for i in range(selected_shelf_count):
+        # Excel'den ilgili rafın (satırın) beklenen öğelerini oku
+        expected_items = []
+        if raw_df is not None and i < len(raw_df):
+            row_vals = raw_df.iloc[i].dropna().tolist()
+            expected_items = [str(v).strip() for v in row_vals if str(v).strip() and str(v).lower() != 'nan']
+
         s_top = top_y + (i * row_height)
         s_bottom = s_top + row_height if i < selected_shelf_count - 1 else bottom_y
 
@@ -356,33 +363,48 @@ def analyze_polygram_excel_sequence_control(excel_bytes, field_img, selected_she
 
         contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
+        shelf_contours = []
         for cnt in contours:
             area = cv2.contourArea(cnt)
             if area < (w * h * 0.0003) or area > (w * h * 0.05):
                 continue
-
             x, y, bw, bh = cv2.boundingRect(cnt)
-            abs_y = s_top + y
-
             if x < 10 or (x + bw) > (w - 10):
                 continue
+            shelf_contours.append((x, y, bw, bh))
 
-            discrepancy_count += 1
-            label_text = f"KAT {i+1} SIRALAMA HATASI #{discrepancy_count}"
-            box_color = (0, 140, 255)
+        # Soldan sağa sıralama (X koordinatına göre)
+        shelf_contours.sort(key=lambda b: b[0])
 
-            cv2.rectangle(result_img, (x, abs_y), (x + bw, abs_y + bh), box_color, 3)
-            cv2.putText(
-                result_img,
-                label_text,
-                (x, max(15, abs_y - 5)),
-                cv2.FONT_HERSHEY_SIMPLEX,
-                0.35,
-                (0, 0, 0),
-                1,
-                cv2.LINE_AA,
-            )
-            results.append({"id": discrepancy_count, "durum": label_text, "x": x, "y": abs_y, "w": bw, "h": bh})
+        # Sıralama ve kayma tespiti (2., 3., 4., 5., 6., 7. sıralardaki karmaşalar)
+        for idx, (x, y, bw, bh) in enumerate(shelf_contours):
+            abs_y = s_top + y
+            is_mismatch = False
+
+            # Eğer Excel'de tanımlı ürün adedi ile sahadaki tespit edilen adet tutmuyorsa
+            if expected_items and len(shelf_contours) != len(expected_items):
+                is_mismatch = True
+            # Ürünler / etiketler arası anormal mesafe/kayma varsa
+            elif idx > 0 and (x - (shelf_contours[idx-1][0] + shelf_contours[idx-1][2])) > (w * 0.08):
+                is_mismatch = True
+
+            if is_mismatch or not expected_items:
+                discrepancy_count += 1
+                label_text = f"KAT {i+1} DİZİLİM / KAYMA #{discrepancy_count}"
+                box_color = (0, 140, 255)  # Turuncu
+
+                cv2.rectangle(result_img, (x, abs_y), (x + bw, abs_y + bh), box_color, 3)
+                cv2.putText(
+                    result_img,
+                    label_text,
+                    (x, max(15, abs_y - 5)),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    0.35,
+                    (0, 0, 0),
+                    1,
+                    cv2.LINE_AA,
+                )
+                results.append({"id": discrepancy_count, "durum": label_text, "x": x, "y": abs_y, "w": bw, "h": bh})
 
     summary = {
         "discrepancy_count": discrepancy_count,
@@ -448,7 +470,7 @@ with header_col2:
 st.divider()
 
 # =========================================================
-# SEKMELİ UYGULAMA YAPISI (KARMAŞIKLIĞI ÖNLEYEN MODÜLLER)
+# SEKMELİ UYGULAMA YAPISI (MODÜLER KONTROL)
 # =========================================================
 tab1, tab2 = st.tabs(["📸 Stand Görsel Kıyaslama", "📊 Poligram Kontrolü"])
 
@@ -509,10 +531,10 @@ with tab1:
         st.image(st.session_state.result_img, channels="BGR", use_container_width=True)
 
 
-# --- TAB 2: POLİGRAM KONTROLÜ ---
+# --- TAB 2: POLİGRAM KONTROLÜ (GÜNCELLENMİŞ KAYMA VE SIRALAMA MODÜLÜ) ---
 with tab2:
-    st.subheader("📊 Poligram Excel & Etiket Sıralama Kontrol Modülü")
-    st.markdown("Yandex'teki **POLİGRAM** klasöründen ilgili excel dosyasını seçip, saha fotoğrafındaki etiket dizilimini kontrol edebilirsiniz.")
+    st.subheader("📊 Poligram Excel & Etiket Sıralama ve Kayma Kontrolü")
+    st.markdown("Yandex'teki **POLİGRAM** klasöründen ilgili excel dosyasını seçip, poligramdaki raf sıralaması ile saha fotoğrafındaki ürün/etiket dizilimlerini (kaymaları) karşılaştırabilirsiniz.")
 
     poly_files, _ = get_polygram_files(YANDEX_ROOT_PUBLIC_KEY)
     poly_options = {item["name"]: item["file"] for item in poly_files}
@@ -529,11 +551,11 @@ with tab2:
     if field_img_t2 is not None:
         st.image(field_img_t2, channels="BGR", use_container_width=True, caption="Yüklenen Saha Fotoğrafı")
 
-    if st.button("🔍 Poligram Sıralamasını Kontrol Et", type="primary", use_container_width=True, key="btn_t2"):
+    if st.button("🔍 Poligram Sıralamasını ve Kaymaları Kontrol Et", type="primary", use_container_width=True, key="btn_t2"):
         if not selected_poly_name or field_img_t2 is None:
             st.warning("⚠️ Lütfen bir Excel dosyası seçin ve saha fotoğrafı yükleyin.")
         else:
-            with st.spinner(f"Poligram verisi ({stand_kat_sayisi} kat) ile eşleştiriliyor..."):
+            with st.spinner(f"Poligram excel satırları ({stand_kat_sayisi} kat) ile saha fotoğrafı dizilimi karşılaştırılıyor..."):
                 excel_bytes = safe_download_file_bytes(poly_options[selected_poly_name])
                 p_res_img, p_results, p_summary, p_aligned = analyze_polygram_excel_sequence_control(
                     excel_bytes, field_img_t2, stand_kat_sayisi
@@ -543,13 +565,13 @@ with tab2:
 
     if st.session_state.poly_result_img is not None and st.session_state.poly_summary:
         p_sum = st.session_state.poly_summary
-        st.success(f"✅ Poligram Kontrolü Tamamlandı ({p_sum.get('shelf_count')} Raf Baz Alındı)! Tespit Edilen Farklılık: **{p_sum.get('discrepancy_count', 0)}**")
+        st.success(f"✅ Poligram Kayma/Sıralama Kontrolü Tamamlandı ({p_sum.get('shelf_count')} Raf Baz Alındı)! Tespit Edilen Uyumsuzluk: **{p_sum.get('discrepancy_count', 0)}**")
         
         if p_sum.get('discrepancy_count', 0) > 0 and field_img_t2 is not None:
             f_clean = Image.fromarray(cv2.cvtColor(field_img_t2, cv2.COLOR_BGR2RGB))
             f_marked = Image.fromarray(cv2.cvtColor(st.session_state.poly_result_img, cv2.COLOR_BGR2RGB))
             gif_bytes = io.BytesIO()
             f_marked.save(gif_bytes, format="GIF", save_all=True, append_images=[f_clean], duration=400, loop=0)
-            st.image(gif_bytes.getvalue(), use_container_width=True, caption="Farklılıkların Animasyonlu Gösterimi (İşaretli / Normal)")
+            st.image(gif_bytes.getvalue(), use_container_width=True, caption="Dizilim Karmaşaları ve Kaymaların Animasyonlu Gösterimi (İşaretli / Normal)")
         else:
             st.image(st.session_state.poly_result_img, channels="BGR", use_container_width=True)

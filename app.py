@@ -407,7 +407,7 @@ def analyze_planogram_grid_free(reference, field, roi_top_ratio=0.05, roi_bottom
                 planogram_disi_ihlal += 1
                 etiket_turu = f"PLANOGRAM KURALLARINA UYMAYAN #{planogram_disi_ihlal}"
                 
-                # BGR formatında BEYAY (255, 255, 255)
+                # BGR formatında BEYAZ (255, 255, 255)
                 cv2.line(result_img, (x, abs_y), (x + bw, abs_y + bh), (255, 255, 255), 3)
                 cv2.line(result_img, (x, abs_y + bh), (x + bw, abs_y), (255, 255, 255), 3)
                 cv2.rectangle(result_img, (x, abs_y), (x + bw, abs_y + bh), (255, 255, 255), 2)
@@ -656,4 +656,4 @@ if st.session_state.result_img is not None and st.session_state.summary:
         with d2:
             st.download_button("📄 Detaylı Raporu İndir", data=st.session_state.report.encode("utf-8"), file_name="stand_kontrol_rapor.txt", mime="text/plain", use_container_width=True)
 else:
-    st.info("Denetim için referans ve saha fotoğraflarını yükleyin, ardından kontrolü başlatın.")
+    st.info("Saha fotoğraflarını yükleyin, ardından kontrolü başlatın.")

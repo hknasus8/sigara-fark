@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-ÖZÇELİK STAND KONTROL UYGULAMASI (SFA & POG & BULUNURLUK & ETİKET ENTEGRELI)
+ÖZÇELİK STAND KONTROL UYGULAMASI (SFA & POG & BULUNURLUK & GELİŞMİŞ ETİKET ENTEGRELI)
 """
 
 import difflib
@@ -312,8 +312,8 @@ def analyze_planogram_grid_free(reference, field, roi_top_ratio=0.05, roi_bottom
     fark_sayisi = 0
     farkli_meyve_sayisi = 0
     asiri_raf_ihlali = 0
-    out_of_stock_count = 0  # Bulunurluk eksikliği
-    missing_label_count = 0 # Etiket eksikliği
+    out_of_stock_count = 0  # Bulunurluk eksikliği (OOS)
+    missing_label_count = 0 # Eksik Etiket Sayısı
 
     for i in range(total_estimated_shelves):
         s_top = top_y + (i * shelf_height)
@@ -330,7 +330,7 @@ def analyze_planogram_grid_free(reference, field, roi_top_ratio=0.05, roi_bottom
             tar_roi_blur = cv2.GaussianBlur(tar_roi, (5, 5), 0)
 
             diff = cv2.absdiff(ref_roi_blur, tar_roi_blur)
-            _, thresh = cv2.threshold(diff, 50, 255, cv2.THRESH_BINARY)
+            _, thresh = cv2.threshold(diff, 45, 255, cv2.THRESH_BINARY)
 
             kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (7, 7))
             thresh = cv2.morphologyEx(thresh, cv2.MORPH_CLOSE, kernel, iterations=2)
@@ -340,7 +340,7 @@ def analyze_planogram_grid_free(reference, field, roi_top_ratio=0.05, roi_bottom
 
             for cnt in contours:
                 area = cv2.contourArea(cnt)
-                if area < (w * h * 0.0012) or area > (w * h * 0.08):
+                if area < (w * h * 0.0008) or area > (w * h * 0.08):
                     continue
 
                 x, y, bw, bh = cv2.boundingRect(cnt)
@@ -351,20 +351,30 @@ def analyze_planogram_grid_free(reference, field, roi_top_ratio=0.05, roi_bottom
 
                 fark_sayisi += 1
                 
-                # --- BULUNURLUK (OUT-OF-STOCK) VE ETİKET KONTROLÜ AYRIMI ---
-                # Referans görselde dolu olan alan hedef görselde aşırı koyu/boşluksa "Bulunurluk Eksikliği" sayılır.
-                # Hedef bölgedeki ortalama parlaklık kontrolü (örneğin eşik altı boşluk/kutu yokluğu demektir)
-                roi_target_piece = tar_roi[y:y+bh, x:x+bw]
-                mean_brightness = np.mean(roi_target_piece) if roi_target_piece.size > 0 else 128
+                # --- ETİKET VE BULUNURLUK DETAYLI ANALİZİ ---
+                is_label_zone = (y > (shelf_height * 0.65)) # Rafın alt kısımları etiket kuşağıdır
+                
+                ref_roi_piece = ref_roi[y:y+bh, x:x+bw]
+                tar_roi_piece = tar_roi[y:y+bh, x:x+bw]
+                
+                ref_mean = np.mean(ref_roi_piece) if ref_roi_piece.size > 0 else 128
+                tar_mean = np.mean(tar_roi_piece) if tar_roi_piece.size > 0 else 128
 
-                if mean_brightness < 45: # Koyu/boş alan -> Ürün Bulunmuyor (Out-of-Stock)
+                if is_label_zone and ref_mean > 160 and tar_mean < 90:
+                    # Referans görselde parlak/beyaz etiket varken sahada koyu/boş kalmış -> EKSİK ETİKET
+                    missing_label_count += 1
+                    etiket_turu = f"EKSİK ETİKET #{missing_label_count}"
+                    box_color = (0, 165, 255) # Turuncu
+                elif tar_mean < 45: 
+                    # Koyu/boş alan -> Ürün Bulunmuyor (Out-of-Stock)
                     out_of_stock_count += 1
                     etiket_turu = f"BULUNURLUK EKSİK (OOS) #{out_of_stock_count}"
                     box_color = (0, 0, 255) # Kırmızı
-                elif mean_brightness > 210: # Çok parlak/beyaz alan -> Etiket Eksik veya Hatalı Etiket
+                elif tar_mean > 210: 
+                    # Çok parlak/beyaz alan -> Hatalı/Yanıltıcı Alan veya Beyaz Etiket Sorunu
                     missing_label_count += 1
-                    etiket_turu = f"EKSİK/HATALI ETİKET #{missing_label_count}"
-                    box_color = (0, 165, 255) # Turuncu
+                    etiket_turu = f"HATALI ETİKET #{missing_label_count}"
+                    box_color = (0, 140, 255)
                 else:
                     farkli_meyve_sayisi += 1
                     etiket_turu = f"POG UYUMSUZLUGU #{farkli_meyve_sayisi}"
@@ -418,7 +428,7 @@ def analyze_planogram_grid_free(reference, field, roi_top_ratio=0.05, roi_bottom
         "farkli_gorsel": farkli_meyve_sayisi,
         "asiri_raf_ihlali": asiri_raf_ihlali,
         "hizalama_ok": aligned_ok,
-        "hizalama": "SFA & POG & Bulunurluk Hibrit Motor",
+        "hizalama": "SFA & POG & Gelişmiş Etiket Analiz Motoru",
     }
 
     return result_img, results, summary, aligned
@@ -427,7 +437,7 @@ def analyze_planogram_grid_free(reference, field, roi_top_ratio=0.05, roi_bottom
 def build_report(dealer, results, summary):
     from datetime import datetime
     lines = [
-        "=== ÖZÇELİK SFA & PLANOGRAM & BULUNURLUK DENETİM RAPORU ===",
+        "=== ÖZÇELİK SFA & PLANOGRAM & BULUNURLUK & ETİKET DENETİM RAPORU ===",
         f"Bayi: {dealer}",
         "Tarih: " + datetime.now().strftime("%d.%m.%Y %H:%M:%S"),
         "",
@@ -601,7 +611,7 @@ if st.button("🚀 SFA & POG & BULUNURLUK KONTROLÜNÜ BAŞLAT", type="primary",
     st.session_state.summary = None
     st.session_state.report = ""
 
-    with st.spinner("SFA algoritmaları, bulunurluk ve etiket analizi çalıştırılıyor..."):
+    with st.spinner("SFA algoritmaları, bulunurluk ve gelişmiş etiket analizi çalıştırılıyor..."):
         try:
             result_img, results, summary, aligned_field = analyze_planogram_grid_free(
                 ref_img, field_img

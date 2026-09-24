@@ -25,7 +25,6 @@ st.set_page_config(
     page_title="Özçelik Stand Kontrol Uygulaması",
     page_icon="📊",
     layout="wide",
-    initial_sidebar_state="expanded",
 )
 
 st.markdown(
@@ -281,10 +280,6 @@ def get_polygram_files(public_key):
 # GÖRSEL HİZALAMA VE ANALİZ MOTORU
 # =========================================================
 def analyze_polygram_excel_sequence_control(excel_bytes, field_img, selected_shelf_count):
-    """
-    Seçilen raf sıra sayısına (örn: 7) göre Excel içindeki ilgili şemayı baz alır 
-    ve saha fotoğrafını etiket sıralamasına göre kontrol eder.
-    """
     try:
         xls = pd.ExcelFile(io.BytesIO(excel_bytes))
         sheet_name = xls.sheet_names[0]
@@ -394,29 +389,29 @@ if not st.session_state.authenticated:
 
 
 # =========================================================
-# GİRİŞ YAPILDIKTSONRA SOL KISIMDA (SİDEBAR) GÖRÜNECEK BUTONLAR
+# ANA UYGULAMA EKRANI VE SAĞ ÜST KONTROL BUTONLARI
 # =========================================================
-with st.sidebar:
-    st.subheader("⚙️ Sistem Kontrolleri")
-    
-    # 1. Yandex Önbelleğini Yenile Butonu
-    if st.button("🔄 Yandex Önbelleğini Yenile", use_container_width=True):
-        st.cache_data.clear()
-        st.success("Önbellek başarıyla temizlendi!")
-        st.rerun()
-        
-    st.divider()
-    
-    # 2. Çıkış Yap Butonu
-    if st.button("🚪 Çıkış Yap", type="primary", use_container_width=True):
-        st.session_state.authenticated = False
-        st.session_state.result_img = None
-        st.session_state.poly_result_img = None
-        st.rerun()
+header_col1, header_col2 = st.columns([2.5, 1.5])
 
+with header_col1:
+    st.title("📊 ÖZÇELİK STAND KONTROL")
 
-# ANA UYGULAMA EKRANI
-st.title("📊 ÖZÇELİK STAND KONTROL UYGULAMASI")
+with header_col2:
+    st.write("") # Dikey hizalama boşluğu
+    b1, b2 = st.columns(2)
+    with b1:
+        if st.button("🔄 Yenile", use_container_width=True, help="Yandex Önbelleğini Yenile"):
+            st.cache_data.clear()
+            st.success("Önbellek temizlendi!")
+            st.rerun()
+    with b2:
+        if st.button("🚪 Çıkış", type="primary", use_container_width=True, help="Oturumu Kapat"):
+            st.session_state.authenticated = False
+            st.session_state.result_img = None
+            st.session_state.poly_result_img = None
+            st.rerun()
+
+st.divider()
 
 # 1. ŞEHİR VE BAYİ SEÇİMİ
 st.subheader("1. Şehir ve Bayi Seçiniz")

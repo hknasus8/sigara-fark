@@ -277,9 +277,51 @@ def get_polygram_files(public_key):
 
 
 # =========================================================
-# GÖRSEL HİZALAMA VE ANALİZ MOTORU
+# GÖRSEL HİZALAMA VE ANALİZ MOTORLARI
 # =========================================================
+def analyze_reference_comparison(ref_img, field_img):
+    """Referans görsel ile saha fotoğrafını hizalama ve karşılaştırma motoru (1. Kontrol)"""
+    try:
+        if ref_img is None or field_img is None:
+            return None, [], {"status": "error", "msg": "Görseller eksik."}, None
+        
+        # Boyutlandırma eşitleme
+        h, w = ref_img.shape[:2]
+        field_resized = cv2.resize(field_img, (w, h))
+        
+        # Fark tespiti
+        gray_ref = cv2.cvtColor(ref_img, cv2.COLOR_BGR2GRAY)
+        gray_field = cv2.cvtColor(field_resized, cv2.COLOR_BGR2GRAY)
+        
+        diff = cv2.absdiff(gray_ref, gray_field)
+        _, thresh = cv2.threshold(diff, 45, 255, cv2.THRESH_BINARY)
+        
+        kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (5, 5))
+        thresh = cv2.morphologyEx(thresh, cv2.MORPH_OPEN, kernel)
+        
+        contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        
+        result_img = field_resized.copy()
+        diff_count = 0
+        results = []
+        
+        for cnt in contours:
+            area = cv2.contourArea(cnt)
+            if area < 150:
+                continue
+            x, y, bw, bh = cv2.boundingRect(cnt)
+            diff_count += 1
+            cv2.rectangle(result_img, (x, y), (x + bw, y + bh), (0, 0, 255), 2)
+            results.append({"id": diff_count, "x": x, "y": y, "w": bw, "h": bh})
+            
+        summary = {"diff_count": diff_count}
+        return result_img, results, summary, field_resized
+    except Exception as e:
+        return field_img, [], {"diff_count": 0}, field_img
+
+
 def analyze_polygram_excel_sequence_control(excel_bytes, field_img, selected_shelf_count):
+    """Seçilen raf sıra sayısına göre Excel poligram şema kontrolü (2. Kontrol)"""
     try:
         xls = pd.ExcelFile(io.BytesIO(excel_bytes))
         sheet_name = xls.sheet_names[0]
@@ -434,8 +476,8 @@ with c2:
 
 st.divider()
 
-# 2. FOTOĞRAFLAR
-st.subheader("2. Orijinal Referans Fotoğrafı & Saha Fotoğrafı")
+# 2. FOTOĞRAFLAR VE REFERANS KARŞILAŞTIRMA KONTROLÜ (1. KONTROL)
+st.subheader("2. Orijinal Referans Fotoğrafı & Saha Fotoğrafı Karşılaştırması")
 ref_img = get_reference_image(YANDEX_ROOT_PUBLIC_KEY, dealer_path)[0] if dealer_path else None
 
 u1, u2 = st.columns(2)
@@ -455,9 +497,25 @@ with u2:
     else:
         st.info("Sahadan gelen fotoğrafı yükleyin.")
 
+# Referans Karşılaştırma Butonu
+ref_karsilastir_btn = st.button("⚖️ Referans Görsel ile Kıyasla", type="secondary")
+if ref_karsilastir_btn:
+    if ref_img is None or field_img is None:
+        st.warning("⚠️ Lütfen hem bir bayi seçin (referans için) hem de saha fotoğrafı yükleyin.")
+    else:
+        with st.spinner("Referans görsel ile saha fotoğrafı karşılaştırılıyor..."):
+            res_img, results, summary, aligned = analyze_reference_comparison(ref_img, field_img)
+            st.session_state.result_img = res_img
+            st.session_state.summary = summary
+
+if st.session_state.result_img is not None and st.session_state.summary:
+    sum_data = st.session_state.summary
+    st.success(f"⚖️ Referans Karşılaştırması Tamamlandı. Tespit Edilen Fark Sayısı: **{sum_data.get('diff_count', 0)}**")
+    st.image(st.session_state.result_img, channels="BGR", use_container_width=True)
+
 st.divider()
 
-# 3. POLİGRAM EXCEL SIRALAMA KONTROLÜ
+# 3. POLİGRAM EXCEL SIRALAMA KONTROLÜ (2. KONTROL)
 st.subheader("3. Stand Dizilim Sıralaması Kontrolü (Poligram Excel Modülü)")
 poly_files, _ = get_polygram_files(YANDEX_ROOT_PUBLIC_KEY)
 poly_options = {item["name"]: item["file"] for item in poly_files}

@@ -359,7 +359,7 @@ def analyze_planogram_grid_free(reference, field, roi_top_ratio=0.05, roi_bottom
                     out_of_stock_count += 1
                     etiket_turu = f"BULUNURLUK EKSİK (OOS) #{out_of_stock_count}"
                     box_color = (0, 0, 255) # Kırmızı
-                elif mean_brightness > 210: # Çok parlak/beyaz alan -> Etiket Eksik veya Hatalı Etiket
+                elif mean_brightness > 190: # Çok parlak/beyaz ve boş alan -> EKSİK/HATALI ETİKET
                     missing_label_count += 1
                     etiket_turu = f"EKSİK/HATALI ETİKET #{missing_label_count}"
                     box_color = (0, 165, 255) # Turuncu

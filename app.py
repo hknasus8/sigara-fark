@@ -241,7 +241,7 @@ def get_reference_image(public_key, dealer_path):
 
 
 # =========================================================
-# GÖRSEL HİZALAMA VE POG / SFA & ETİKET ANALİZ MOTORU
+# GÖRSEL HİZALAMA VE POG / İHLAL & ETİKET ANALİZ MOTORU
 # =========================================================
 def gray_normalize(img):
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
@@ -311,7 +311,7 @@ def analyze_planogram_grid_free(reference, field, roi_top_ratio=0.05, roi_bottom
     results = []
     fark_sayisi = 0
     farkli_meyve_sayisi = 0
-    asiri_raf_ihlali = 0
+    planogram_disi_ihlal = 0
     missing_label_count = 0 
     label_mismatch_count = 0  
 
@@ -404,18 +404,33 @@ def analyze_planogram_grid_free(reference, field, roi_top_ratio=0.05, roi_bottom
                 if x < 10 or (x + bw) > (w - 10) or bw < 20 or bh < 20:
                     continue
 
-                asiri_raf_ihlali += 1
-                cv2.line(result_img, (x, abs_y), (x + bw, abs_y + bh), (0, 0, 255), 3)
-                cv2.line(result_img, (x, abs_y + bh), (x + bw, abs_y), (0, 0, 255), 3)
+                planogram_disi_ihlal += 1
+                etiket_turu = f"PLANOGRAM KURALLARINA UYMAYAN #{planogram_disi_ihlal}"
                 
-                results.append({"id": f"X_{asiri_raf_ihlali}", "durum": "SFA / 6. RAF DIŞI YETKİSİZ ÜRÜN İHLALİ", "x": x, "y": abs_y, "w": bw, "h": bh, "alan": area})
+                # BGR formatında BEYAY (255, 255, 255)
+                cv2.line(result_img, (x, abs_y), (x + bw, abs_y + bh), (255, 255, 255), 3)
+                cv2.line(result_img, (x, abs_y + bh), (x + bw, abs_y), (255, 255, 255), 3)
+                cv2.rectangle(result_img, (x, abs_y), (x + bw, abs_y + bh), (255, 255, 255), 2)
+                
+                cv2.putText(
+                    result_img,
+                    etiket_turu,
+                    (x, max(15, abs_y - 5)),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    0.35,
+                    (255, 255, 255),
+                    1,
+                    cv2.LINE_AA,
+                )
+                
+                results.append({"id": f"X_{planogram_disi_ihlal}", "durum": etiket_turu, "x": x, "y": abs_y, "w": bw, "h": bh, "alan": area})
 
     summary = {
         "fark": fark_sayisi,
         "etiket_eksigi": missing_label_count,
         "urun_etiket_uyumsuzluk": label_mismatch_count,
         "farkli_gorsel": farkli_meyve_sayisi,
-        "asiri_raf_ihlali": asiri_raf_ihlali,
+        "planogram_disi_ihlal": planogram_disi_ihlal,
         "hizalama_ok": aligned_ok,
         "hizalama": "Hibrit Motor",
     }
@@ -433,7 +448,7 @@ def build_report(dealer, results, summary):
         "Eksik/Hatalı Etiket Sayısı: " + str(summary.get('etiket_eksigi', 0)),
         "Ürün-Etiket Uyuşmazlığı Sayısı: " + str(summary.get('urun_etiket_uyumsuzluk', 0)),
         "Planogram (POG) Uyumsuzluğu: " + str(summary.get('farkli_gorsel', 0)),
-        "6. Raf Sonrası Yetkisiz Ürün İhlali: " + str(summary.get('asiri_raf_ihlali', 0)),
+        "Planogram Kurallarına Uymayan Sayısı: " + str(summary.get('planogram_disi_ihlal', 0)),
         "",
         "--- DETAYLI İHLAL / EKSİK KAYITLARI ---"
     ]
@@ -608,7 +623,7 @@ if st.button("🚀 KONTROLÜ BAŞLAT", type="primary", use_container_width=True,
     st.session_state.summary = None
     st.session_state.report = ""
 
-    with st.spinner("Etiket ve ürün-etiket uyum analizi çalıştırılıyor..."):
+    with st.spinner("Etiket ve planogram uyum analizi çalıştırılıyor..."):
         try:
             result_img, results, summary, aligned_field = analyze_planogram_grid_free(
                 ref_img, field_img
@@ -628,7 +643,7 @@ if st.session_state.result_img is not None and st.session_state.summary:
     m1.metric("Eksik Etiket", summary.get("etiket_eksigi", 0))
     m2.metric("Ürün-Etiket Uyuşmaz", summary.get("urun_etiket_uyumsuzluk", 0))
     m3.metric("POG Uyumsuzluğu", summary.get("farkli_gorsel", 0))
-    m4.metric("Yetkisiz Ürün", summary.get("asiri_raf_ihlali", 0))
+    m4.metric("Kurallara Uymayan", summary.get("planogram_disi_ihlal", 0))
 
     st.image(st.session_state.result_img, channels="BGR", use_container_width=True)
 

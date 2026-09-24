@@ -366,7 +366,7 @@ def analyze_planogram_grid_free(reference, field, roi_top_ratio=0.05, roi_bottom
                 else:
                     farkli_meyve_sayisi += 1
                     etiket_turu = f"POG UYUMSUZLUGU #{farkli_meyve_sayisi}"
-                    box_color = (0, 0, 255) # Kırmızı (Beyaz yerine kırmızı yapıldı)
+                    box_color = (0, 0, 255) # Kırmızı
 
                 box_thickness = 3
 
@@ -561,16 +561,16 @@ with c2:
         dealer_path = dealer_choices[selected_raw_dealer]["path"]
 
 st.divider()
-st.subheader("2. POG Referans Planı ve Saha Fotoğrafı")
+st.subheader("2. Orjinal Referans ve Saha Fotoğrafı")
 
 ref_img = None
 if dealer_path:
-    with st.spinner("Sistemdeki POG orijinal referans fotoğrafı bulunuyor..."):
+    with st.spinner("Sistemdeki orijinal referans fotoğrafı bulunuyor..."):
         ref_img, ref_error = get_reference_image(YANDEX_ROOT_PUBLIC_KEY, dealer_path)
 
 u1, u2 = st.columns(2)
 with u1:
-    st.markdown("**Planogram (POG) Orijinal Referans Fotoğrafı**")
+    st.markdown("**Orijinal Referans Fotoğrafı**")
     if ref_img is None:
         ref_upload = st.file_uploader("İsterseniz elle yükleyin", type=["jpg", "jpeg", "png", "webp"], key="ref_upload")
         if ref_upload is not None:
@@ -578,7 +578,7 @@ with u1:
     if ref_img is not None:
         st.image(ref_img, channels="BGR", use_container_width=True)
     else:
-        st.info("Şehir/bayi seçin veya POG referans görseli yükleyin.")
+        st.info("Şehir/bayi seçin veya referans görsel yükleyin.")
 
 with u2:
     st.markdown("**Saha Fotoğrafı**")

@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-ÖZÇELİK STAND KONTROL UYGULAMASI (POG & HASSAS ETİKET ANALİZİ)
+ÖZÇELİK STAND KONTROL UYGULAMASI (GELİŞTİRİLMİŞ HASSAS ANALİZ MOTORU)
 """
 
 import difflib
@@ -241,11 +241,11 @@ def get_reference_image(public_key, dealer_path):
 
 
 # =========================================================
-# GÖRSEL HİZALAMA VE POG / HASSAS ETİKET ANALİZ MOTORU
+# GÖRSEL HİZALAMA VE POG / KESİN ETİKET ANALİZ MOTORU
 # =========================================================
 def gray_normalize(img):
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-    clahe = cv2.createCLAHE(clipLimit=2.5, tileGridSize=(8, 8))
+    clahe = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8, 8))
     return clahe.apply(gray)
 
 
@@ -257,11 +257,11 @@ def align_images_feature(reference, target):
     ref_gray = gray_normalize(reference)
     tar_gray = gray_normalize(target)
 
-    orb = cv2.ORB_create(nfeatures=10000, scaleFactor=1.15, nlevels=8, edgeThreshold=10, fastThreshold=7)
+    orb = cv2.ORB_create(nfeatures=12000, scaleFactor=1.12, nlevels=8, edgeThreshold=8, fastThreshold=5)
     kp1, des1 = orb.detectAndCompute(ref_gray, None)
     kp2, des2 = orb.detectAndCompute(tar_gray, None)
 
-    if des1 is None or des2 is None or len(kp1) < 10 or len(kp2) < 10:
+    if des1 is None or des2 is None or len(kp1) < 8 or len(kp2) < 8:
         return target, False
 
     matcher = cv2.BFMatcher(cv2.NORM_HAMMING)
@@ -271,16 +271,16 @@ def align_images_feature(reference, target):
         if len(pair) != 2:
             continue
         m, n = pair
-        if m.distance < 0.80 * n.distance:
+        if m.distance < 0.82 * n.distance:
             good.append(m)
 
-    if len(good) < 10:
+    if len(good) < 8:
         return target, False
 
     src = np.float32([kp2[m.queryIdx].pt for m in good]).reshape(-1, 1, 2)
     dst = np.float32([kp1[m.trainIdx].pt for m in good]).reshape(-1, 1, 2)
 
-    matrix, mask = cv2.findHomography(src, dst, cv2.RANSAC, 4.0)
+    matrix, mask = cv2.findHomography(src, dst, cv2.RANSAC, 3.5)
     if matrix is None:
         return target, False
 
@@ -288,7 +288,7 @@ def align_images_feature(reference, target):
     return aligned, True
 
 
-def analyze_planogram_grid_free(reference, field, roi_top_ratio=0.04, roi_bottom_ratio=0.85):
+def analyze_planogram_grid_free(reference, field, roi_top_ratio=0.03, roi_bottom_ratio=0.88):
     h, w = reference.shape[:2]
     field = cv2.resize(field, (w, h), interpolation=cv2.INTER_AREA)
 
@@ -298,7 +298,7 @@ def analyze_planogram_grid_free(reference, field, roi_top_ratio=0.04, roi_bottom
     ref_gray = cv2.cvtColor(reference, cv2.COLOR_BGR2GRAY)
     tar_gray = cv2.cvtColor(aligned, cv2.COLOR_BGR2GRAY)
 
-    clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+    clahe = cv2.createCLAHE(clipLimit=2.5, tileGridSize=(8, 8))
     ref_gray = clahe.apply(ref_gray)
     tar_gray = clahe.apply(tar_gray)
 
@@ -325,9 +325,9 @@ def analyze_planogram_grid_free(reference, field, roi_top_ratio=0.04, roi_bottom
         ref_roi_blur = cv2.GaussianBlur(ref_roi, (3, 3), 0)
         tar_roi_blur = cv2.GaussianBlur(tar_roi, (3, 3), 0)
 
-        # Fark eşiği hassaslaştırıldı (35 -> 25)
+        # Gelişmiş piksel fark hassasiyeti
         diff = cv2.absdiff(ref_roi_blur, tar_roi_blur)
-        _, thresh = cv2.threshold(diff, 25, 255, cv2.THRESH_BINARY)
+        _, thresh = cv2.threshold(diff, 20, 255, cv2.THRESH_BINARY)
 
         kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
         thresh = cv2.morphologyEx(thresh, cv2.MORPH_CLOSE, kernel, iterations=2)
@@ -339,16 +339,16 @@ def analyze_planogram_grid_free(reference, field, roi_top_ratio=0.04, roi_bottom
             area = cv2.contourArea(cnt)
             x, y, bw, bh = cv2.boundingRect(cnt)
             
-            # Etiket kuşağı (rafın alt bölümleri) için toleranslar genişletildi
-            is_label_zone = (y > (shelf_height * 0.50))
-            min_area_limit = (w * h * 0.0001) if is_label_zone else (w * h * 0.0006)
+            # Etiket kuşağı toleransları (3. raf 7. sıra vb. tüm küçük etiketleri yakalamak için genişletildi)
+            is_label_zone = (y > (shelf_height * 0.45))
+            min_area_limit = (w * h * 0.00008) if is_label_zone else (w * h * 0.0005)
             
-            if area < min_area_limit or area > (w * h * 0.09):
+            if area < min_area_limit or area > (w * h * 0.10):
                 continue
 
             abs_y = s_top + y
 
-            if x < 5 or (x + bw) > (w - 5):
+            if x < 3 or (x + bw) > (w - 3):
                 continue
 
             fark_sayisi += 1
@@ -359,8 +359,8 @@ def analyze_planogram_grid_free(reference, field, roi_top_ratio=0.04, roi_bottom
             ref_mean = np.mean(ref_roi_piece) if ref_roi_piece.size > 0 else 128
             tar_mean = np.mean(tar_roi_piece) if tar_roi_piece.size > 0 else 128
 
-            # Etiket eksikliği koşulu hassaslaştırıldı (ref_mean > 110 ve tar_mean < 110)
-            if is_label_zone and ref_mean > 110 and tar_mean < 110:
+            # Parlaklık eşik hatalarını önleyen esnek kontrol
+            if is_label_zone and ref_mean > 95 and tar_mean < (ref_mean * 0.85):
                 missing_label_count += 1
                 etiket_turu = f"EKSİK ETİKET #{missing_label_count}"
                 box_color = (0, 165, 255) # Turuncu
@@ -390,7 +390,7 @@ def analyze_planogram_grid_free(reference, field, roi_top_ratio=0.04, roi_bottom
         "etiket_eksigi": missing_label_count,
         "farkli_gorsel": farkli_meyve_sayisi,
         "hizalama_ok": aligned_ok,
-        "hizalama": "POG & Yüksek Hassasiyetli Etiket Analiz Motoru",
+        "hizalama": "POG & Optimize Edilmiş Hassas Etiket Analiz Motoru",
     }
 
     return result_img, results, summary, aligned
@@ -571,7 +571,7 @@ if st.button("🚀 POG & ETİKET KONTROLÜNÜ BAŞLAT", type="primary", use_cont
     st.session_state.summary = None
     st.session_state.report = ""
 
-    with st.spinner("Planogram ve yüksek hassasiyetli etiket analizi çalıştırılıyor..."):
+    with st.spinner("Planogram ve optimize edilmiş etiket analizi çalıştırılıyor..."):
         try:
             result_img, results, summary, aligned_field = analyze_planogram_grid_free(
                 ref_img, field_img

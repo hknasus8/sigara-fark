@@ -14,6 +14,7 @@ import cv2
 import numpy as np
 import requests
 import streamlit as st
+import base64
 
 
 # =========================================================
@@ -30,6 +31,17 @@ st.markdown(
     """
 <style>
 .block-container {padding-top:1rem;padding-bottom:2rem;}
+
+@keyframes blink-effect {
+  0% { opacity: 1.0; filter: drop-shadow(0px 0px 0px rgba(255, 165, 0, 0)); }
+  50% { opacity: 0.4; filter: drop-shadow(0px 0px 15px rgba(255, 165, 0, 0.9)); }
+  100% { opacity: 1.0; filter: drop-shadow(0px 0px 0px rgba(255, 165, 0, 0)); }
+}
+
+.blink-image {
+  animation: blink-effect 1.5s infinite ease-in-out;
+  border-radius: 8px;
+}
 </style>
 """,
     unsafe_allow_html=True,
@@ -637,7 +649,24 @@ if st.session_state.result_img is not None and st.session_state.summary:
     m2.metric("🟪 Farklılıklar", summary.get("urun_etiket_uyumsuzluk", 0))
     m3.metric("⬜ Kontrol Edilmeyen Rakip Raf", summary.get("kontrol_edilmeyen_rakip_raf", 0))
 
-    st.image(st.session_state.result_img, channels="BGR", use_container_width=True)
+    # Yanıp sönme (Blinking) efekti kontrolü: Eksik etiket veya farklılık varsa CSS animasyonu eklenir
+    has_issues = (summary.get("etiket_eksigi", 0) > 0) or (summary.get("urun_etiket_uyumsuzluk", 0) > 0)
+    
+    success_img_rgb = cv2.cvtColor(st.session_state.result_img, cv2.COLOR_BGR2RGB)
+    pil_img = Image.fromarray(success_img_rgb)
+    
+    import io
+    buffered = io.BytesIO()
+    pil_img.save(buffered, format="JPEG")
+    img_str = base64.b64encode(buffered.getvalue()).decode()
+    
+    if has_issues:
+        st.markdown(
+            f'<div style="text-align: center;"><img src="data:image/jpeg;base64,{img_str}" class="blink-image" style="max-width: 100%; height: auto;"></div>',
+            unsafe_allow_html=True
+        )
+    else:
+        st.image(st.session_state.result_img, channels="BGR", use_container_width=True)
 
     d1, d2 = st.columns(2)
     ok, encoded = cv2.imencode(".jpg", st.session_state.result_img)

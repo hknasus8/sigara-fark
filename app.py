@@ -246,13 +246,27 @@ def get_polygram_files(public_key):
     root_items, error = yandex_root_items(public_key)
     if error:
         return [], error
+    
     poly_item = None
+    # 1. Önce doğrudan kök dizinde ara
     for item in root_items:
         if item.get("type") == "dir" and "poligram" in normalize_text(item.get("name", "")):
             poly_item = item
             break
+            
+    # 2. Kök dizinde yoksa "BAYI" klasörünün içine bak (Görselinizdeki duruma göre)
     if poly_item is None:
-        return [], "Yandex'te 'poligram' klasörü bulunamadı."
+        for item in root_items:
+            if item.get("type") == "dir" and normalize_text(item.get("name", "")) == "BAYI":
+                sub_items, _ = yandex_list_dir(public_key, item.get("path", ""))
+                for sub in sub_items:
+                    if sub.get("type") == "dir" and "poligram" in normalize_text(sub.get("name", "")):
+                        poly_item = sub
+                        break
+                break
+
+    if poly_item is None:
+        return [], "Yandex'te 'POLİGRAM' klasörü bulunamadı."
     
     sub_items, error = yandex_list_dir(public_key, poly_item.get("path", ""))
     if error:
@@ -460,7 +474,7 @@ def analyze_planogram_grid_free(reference, field, roi_top_ratio=0.05, roi_bottom
 
 
 # =========================================================
-# YENİ MODÜL: STAND DİZİLİM SIRALAMASI KONTROLÜ (POLİGRAM)
+# STAND DİZİLİM SIRALAMASI KONTROLÜ (POLİGRAM MODÜLÜ)
 # =========================================================
 def analyze_polygram_sequence_control(polygram_img, field_img, shelf_count):
     h, w = polygram_img.shape[:2]
@@ -476,7 +490,6 @@ def analyze_polygram_sequence_control(polygram_img, field_img, shelf_count):
     poly_gray = clahe.apply(poly_gray)
     tar_gray = clahe.apply(tar_gray)
 
-    # Kat sayısına göre bölgeleme (5, 6, 7 katlı standlar ve 6-15 sıra esnekliği)
     top_y = int(h * 0.05)
     bottom_y = int(h * 0.90)
     row_height = (bottom_y - top_y) // max(5, shelf_count)
@@ -520,7 +533,6 @@ def analyze_polygram_sequence_control(polygram_img, field_img, shelf_count):
             label_text = f"KAT {i+1} SIRALAMA HATASI #{discrepancy_count}"
             box_color = (0, 140, 255)  # Turuncu Renk
 
-            # Turuncu Yanıp Sönme Efekti / Kutulama
             cv2.rectangle(result_img, (x, abs_y), (x + bw, abs_y + bh), box_color, 3)
             cv2.putText(
                 result_img,
@@ -730,11 +742,14 @@ with u2:
 st.divider()
 
 # =========================================================
-# YENİ MODÜL ARAYÜZÜ: POLİGRAM SEÇİMİ VE SIRALAMA KONTROLÜ
+# 3. STAND DİZİLİM SIRALAMASI KONTROLÜ (POLİGRAM MODÜLÜ)
 # =========================================================
 st.subheader("3. Stand Dizilim Sıralaması Kontrolü (Poligram Modülü)")
 
 poly_files, poly_error = get_polygram_files(YANDEX_ROOT_PUBLIC_KEY)
+if poly_error:
+    st.warning(f"⚠️ {poly_error}")
+
 poly_options = {item["name"]: item["file"] for item in poly_files}
 
 p1, p2, p3 = st.columns([2, 1, 1])
@@ -748,7 +763,7 @@ with p2:
     stand_kat_sayisi = st.selectbox(
         "Stand / Kat Yapısı",
         options=[5, 6, 7] + list(range(8, 16)),
-        index=1, # Varsayılan 6 kat
+        index=1, # Varsayılan 6 kat (6 ile 15 arası desteklenir)
         format_func=lambda x: f"{x} Katlı Stand"
     )
 with p3:
@@ -761,11 +776,11 @@ poly_img = safe_download_image(selected_poly_url) if selected_poly_url else None
 
 if poly_kontrol_btn:
     if poly_img is None or field_img is None:
-        st.warning("⚠️ Lütfen geçerli bir poligram seçin ve saha fotoğrafı yükleyin.")
+        st.warning("⚠️ Lütfen listeden bir poligram seçin ve 2. adımdan 'Saha Fotoğrafı' yüklediğinizden emin olun.")
     else:
         st.session_state.poly_result_img = None
         st.session_state.poly_summary = None
-        with st.spinner("Poligram dizilim sıralaması ve etiket uyumu kontrol ediliyor..."):
+        with st.spinner("Seçilen poligram çizelgesi ve saha fotoğrafı karşılaştırılıyor..."):
             try:
                 p_res_img, p_results, p_summary, p_aligned = analyze_polygram_sequence_control(
                     prepare_image(poly_img), field_img, stand_kat_sayisi
@@ -778,9 +793,8 @@ if poly_kontrol_btn:
 
 if st.session_state.poly_result_img is not None and st.session_state.poly_summary:
     p_sum = st.session_state.poly_summary
-    st.success(f"✅ Poligram Kontrolü Tamamlandı! Toplam Farklılık/Sıralama Hatası: **{p_sum.get('discrepancy_count', 0)}**")
+    st.success(f"✅ Poligram Sıralama Kontrolü Tamamlandı! Tespit Edilen Farklılık/Hata: **{p_sum.get('discrepancy_count', 0)}**")
     
-    # Turuncu yanıp sönme animasyonu (GIF) oluşturma
     if p_sum.get('discrepancy_count', 0) > 0 and st.session_state.get("poly_aligned") is not None:
         f_clean = Image.fromarray(cv2.cvtColor(st.session_state.poly_aligned, cv2.COLOR_BGR2RGB))
         f_marked = Image.fromarray(cv2.cvtColor(st.session_state.poly_result_img, cv2.COLOR_BGR2RGB))

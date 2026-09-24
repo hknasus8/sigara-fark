@@ -568,7 +568,7 @@ with c2:
         dealer_path = dealer_choices[selected_raw_dealer]["path"]
 
 st.divider()
-st.subheader("2. Orjinal Referans ve Saha Fotoğrafı")
+st.subheader("2. Orijinal Referans Fotoğrafı")
 
 ref_img = None
 if dealer_path:

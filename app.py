@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-ÖZÇELİK STAND KONTROL UYGULAMASI (SFA & POG & BULUNURLUK & ETİKET ENTEGRELI)
+ÖZÇELİK STAND KONTROL UYGULAMASI (BULUNURLUK & ETİKET ENTEGRELI)
 """
 
 import difflib
@@ -352,8 +352,6 @@ def analyze_planogram_grid_free(reference, field, roi_top_ratio=0.05, roi_bottom
                 fark_sayisi += 1
                 
                 # --- BULUNURLUK (OUT-OF-STOCK) VE ETİKET KONTROLÜ AYRIMI ---
-                # Referans görselde dolu olan alan hedef görselde aşırı koyu/boşluksa "Bulunurluk Eksikliği" sayılır.
-                # Hedef bölgedeki ortalama parlaklık kontrolü (örneğin eşik altı boşluk/kutu yokluğu demektir)
                 roi_target_piece = tar_roi[y:y+bh, x:x+bw]
                 mean_brightness = np.mean(roi_target_piece) if roi_target_piece.size > 0 else 128
 
@@ -418,7 +416,7 @@ def analyze_planogram_grid_free(reference, field, roi_top_ratio=0.05, roi_bottom
         "farkli_gorsel": farkli_meyve_sayisi,
         "asiri_raf_ihlali": asiri_raf_ihlali,
         "hizalama_ok": aligned_ok,
-        "hizalama": "SFA & POG & Bulunurluk Hibrit Motor",
+        "hizalama": "Hibrit Motor",
     }
 
     return result_img, results, summary, aligned
@@ -427,7 +425,7 @@ def analyze_planogram_grid_free(reference, field, roi_top_ratio=0.05, roi_bottom
 def build_report(dealer, results, summary):
     from datetime import datetime
     lines = [
-        "=== ÖZÇELİK SFA & PLANOGRAM & BULUNURLUK DENETİM RAPORU ===",
+        "=== ÖZÇELİK STAND DENETİM RAPORU ===",
         f"Bayi: {dealer}",
         "Tarih: " + datetime.now().strftime("%d.%m.%Y %H:%M:%S"),
         "",
@@ -464,7 +462,7 @@ if "app_password" not in st.secrets:
     st.stop()
 
 if not st.session_state.authenticated:
-    st.title("🔐 Özçelik SFA & POG Stand Kontrol Uygulaması")
+    st.title("🔐 Özçelik Stand Kontrol Uygulaması")
     try:
         st.image(Image.open("logo.jpg"), width=250)
     except Exception:
@@ -483,7 +481,7 @@ if not st.session_state.authenticated:
 # SIDEBAR VE ARAYÜZ
 # =========================================================
 with st.sidebar:
-    st.header("⚙️ SFA & POG Ayarları")
+    st.header("⚙️ Ayarlar")
     if st.button("🔄 Yandex Önbelleğini Yenile", use_container_width=True):
         try:
             st.cache_data.clear()
@@ -516,7 +514,7 @@ def clear_yandex_cache():
 
 title_col, refresh_col = st.columns([5, 1])
 with title_col:
-    st.title("📊 ÖZÇELİK SFA & POG STAND KONTROL UYGULAMASI")
+    st.title("📊 ÖZÇELİK STAND KONTROL UYGULAMASI")
 with refresh_col:
     st.write("")
     if st.button("🔄 Yenile", use_container_width=True, key="main_refresh_btn"):
@@ -563,7 +561,7 @@ with c2:
         dealer_path = dealer_choices[selected_raw_dealer]["path"]
 
 st.divider()
-st.subheader("2. POG Referans Planı ve SFA Saha Fotoğrafı")
+st.subheader("2. POG Referans Planı ve Saha Fotoğrafı")
 
 ref_img = None
 if dealer_path:
@@ -583,25 +581,25 @@ with u1:
         st.info("Şehir/bayi seçin veya POG referans görseli yükleyin.")
 
 with u2:
-    st.markdown("**SFA (Saha Satış) Fotoğrafı**")
+    st.markdown("**Saha Fotoğrafı**")
     field_upload = st.file_uploader("Saha fotoğrafını yükleyin", type=["jpg", "jpeg", "png", "webp"], key="field_upload")
     field_img = prepare_image(decode_uploaded(field_upload)) if field_upload is not None else None
     if field_img is not None:
         st.image(field_img, channels="BGR", use_container_width=True)
     else:
-        st.info("SFA sahadan gelen fotoğrafı yükleyin.")
+        st.info("Sahadan gelen fotoğrafı yükleyin.")
 
 st.divider()
 
 ready = ref_img is not None and field_img is not None
 
-if st.button("🚀 SFA & POG & BULUNURLUK KONTROLÜNÜ BAŞLAT", type="primary", use_container_width=True, disabled=not ready):
+if st.button("🚀 KONTROLÜ BAŞLAT", type="primary", use_container_width=True, disabled=not ready):
     st.session_state.result_img = None
     st.session_state.results = []
     st.session_state.summary = None
     st.session_state.report = ""
 
-    with st.spinner("SFA algoritmaları, bulunurluk ve etiket analizi çalıştırılıyor..."):
+    with st.spinner("Algoritmalar, bulunurluk ve etiket analizi çalıştırılıyor..."):
         try:
             result_img, results, summary, aligned_field = analyze_planogram_grid_free(
                 ref_img, field_img
@@ -629,9 +627,9 @@ if st.session_state.result_img is not None and st.session_state.summary:
     ok, encoded = cv2.imencode(".jpg", st.session_state.result_img)
     if ok:
         with d1:
-            st.download_button("📥 Denetim Görselini İndir", data=encoded.tobytes(), file_name="sfa_bulunurluk_sonuc.jpg", mime="image/jpeg", use_container_width=True)
+            st.download_button("📥 Denetim Görselini İndir", data=encoded.tobytes(), file_name="stand_bulunurluk_sonuc.jpg", mime="image/jpeg", use_container_width=True)
     if st.session_state.report:
         with d2:
-            st.download_button("📄 Detaylı Raporu İndir", data=st.session_state.report.encode("utf-8"), file_name="sfa_bulunurluk_rapor.txt", mime="text/plain", use_container_width=True)
+            st.download_button("📄 Detaylı Raporu İndir", data=st.session_state.report.encode("utf-8"), file_name="stand_bulunurluk_rapor.txt", mime="text/plain", use_container_width=True)
 else:
-    st.info("Denetim için POG referans ve SFA saha fotoğraflarını yükleyin, ardından kontrolü başlatın.")
+    st.info("Denetim için referans ve saha fotoğraflarını yükleyin, ardından kontrolü başlatın.")

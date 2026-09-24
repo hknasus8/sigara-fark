@@ -249,7 +249,6 @@ def get_polygram_files(public_key):
         return [], error
     
     poly_item = None
-    # 1. Kök dizinde "POLIGRAM" veya "POLİGRAM" ara (Büyük/küçük harf duyarsız)
     for item in root_items:
         if item.get("type") == "dir":
             name_norm = normalize_text(item.get("name", ""))
@@ -257,7 +256,6 @@ def get_polygram_files(public_key):
                 poly_item = item
                 break
             
-    # 2. Kök dizinde yoksa "BAYI" klasörünün içine bak
     if poly_item is None:
         for item in root_items:
             if item.get("type") == "dir" and normalize_text(item.get("name", "")) == "BAYI":
@@ -479,7 +477,7 @@ def analyze_planogram_grid_free(reference, field, roi_top_ratio=0.05, roi_bottom
 
 
 # =========================================================
-# STAND DİZİLİM SIRALAMASI KONTROLÜ (POLİGRAM MODÜLÜ)
+# STAND DİZİLİM SIRALAMASI KONTROLÜ (POLİGRAM MODÜLÜ - İYİLEŞTİRİLMİŞ)
 # =========================================================
 def analyze_polygram_sequence_control(polygram_img, field_img, shelf_count):
     h, w = polygram_img.shape[:2]
@@ -496,7 +494,7 @@ def analyze_polygram_sequence_control(polygram_img, field_img, shelf_count):
     tar_gray = clahe.apply(tar_gray)
 
     top_y = int(h * 0.05)
-    bottom_y = int(h * 0.90)
+    bottom_y = int(h * 0.92)
     row_height = (bottom_y - top_y) // max(5, shelf_count)
 
     discrepancy_count = 0
@@ -512,26 +510,29 @@ def analyze_polygram_sequence_control(polygram_img, field_img, shelf_count):
         poly_roi = poly_gray[s_top:s_bottom, :]
         tar_roi = tar_gray[s_top:s_bottom, :]
 
-        poly_blur = cv2.GaussianBlur(poly_roi, (5, 5), 0)
-        tar_blur = cv2.GaussianBlur(tar_roi, (5, 5), 0)
+        poly_blur = cv2.GaussianBlur(poly_roi, (7, 7), 0)
+        tar_blur = cv2.GaussianBlur(tar_roi, (7, 7), 0)
 
         diff = cv2.absdiff(poly_blur, tar_blur)
-        _, thresh = cv2.threshold(diff, 60, 255, cv2.THRESH_BINARY)
+        _, thresh = cv2.threshold(diff, 75, 255, cv2.THRESH_BINARY)  # Eşik hassasiyeti optimize edildi
 
-        kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (5, 5))
+        # Gürültüleri yok etmek için filtreleme büyütüldü
+        kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (9, 9))
+        thresh = cv2.morphologyEx(thresh, cv2.MORPH_OPEN, kernel, iterations=1)
         thresh = cv2.morphologyEx(thresh, cv2.MORPH_CLOSE, kernel, iterations=2)
 
         contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
         for cnt in contours:
             area = cv2.contourArea(cnt)
-            if area < (w * h * 0.0003) or area > (w * h * 0.05):
+            # Minimum alan filtresi artırılarak küçük piksellerin hata üretmesi engellendi
+            if area < (w * h * 0.0015) or area > (w * h * 0.06):
                 continue
 
             x, y, bw, bh = cv2.boundingRect(cnt)
             abs_y = s_top + y
 
-            if x < 5 or (x + bw) > (w - 5):
+            if x < 10 or (x + bw) > (w - 10):
                 continue
 
             discrepancy_count += 1

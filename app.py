@@ -24,7 +24,7 @@ st.set_page_config(
     page_title="Özçelik Stand Kontrol Uygulaması",
     page_icon="📊",
     layout="wide",
-    initial_sidebar_state="expanded",
+    initial_sidebar_state="collapsed",
 )
 
 st.markdown(
@@ -47,7 +47,7 @@ if "cache_initialized" not in st.session_state:
 
 # =========================================================
 # SABİTLER
-# =================================0========================
+# =========================================================
 YANDEX_ROOT_PUBLIC_KEY = "https://disk.yandex.com.tr/d/ikCHPwREiCVv_g"
 RAF_SAYISI = 6  
 
@@ -489,31 +489,8 @@ if not st.session_state.authenticated:
 
 
 # =========================================================
-# SIDEBAR VE ARAYÜZ
+# ARAYÜZ (SOL MENÜ TAMAMEN KAPATILDI)
 # =========================================================
-with st.sidebar:
-    st.header("⚙️ Ayarlar")
-    if st.button("🔄 Yandex Önbelleğini Yenile", use_container_width=True):
-        try:
-            st.cache_data.clear()
-        except Exception:
-            pass
-        st.session_state.result_img = None
-        st.session_state.aligned_field = None
-        st.session_state.results = []
-        st.session_state.summary = None
-        st.session_state.report = ""
-        st.rerun()
-
-    if st.button("🚪 Çıkış Yap", use_container_width=True, key="sidebar_logout"):
-        st.session_state.authenticated = False
-        st.session_state.result_img = None
-        st.session_state.aligned_field = None
-        st.session_state.results = []
-        st.session_state.summary = None
-        st.rerun()
-
-
 def clear_yandex_cache():
     try:
         st.cache_data.clear()
@@ -623,7 +600,7 @@ if st.button("🚀 KONTROLÜ BAŞLAT", type="primary", use_container_width=True,
     st.session_state.summary = None
     st.session_state.report = ""
 
-    with st.spinner("Etiket and planogram uyum analizi çalıştırılıyor..."):
+    with st.spinner("Etiket ve planogram uyum analizi çalıştırılıyor..."):
         try:
             result_img, results, summary, aligned_field = analyze_planogram_grid_free(
                 ref_img, field_img

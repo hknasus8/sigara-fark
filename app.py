@@ -170,10 +170,11 @@ def get_cities(public_key):
         if normalize_text(name) == "BAYI":
             sub_items, _ = yandex_list_dir(public_key, item.get("path", ""))
             for sub in sub_items:
-                if sub.get("type") == "dir":
+                if sub.get("type") == "dir" and normalize_text(sub.get("name")) != "POLIGRAM":
                     cities.append(sub.get("name", ""))
         else:
-            cities.append(name)
+            if normalize_text(name) != "POLIGRAM":
+                cities.append(name)
     cities = sorted({x for x in cities if x}, key=normalize_text)
     return cities, None
 
@@ -248,21 +249,25 @@ def get_polygram_files(public_key):
         return [], error
     
     poly_item = None
-    # 1. Önce doğrudan kök dizinde ara
+    # 1. Kök dizinde "POLIGRAM" veya "POLİGRAM" ara (Büyük/küçük harf duyarsız)
     for item in root_items:
-        if item.get("type") == "dir" and "poligram" in normalize_text(item.get("name", "")):
-            poly_item = item
-            break
+        if item.get("type") == "dir":
+            name_norm = normalize_text(item.get("name", ""))
+            if "POLIGRAM" in name_norm:
+                poly_item = item
+                break
             
-    # 2. Kök dizinde yoksa "BAYI" klasörünün içine bak (Görselinizdeki duruma göre)
+    # 2. Kök dizinde yoksa "BAYI" klasörünün içine bak
     if poly_item is None:
         for item in root_items:
             if item.get("type") == "dir" and normalize_text(item.get("name", "")) == "BAYI":
                 sub_items, _ = yandex_list_dir(public_key, item.get("path", ""))
                 for sub in sub_items:
-                    if sub.get("type") == "dir" and "poligram" in normalize_text(sub.get("name", "")):
-                        poly_item = sub
-                        break
+                    if sub.get("type") == "dir":
+                        sub_name_norm = normalize_text(sub.get("name", ""))
+                        if "POLIGRAM" in sub_name_norm:
+                            poly_item = sub
+                            break
                 break
 
     if poly_item is None:
@@ -763,7 +768,7 @@ with p2:
     stand_kat_sayisi = st.selectbox(
         "Stand / Kat Yapısı",
         options=[5, 6, 7] + list(range(8, 16)),
-        index=1, # Varsayılan 6 kat (6 ile 15 arası desteklenir)
+        index=1, # Varsayılan 6 kat
         format_func=lambda x: f"{x} Katlı Stand"
     )
 with p3:

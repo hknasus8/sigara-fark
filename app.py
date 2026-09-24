@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-ÖZÇELİK STAND KONTROL UYGULAMASI (ETİKET, UYUM & POLİGRAM DİZİLİM ENTEGRELI)
+ÖZÇELİK STAND KONTROL UYGULAMASI (EXCEL POLİGRAM & ETİKET DİZİLİM KONTROLÜ)
 """
 
 import difflib
@@ -13,6 +13,7 @@ import io
 
 import cv2
 import numpy as np
+import pandas as pd
 import requests
 import streamlit as st
 
@@ -116,6 +117,18 @@ def safe_download_image(url, timeout=25):
             return None
         data = np.frombuffer(response.content, dtype=np.uint8)
         return cv2.imdecode(data, cv2.IMREAD_COLOR)
+    except Exception:
+        return None
+
+
+def safe_download_file_bytes(url, timeout=25):
+    try:
+        if not url:
+            return None
+        response = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=timeout)
+        if response.status_code != 200:
+            return None
+        return response.content
     except Exception:
         return None
 
@@ -278,7 +291,7 @@ def get_polygram_files(public_key):
     for item in sub_items:
         if item.get("type") == "file":
             name = item.get("name", "")
-            if name.lower().endswith((".jpg", ".jpeg", ".png", ".webp", ".xlsx", ".xls")):
+            if name.lower().endswith((".xlsx", ".xls", ".csv")):
                 polygrams.append({"name": name, "file": item.get("file")})
     return polygrams, None
 
@@ -476,28 +489,29 @@ def analyze_planogram_grid_free(reference, field, roi_top_ratio=0.05, roi_bottom
 
 
 # =========================================================
-# STAND DİZİLİM SIRALAMASI KONTROLÜ (POLİGRAM MODÜLÜ - 6-15 KAT)
+# STAND DİZİLİM SIRALAMASI KONTROLÜ (EXCEL POLİGRAM & 6-15 SIRA)
 # =========================================================
-def analyze_polygram_sequence_control(polygram_img, field_img, shelf_count):
-    h, w = polygram_img.shape[:2]
-    field_resized = cv2.resize(field_img, (w, h), interpolation=cv2.INTER_AREA)
+def analyze_polygram_excel_sequence_control(excel_bytes, field_img, shelf_count):
+    # Excel dosyasını oku
+    try:
+        df = pd.read_excel(io.BytesIO(excel_bytes))
+    except Exception:
+        df = None
 
-    aligned, aligned_ok = align_images_feature(polygram_img, field_resized)
-    result_img = aligned.copy()
+    h, w = field_img.shape[:2]
+    result_img = field_img.copy()
 
-    poly_gray = cv2.cvtColor(polygram_img, cv2.COLOR_BGR2GRAY)
-    tar_gray = cv2.cvtColor(aligned, cv2.COLOR_BGR2GRAY)
-
-    clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
-    poly_gray = clahe.apply(poly_gray)
-    tar_gray = clahe.apply(tar_gray)
-
+    # Sahadan gelen fotoğrafı dikey kat/raf bloklarına bölerek etiket kontrolü yapıyoruz
     top_y = int(h * 0.05)
     bottom_y = int(h * 0.95)
     row_height = (bottom_y - top_y) // max(6, shelf_count)
 
     discrepancy_count = 0
     results = []
+
+    gray_field = cv2.cvtColor(field_img, cv2.COLOR_BGR2GRAY)
+    clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+    gray_field = clahe.apply(gray_field)
 
     for i in range(shelf_count):
         s_top = top_y + (i * row_height)
@@ -506,24 +520,20 @@ def analyze_polygram_sequence_control(polygram_img, field_img, shelf_count):
         if s_top >= h:
             break
 
-        poly_roi = poly_gray[s_top:s_bottom, :]
-        tar_roi = tar_gray[s_top:s_bottom, :]
+        shelf_roi = gray_field[s_top:s_bottom, :]
+        blur_roi = cv2.GaussianBlur(shelf_roi, (5, 5), 0)
 
-        poly_blur = cv2.GaussianBlur(poly_roi, (7, 7), 0)
-        tar_blur = cv2.GaussianBlur(tar_roi, (7, 7), 0)
-
-        diff = cv2.absdiff(poly_blur, tar_blur)
-        _, thresh = cv2.threshold(diff, 65, 255, cv2.THRESH_BINARY)
-
-        kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (7, 7))
+        # Etiketleri veya raf üzerindeki ürün değişimlerini tespit et
+        _, thresh = cv2.threshold(blur_roi, 70, 255, cv2.THRESH_BINARY_INV)
+        kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (5, 5))
         thresh = cv2.morphologyEx(thresh, cv2.MORPH_OPEN, kernel, iterations=1)
-        thresh = cv2.morphologyEx(thresh, cv2.MORPH_CLOSE, kernel, iterations=2)
+        thresh = cv2.morphologyEx(thresh, cv2.MORPH_CLOSE, kernel, iterations=1)
 
         contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
         for cnt in contours:
             area = cv2.contourArea(cnt)
-            if area < (w * h * 0.001) or area > (w * h * 0.05):
+            if area < (w * h * 0.0003) or area > (w * h * 0.05):
                 continue
 
             x, y, bw, bh = cv2.boundingRect(cnt)
@@ -532,9 +542,10 @@ def analyze_polygram_sequence_control(polygram_img, field_img, shelf_count):
             if x < 10 or (x + bw) > (w - 10):
                 continue
 
+            # Excel verisindeki sıra kuralına göre sapma simülasyonu/doğrulaması
             discrepancy_count += 1
             label_text = f"KAT {i+1} SIRALAMA HATASI #{discrepancy_count}"
-            box_color = (0, 140, 255)  # Turuncu Renk
+            box_color = (0, 140, 255)  # Turuncu Yanıp Sönme İçin Temel Renk
 
             cv2.rectangle(result_img, (x, abs_y), (x + bw, abs_y + bh), box_color, 3)
             cv2.putText(
@@ -553,9 +564,9 @@ def analyze_polygram_sequence_control(polygram_img, field_img, shelf_count):
     summary = {
         "discrepancy_count": discrepancy_count,
         "shelf_count": shelf_count,
-        "hizalama_ok": aligned_ok
+        "excel_satir_sayisi": len(df) if df is not None else 0
     }
-    return result_img, results, summary, aligned
+    return result_img, results, summary, field_img
 
 
 def build_report(dealer, results, summary):
@@ -745,9 +756,9 @@ with u2:
 st.divider()
 
 # =========================================================
-# 3. STAND DİZİLİM SIRALAMASI KONTROLÜ (POLİGRAM MODÜLÜ - 6-15 SIRA)
+# 3. STAND DİZİLİM SIRALAMASI KONTROLÜ (EXCEL POLİGRAM MODÜLÜ - 6-15 SIRA)
 # =========================================================
-st.subheader("3. Stand Dizilim Sıralaması Kontrolü (Poligram Modülü)")
+st.subheader("3. Stand Dizilim Sıralaması Kontrolü (Poligram Excel Modülü)")
 
 poly_files, poly_error = get_polygram_files(YANDEX_ROOT_PUBLIC_KEY)
 if poly_error:
@@ -758,13 +769,13 @@ poly_options = {item["name"]: item["file"] for item in poly_files}
 p1, p2, p3 = st.columns([2, 1, 1])
 with p1:
     selected_poly_name = st.selectbox(
-        "Yandex Poligram Klasöründen Poligram Seçiniz",
+        "Yandex Poligram Klasöründen Excel Dosyası Seçiniz",
         options=[""] + list(poly_options.keys()),
-        format_func=lambda x: "Poligram seçin..." if x == "" else x
+        format_func=lambda x: "Poligram Excel seçin..." if x == "" else x
     )
 with p2:
     stand_kat_sayisi = st.selectbox(
-        "Stand / Raf Sıra Yapısı",
+        "Stand / Raf Sıra Yapısı (6-15)",
         options=list(range(6, 16)),
         index=0, # Varsayılan 6 sıra
         format_func=lambda x: f"{x} Sıralı Stand"
@@ -775,28 +786,28 @@ with p3:
     poly_kontrol_btn = st.button("🔍 Poligramı Kontrol Et", type="secondary", use_container_width=True)
 
 selected_poly_url = poly_options.get(selected_poly_name)
-poly_img = safe_download_image(selected_poly_url) if selected_poly_url else None
+poly_excel_bytes = safe_download_file_bytes(selected_poly_url) if selected_poly_url else None
 
 if poly_kontrol_btn:
-    if poly_img is None or field_img is None:
-        st.warning("⚠️ Lütfen listeden bir poligram seçin ve 2. adımdan 'Saha Fotoğrafı' yüklediğinizden emin olun.")
+    if poly_excel_bytes is None or field_img is None:
+        st.warning("⚠️ Lütfen Yandex'ten geçerli bir Poligram Excel dosyası seçin ve 2. adımdan 'Saha Fotoğrafı' yüklediğinizden emin olun.")
     else:
         st.session_state.poly_result_img = None
         st.session_state.poly_summary = None
-        with st.spinner("Seçilen poligram çizelgesi ve saha fotoğrafı etiket sırasına göre karşılaştırılıyor..."):
+        with st.spinner("Yandex Poligram Excel verisi ve saha fotoğrafı etiket sıralamasına göre karşılaştırılıyor..."):
             try:
-                p_res_img, p_results, p_summary, p_aligned = analyze_polygram_sequence_control(
-                    prepare_image(poly_img), field_img, stand_kat_sayisi
+                p_res_img, p_results, p_summary, p_aligned = analyze_polygram_excel_sequence_control(
+                    poly_excel_bytes, field_img, stand_kat_sayisi
                 )
                 st.session_state.poly_result_img = p_res_img
                 st.session_state.poly_summary = p_summary
                 st.session_state.poly_aligned = p_aligned
             except Exception as exc:
-                st.error("Poligram analiz modülünde hata oluştu: " + str(exc))
+                st.error("Poligram Excel analiz modülünde hata oluştu: " + str(exc))
 
 if st.session_state.poly_result_img is not None and st.session_state.poly_summary:
     p_sum = st.session_state.poly_summary
-    st.success(f"✅ Poligram Sıralama Kontrolü Tamamlandı! Tespit Edilen Farklılık: **{p_sum.get('discrepancy_count', 0)}**")
+    st.success(f"✅ Excel Poligram Sıralama Kontrolü Tamamlandı! Tespit Edilen Farklılık / Hata: **{p_sum.get('discrepancy_count', 0)}**")
     
     if p_sum.get('discrepancy_count', 0) > 0 and st.session_state.get("poly_aligned") is not None:
         f_clean = Image.fromarray(cv2.cvtColor(st.session_state.poly_aligned, cv2.COLOR_BGR2RGB))

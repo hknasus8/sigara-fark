@@ -49,7 +49,6 @@ if "cache_initialized" not in st.session_state:
 # SABİTLER
 # =========================================================
 YANDEX_ROOT_PUBLIC_KEY = "https://disk.yandex.com.tr/d/ikCHPwREiCVv_g"
-RAF_SAYISI = 6  
 
 
 # =========================================================
@@ -279,7 +278,7 @@ def get_polygram_files(public_key):
     for item in sub_items:
         if item.get("type") == "file":
             name = item.get("name", "")
-            if name.lower().endswith((".jpg", ".jpeg", ".png", ".webp")):
+            if name.lower().endswith((".jpg", ".jpeg", ".png", ".webp", ".xlsx", ".xls")):
                 polygrams.append({"name": name, "file": item.get("file")})
     return polygrams, None
 
@@ -477,7 +476,7 @@ def analyze_planogram_grid_free(reference, field, roi_top_ratio=0.05, roi_bottom
 
 
 # =========================================================
-# STAND DİZİLİM SIRALAMASI KONTROLÜ (POLİGRAM MODÜLÜ - İYİLEŞTİRİLMİŞ)
+# STAND DİZİLİM SIRALAMASI KONTROLÜ (POLİGRAM MODÜLÜ - 6-15 KAT)
 # =========================================================
 def analyze_polygram_sequence_control(polygram_img, field_img, shelf_count):
     h, w = polygram_img.shape[:2]
@@ -494,8 +493,8 @@ def analyze_polygram_sequence_control(polygram_img, field_img, shelf_count):
     tar_gray = clahe.apply(tar_gray)
 
     top_y = int(h * 0.05)
-    bottom_y = int(h * 0.92)
-    row_height = (bottom_y - top_y) // max(5, shelf_count)
+    bottom_y = int(h * 0.95)
+    row_height = (bottom_y - top_y) // max(6, shelf_count)
 
     discrepancy_count = 0
     results = []
@@ -514,10 +513,9 @@ def analyze_polygram_sequence_control(polygram_img, field_img, shelf_count):
         tar_blur = cv2.GaussianBlur(tar_roi, (7, 7), 0)
 
         diff = cv2.absdiff(poly_blur, tar_blur)
-        _, thresh = cv2.threshold(diff, 75, 255, cv2.THRESH_BINARY)  # Eşik hassasiyeti optimize edildi
+        _, thresh = cv2.threshold(diff, 65, 255, cv2.THRESH_BINARY)
 
-        # Gürültüleri yok etmek için filtreleme büyütüldü
-        kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (9, 9))
+        kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (7, 7))
         thresh = cv2.morphologyEx(thresh, cv2.MORPH_OPEN, kernel, iterations=1)
         thresh = cv2.morphologyEx(thresh, cv2.MORPH_CLOSE, kernel, iterations=2)
 
@@ -525,8 +523,7 @@ def analyze_polygram_sequence_control(polygram_img, field_img, shelf_count):
 
         for cnt in contours:
             area = cv2.contourArea(cnt)
-            # Minimum alan filtresi artırılarak küçük piksellerin hata üretmesi engellendi
-            if area < (w * h * 0.0015) or area > (w * h * 0.06):
+            if area < (w * h * 0.001) or area > (w * h * 0.05):
                 continue
 
             x, y, bw, bh = cv2.boundingRect(cnt)
@@ -748,7 +745,7 @@ with u2:
 st.divider()
 
 # =========================================================
-# 3. STAND DİZİLİM SIRALAMASI KONTROLÜ (POLİGRAM MODÜLÜ)
+# 3. STAND DİZİLİM SIRALAMASI KONTROLÜ (POLİGRAM MODÜLÜ - 6-15 SIRA)
 # =========================================================
 st.subheader("3. Stand Dizilim Sıralaması Kontrolü (Poligram Modülü)")
 
@@ -767,10 +764,10 @@ with p1:
     )
 with p2:
     stand_kat_sayisi = st.selectbox(
-        "Stand / Kat Yapısı",
-        options=[5, 6, 7] + list(range(8, 16)),
-        index=1, # Varsayılan 6 kat
-        format_func=lambda x: f"{x} Katlı Stand"
+        "Stand / Raf Sıra Yapısı",
+        options=list(range(6, 16)),
+        index=0, # Varsayılan 6 sıra
+        format_func=lambda x: f"{x} Sıralı Stand"
     )
 with p3:
     st.write("")
@@ -786,7 +783,7 @@ if poly_kontrol_btn:
     else:
         st.session_state.poly_result_img = None
         st.session_state.poly_summary = None
-        with st.spinner("Seçilen poligram çizelgesi ve saha fotoğrafı karşılaştırılıyor..."):
+        with st.spinner("Seçilen poligram çizelgesi ve saha fotoğrafı etiket sırasına göre karşılaştırılıyor..."):
             try:
                 p_res_img, p_results, p_summary, p_aligned = analyze_polygram_sequence_control(
                     prepare_image(poly_img), field_img, stand_kat_sayisi
@@ -799,7 +796,7 @@ if poly_kontrol_btn:
 
 if st.session_state.poly_result_img is not None and st.session_state.poly_summary:
     p_sum = st.session_state.poly_summary
-    st.success(f"✅ Poligram Sıralama Kontrolü Tamamlandı! Tespit Edilen Farklılık/Hata: **{p_sum.get('discrepancy_count', 0)}**")
+    st.success(f"✅ Poligram Sıralama Kontrolü Tamamlandı! Tespit Edilen Farklılık: **{p_sum.get('discrepancy_count', 0)}**")
     
     if p_sum.get('discrepancy_count', 0) > 0 and st.session_state.get("poly_aligned") is not None:
         f_clean = Image.fromarray(cv2.cvtColor(st.session_state.poly_aligned, cv2.COLOR_BGR2RGB))

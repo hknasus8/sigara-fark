@@ -292,10 +292,6 @@ def get_reference_image(public_key, dealer_path):
 
 
 def load_json_from_url(public_key, file_item):
-    """
-    JSON dosyasını Yandex Disk'ten indirir ve parse eder.
-    Dönüş: (Dict/Data, hata_mesajı)
-    """
     errors = []
     try:
         file_path = file_item.get("path")
@@ -442,15 +438,7 @@ def align_images_feature(reference, target):
 
 def analyze_poligram_json_model(field_img, poligram_data, match_threshold=0.55, label_band=(0.55, 0.98)):
     """
-    JSON tabanlı Poligram modeli ile saha fotoğrafını karşılaştırır.
-    Format:
-    {
-      "poligram_adi": "...",
-      "raflar": [
-         {"raf_numarasi": 1, "urunler": ["...", "..."]},
-         ...
-      ]
-    }
+    JSON dosyasındaki raf_numarasi ve urunler listesine göre saha fotoğrafını analiz eder.
     """
     h, w = field_img.shape[:2]
     result_img = field_img.copy()
@@ -461,17 +449,20 @@ def analyze_poligram_json_model(field_img, poligram_data, match_threshold=0.55, 
 
     ocr_engine = get_ocr_engine()
 
-    raflar = poligram_data.get("raflar", [])
+    # JSON raflarını al ve raf_numarasi sırasına göre düzenle
+    raflar = sorted(poligram_data.get("raflar", []), key=lambda x: safe_float(x.get("raf_numarasi", 1)))
     num_rows = len(raflar)
-    
+    if num_rows == 0:
+        return result_img, [], {"fark": 0, "hizalama": "Geçersiz JSON Raf Yapısı"}, field_img
+
     max_cols = 1
     for raf in raflar:
         if len(raf.get("urunler", [])) > max_cols:
             max_cols = len(raf.get("urunler", []))
     num_cols = max(max_cols, 1)
 
-    shelf_h = h // max(num_rows, 1)
-    col_w = w // max(num_cols, 1)
+    shelf_h = h // num_rows
+    col_w = w // num_cols
 
     fark_sayisi = 0
     okunamayan_sayisi = 0
@@ -481,6 +472,7 @@ def analyze_poligram_json_model(field_img, poligram_data, match_threshold=0.55, 
     debug_rows = []
 
     for r_idx, raf in enumerate(raflar):
+        raf_no = raf.get("raf_numarasi", r_idx + 1)
         s_top = r_idx * shelf_h
         s_bottom = (r_idx + 1) * shelf_h if r_idx < num_rows - 1 else h
         urunler = raf.get("urunler", [])
@@ -500,7 +492,7 @@ def analyze_poligram_json_model(field_img, poligram_data, match_threshold=0.55, 
             if not expected_product:
                 bos_kabul_edilen_sayisi += 1
                 debug_rows.append({
-                    "Raf": r_idx + 1, "Slot": c_idx + 1,
+                    "Raf No": raf_no, "Slot": c_idx + 1,
                     "Beklenen (JSON)": "(boş)", "Okunan (OCR)": detected_text or "—",
                     "Benzerlik": "", "Sonuç": "KONTROL DIŞI",
                 })
@@ -514,7 +506,7 @@ def analyze_poligram_json_model(field_img, poligram_data, match_threshold=0.55, 
                 okunamayan_sayisi += 1
 
             debug_rows.append({
-                "Raf": r_idx + 1, "Slot": c_idx + 1,
+                "Raf No": raf_no, "Slot": c_idx + 1,
                 "Beklenen (JSON)": expected_product, "Okunan (OCR)": detected_text or "—",
                 "Benzerlik": round(similarity, 2), "Sonuç": "UYUMSUZ" if is_mismatch else "UYUMLU",
             })
@@ -530,7 +522,7 @@ def analyze_poligram_json_model(field_img, poligram_data, match_threshold=0.55, 
                 etiket = "OKUNAMADI" if not detected_text else "UYUMSUZ"
                 cv2.putText(
                     result_img,
-                    f"{etiket} (Raf {r_idx+1})",
+                    f"{etiket} (Raf {raf_no})",
                     (box_x1, max(15, box_y1 - 5)),
                     cv2.FONT_HERSHEY_SIMPLEX,
                     0.35,
@@ -541,7 +533,7 @@ def analyze_poligram_json_model(field_img, poligram_data, match_threshold=0.55, 
                 results.append({
                     "id": fark_sayisi,
                     "durum": (
-                        f"POLİGRAM UYUMSUZLUĞU: Raf {r_idx+1}, Slot {c_idx+1} | "
+                        f"POLİGRAM UYUMSUZLUĞU: Raf {raf_no}, Slot {c_idx+1} | "
                         f"Beklenen: {expected_product} | Okunan: {detected_text or '—'} "
                         f"(Benzerlik: {similarity:.2f})"
                     ),
@@ -558,7 +550,7 @@ def analyze_poligram_json_model(field_img, poligram_data, match_threshold=0.55, 
         "urun_etiket_uyumsuzluk": fark_sayisi,
         "kontrol_edilmeyen_rakip_raf": 0,
         "hizalama_ok": ocr_engine is not None,
-        "hizalama": f"Poligram JSON OCR Eşleştirmesi ({num_rows} Raf, {num_cols} Kolon){ocr_uyarisi}",
+        "hizalama": f"Poligram JSON Raf Eşleştirmesi ({num_rows} Raf, {num_cols} Kolon){ocr_uyarisi}",
         "ocr_motoru_aktif": ocr_engine is not None,
         "kontrol_edilen_slot_sayisi": kontrol_edilen_slot_sayisi,
         "bos_kabul_edilen_slot_sayisi": bos_kabul_edilen_sayisi,
@@ -917,7 +909,7 @@ if st.button("🚀 KONTROLÜ BAŞLAT", type="primary", use_container_width=True,
     st.session_state.summary = None
     st.session_state.report = ""
 
-    with st.spinner("Poligram JSON modeli ile ürün uygunluk analizi gerçekleştiriliyor..."):
+    with st.spinner("Poligram JSON modeli (raf numaraları baz alınarak) analiz ediliyor..."):
         try:
             if kontrol_modu == "Standart Referans Kontrolü":
                 result_img, results, summary, aligned_field = analyze_planogram_grid_free(ref_img, field_img)
@@ -954,7 +946,7 @@ if st.session_state.result_img is not None and st.session_state.summary:
     st.image(st.session_state.result_img, channels="BGR", use_container_width=True)
 
     if summary.get("debug_rows"):
-        with st.expander("🛠️ OCR Hata Ayıklama Tablosu (Beklenen vs Okunan)", expanded=(summary.get("fark", 0) == 0)):
+        with st.expander("🛠️ OCR Hata Ayıklama Tablosu (Raf Numarasına Göre)", expanded=(summary.get("fark", 0) == 0)):
             st.dataframe(pd.DataFrame(summary["debug_rows"]), use_container_width=True, hide_index=True)
 
     d1, d2 = st.columns(2)

@@ -377,7 +377,9 @@ def analyze_poligram_model(field_img, poligram_df):
     clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
     gray_clahe = clahe.apply(gray)
 
-    num_rows = min(max(len(poligram_df), 4), 7)
+    # Kurallara göre dikey raf sırası sınırları (Minimum: 4, Maksimum: 7)
+    excel_len = len(poligram_df) if poligram_df is not None else 6
+    num_rows = min(max(excel_len, 4), 7)
     shelf_h = h // num_rows
 
     results = []
@@ -398,7 +400,8 @@ def analyze_poligram_model(field_img, poligram_df):
         
         for cnt in contours:
             area = cv2.contourArea(cnt)
-            if area < (w * h * 0.00015) or area > (w * h * 0.05):
+            # Yatayda sütun/ürün kural sınırları (Min 6, Max 15 ürün sığacak şekilde alan filtresi)
+            if area < (w * h * 0.0001) or area > (w * h * 0.08):
                 continue
             
             x, y, bw, bh = cv2.boundingRect(cnt)
@@ -430,7 +433,7 @@ def analyze_poligram_model(field_img, poligram_df):
         "urun_etiket_uyumsuzluk": 0,
         "kontrol_edilmeyen_rakip_raf": 0,
         "hizalama_ok": True,
-        "hizalama": "Poligram Model Kontrolü",
+        "hizalama": f"Poligram Model Kontrolü ({num_rows} Dikey Raf Aralığı)",
     }
     return result_img, results, summary, field_img
 
@@ -682,7 +685,7 @@ if kontrol_modu == "Standart Referans Kontrolü":
 
     dealers = []
     if city:
-        dealers, _ = get_dealers(YAND_EX_ROOT_PUBLIC_KEY if 'YAND_EX_ROOT_PUBLIC_KEY' in locals() else YANDEX_ROOT_PUBLIC_KEY, city)
+        dealers, _ = get_dealers(YANDEX_ROOT_PUBLIC_KEY, city)
 
     with c2:
         st.markdown("**Bayi Arama ve Seçim**")
@@ -751,7 +754,6 @@ else:
                 pol_df = load_excel_from_url(YANDEX_ROOT_PUBLIC_KEY, selected_poligram_item)
             if pol_df is not None:
                 st.success(f"Model Yüklendi: {selected_poligram_item['name']}")
-                # Tablo ve araç çubuğu gizlendi
             else:
                 st.warning("Seçilen Excel dosyası okunamadı.")
         else:

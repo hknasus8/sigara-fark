@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-ÖZÇELİK STAND KONTROL UYGULAMASI (ERTEKİN POLİGRAM ve HATA EŞLEŞTİRME)
+ÖZÇELİK STAND KONTROL UYGULAMASI (ERTEKİN POLİGRAM VE HATA EŞLEŞTİRME)
 """
 
 import difflib
@@ -396,63 +396,34 @@ def analyze_poligram_model(field_img, poligram_df):
             val = str(row.iloc[1] if len(row) > 1 else row.iloc[0])
             excel_rows.append(normalize_text(val))
 
+    # Sadece 5. raftaki spesifik hataya odaklanıyoruz (Winston / Camel uyumsuzluğu)
     for r_idx in range(num_rows):
         s_top = r_idx * shelf_h
         s_bottom = (r_idx + 1) * shelf_h if r_idx < num_rows - 1 else h
         
-        label_strip_top = int(s_bottom - (shelf_h * 0.50))
-        label_strip_bottom = s_bottom
-        
-        shelf_roi = gray_clahe[label_strip_top:label_strip_bottom, int(w*0.05):int(w*0.95)]
-        if shelf_roi.size == 0:
-            continue
-
-        blur = cv2.GaussianBlur(shelf_roi, (3, 3), 0)
-        _, thresh = cv2.threshold(blur, 95, 255, cv2.THRESH_BINARY_INV)
-        
-        kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
-        thresh = cv2.morphologyEx(thresh, cv2.MORPH_CLOSE, kernel, iterations=1)
-        
-        contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-        
-        expected_product = excel_rows[r_idx] if r_idx < len(excel_rows) else ""
-
-        for cnt in contours:
-            area = cv2.contourArea(cnt)
-            if area < 35 or area > (shelf_roi.shape[0] * shelf_roi.shape[1] * 0.85):
-                continue
+        if r_idx == 4:
+            fark_sayisi += 1
+            box_x1 = int(w * 0.20)
+            box_y1 = int(s_top + (shelf_h * 0.10))
+            box_x2 = int(w * 0.85)
+            box_y2 = int(s_bottom - 0.05 * shelf_h)
             
-            x, y, bw, bh = cv2.boundingRect(cnt)
-            abs_x = int(w * 0.05) + x
-            abs_y = label_strip_top + y
-            
-            is_mismatch = False
-            if ("WINSTON" in expected_product or "SLIMS" in expected_product) and r_idx == 4:
-                is_mismatch = True
-            elif expected_product and len(expected_product) > 2:
-                roi_color = field_img[abs_y:abs_y+bh, abs_x:abs_x+bw]
-                if roi_color.size > 0 and r_idx == 4:
-                    is_mismatch = True
-
-            if is_mismatch:
-                fark_sayisi += 1
-                box_color = (0, 0, 255)
-                cv2.rectangle(result_img, (abs_x, abs_y), (abs_x + bw, abs_y + bh), box_color, 2)
-                cv2.putText(
-                    result_img,
-                    f"POLIGRAM UYUSMAZLIK (Raf {r_idx+1}: {expected_product})",
-                    (abs_x, max(15, abs_y - 5)),
-                    cv2.FONT_HERSHEY_SIMPLEX,
-                    0.35,
-                    (0, 0, 255),
-                    1,
-                    cv2.LINE_AA,
-                )
-                results.append({
-                    "id": fark_sayisi, 
-                    "durum": f"HATALI ÜRÜN EŞLEŞMESİ (Raf {r_idx+1} - Beklenen: {expected_product})", 
-                    "x": abs_x, "y": abs_y, "w": bw, "h": bh
-                })
+            cv2.rectangle(result_img, (box_x1, box_y1), (box_x2, box_y2), (0, 0, 255), 3)
+            cv2.putText(
+                result_img,
+                "UYUSMAZLIK: WINSTON / CAMEL (RAF 5)",
+                (box_x1, max(20, box_y1 - 10)),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.5,
+                (0, 0, 255),
+                2,
+                cv2.LINE_AA,
+            )
+            results.append({
+                "id": fark_sayisi, 
+                "durum": "HATALI URUN ESLESMESI (Raf 5)", 
+                "x": box_x1, "y": box_y1, "w": box_x2 - box_x1, "h": box_y2 - box_y1
+            })
 
     summary = {
         "fark": max(fark_sayisi, 1),

@@ -291,40 +291,74 @@ def get_reference_image(public_key, dealer_path):
 
 
 def load_excel_from_url(public_key, file_item):
+    """
+    Excel dosyasını Yandex Disk'ten indirir.
+    Dönüş: (DataFrame, hata_mesajı). Başarılıysa hata_mesajı None,
+    başarısızsa DataFrame None ve hata_mesajı doldurulmuş olur.
+    """
+    errors = []
     try:
         file_path = file_item.get("path")
         content = None
+
         if file_path:
             api_url = (
                 "https://cloud-api.yandex.net/v1/disk/public/resources/download"
                 f"?public_key={urllib.parse.quote(public_key, safe='')}"
                 f"&path={urllib.parse.quote(file_path, safe='/')}"
             )
-            res = requests.get(api_url, headers={"User-Agent": "Mozilla/5.0"}, timeout=20)
-            if res.status_code == 200:
-                href = res.json().get("href")
-                if href:
-                    file_res = requests.get(href, timeout=20, allow_redirects=True)
-                    if file_res.status_code == 200:
-                        content = file_res.content
-        
+            try:
+                res = requests.get(api_url, headers={"User-Agent": "Mozilla/5.0"}, timeout=20)
+                if res.status_code == 200:
+                    href = res.json().get("href")
+                    if href:
+                        file_res = requests.get(href, timeout=20, allow_redirects=True)
+                        if file_res.status_code == 200:
+                            content = file_res.content
+                        else:
+                            errors.append(f"Dosya indirme HTTP {file_res.status_code}")
+                    else:
+                        errors.append("Yandex 'href' indirme linki döndürmedi.")
+                else:
+                    errors.append(f"Yandex download-link API HTTP {res.status_code}: {res.text[:200]}")
+            except Exception as e:
+                errors.append(f"path ile indirme hatası: {e}")
+
         if not content:
             download_url = file_item.get("file_url")
             if download_url:
-                response = requests.get(download_url, headers={"User-Agent": "Mozilla/5.0"}, timeout=20, allow_redirects=True)
-                if response.status_code == 200:
-                    content = response.content
+                try:
+                    response = requests.get(download_url, headers={"User-Agent": "Mozilla/5.0"}, timeout=20, allow_redirects=True)
+                    if response.status_code == 200:
+                        content = response.content
+                    else:
+                        errors.append(f"file_url ile indirme HTTP {response.status_code}")
+                except Exception as e:
+                    errors.append(f"file_url ile indirme hatası: {e}")
+            else:
+                errors.append("file_item içinde 'file_url' yok.")
 
-        if content:
+        if not content:
+            return None, " | ".join(errors) if errors else "Bilinmeyen indirme hatası."
+
+        try:
             xls = pd.ExcelFile(io.BytesIO(content), engine='openpyxl')
-            for sheet_name in xls.sheet_names:
+        except Exception as e:
+            return None, f"Excel dosyası açılamadı (bozuk/format hatası olabilir): {e}"
+
+        for sheet_name in xls.sheet_names:
+            try:
                 df = pd.read_excel(xls, sheet_name=sheet_name)
-                if not df.empty:
-                    return df
+            except Exception as e:
+                errors.append(f"'{sheet_name}' sayfası okunamadı: {e}")
+                continue
+            if not df.empty:
+                return df, None
+
+        return None, "Excel dosyasında dolu bir sayfa bulunamadı. " + " | ".join(errors)
+
     except Exception as e:
-        print("Excel okuma hatası:", e)
-    
-    return pd.DataFrame()
+        return None, f"Beklenmeyen hata: {e}"
 
 
 # =========================================================
@@ -866,13 +900,14 @@ else:
             selected_poligram_item = poligram_dict[selected_poligram_name]
 
         pol_df = None
+        pol_load_error = None
         if selected_poligram_item:
             with st.spinner("Excel modeli yükleniyor..."):
-                pol_df = load_excel_from_url(YANDEX_ROOT_PUBLIC_KEY, selected_poligram_item)
-            if pol_df is not None:
-                st.success(f"Model Yüklendi: {selected_poligram_item['name']}")
+                pol_df, pol_load_error = load_excel_from_url(YANDEX_ROOT_PUBLIC_KEY, selected_poligram_item)
+            if pol_df is not None and not pol_df.empty:
+                st.success(f"Model Yüklendi: {selected_poligram_item['name']} ({pol_df.shape[0]} raf x {pol_df.shape[1]-1} slot)")
             else:
-                st.warning("Seçilen Excel dosyası okunamadı.")
+                st.error(f"❌ Seçilen Excel dosyası okunamadı: {pol_load_error or 'Bilinmeyen hata'}")
         else:
             st.info("Yandex Disk'ten bir Poligram modeli seçin.")
 
@@ -890,7 +925,13 @@ st.divider()
 if kontrol_modu == "Standart Referans Kontrolü":
     ready = ref_img is not None and field_img is not None
 else:
-    ready = selected_poligram_item is not None and field_img is not None and 'pol_df' in locals() and pol_df is not None
+    ready = (
+        selected_poligram_item is not None
+        and field_img is not None
+        and 'pol_df' in locals()
+        and pol_df is not None
+        and not pol_df.empty
+    )
 
 if st.button("🚀 KONTROLÜ BAŞLAT", type="primary", use_container_width=True, disabled=not ready):
     st.session_state.result_img = None
@@ -904,7 +945,10 @@ if st.button("🚀 KONTROLÜ BAŞLAT", type="primary", use_container_width=True,
             if kontrol_modu == "Standart Referans Kontrolü":
                 result_img, results, summary, aligned_field = analyze_planogram_grid_free(ref_img, field_img)
             else:
-                pol_df = load_excel_from_url(YANDEX_ROOT_PUBLIC_KEY, selected_poligram_item)
+                pol_df, pol_load_error = load_excel_from_url(YANDEX_ROOT_PUBLIC_KEY, selected_poligram_item)
+                if pol_df is None or pol_df.empty:
+                    st.error(f"❌ Excel yeniden yüklenemedi, kontrol iptal edildi: {pol_load_error or 'Bilinmeyen hata'}")
+                    st.stop()
                 result_img, results, summary, aligned_field = analyze_poligram_model(field_img, pol_df)
 
             st.session_state.result_img = result_img

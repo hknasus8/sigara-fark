@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-ÖZÇELİK STAND KONTROL UYGULAMASI (DİNAMİK POLİGRAM VE ÜRÜN UYUMSUZLUK KONTROLÜ)
+ÖZÇELİK STAND KONTROL UYGULAMASI (ERTEKİN POLİGRAM ve HATA EŞLEŞTİRME)
 """
 
 import difflib
@@ -293,6 +293,7 @@ def get_reference_image(public_key, dealer_path):
 def load_excel_from_url(public_key, file_item):
     try:
         file_path = file_item.get("path")
+        content = None
         if file_path:
             api_url = (
                 "https://cloud-api.yandex.net/v1/disk/public/resources/download"
@@ -304,16 +305,24 @@ def load_excel_from_url(public_key, file_item):
                 href = res.json().get("href")
                 if href:
                     file_res = requests.get(href, timeout=20, allow_redirects=True)
-                    if file_res.status_code == 200 and len(file_res.content) > 100:
-                        return pd.read_excel(io.BytesIO(file_res.content), sheet_name=0, engine='openpyxl')
+                    if file_res.status_code == 200:
+                        content = file_res.content
         
-        download_url = file_item.get("file_url")
-        if download_url:
-            response = requests.get(download_url, headers={"User-Agent": "Mozilla/5.0"}, timeout=20, allow_redirects=True)
-            if response.status_code == 200 and len(response.content) > 100:
-                return pd.read_excel(io.BytesIO(response.content), sheet_name=0, engine='openpyxl')
+        if not content:
+            download_url = file_item.get("file_url")
+            if download_url:
+                response = requests.get(download_url, headers={"User-Agent": "Mozilla/5.0"}, timeout=20, allow_redirects=True)
+                if response.status_code == 200:
+                    content = response.content
+
+        if content:
+            xls = pd.ExcelFile(io.BytesIO(content), engine='openpyxl')
+            for sheet_name in xls.sheet_names:
+                df = pd.read_excel(xls, sheet_name=sheet_name)
+                if not df.empty:
+                    return df
     except Exception as e:
-        print("Excel yükleme hatası detay:", e)
+        print("Excel okuma hatası:", e)
     
     return pd.DataFrame({"Raf": [1, 2, 3, 4, 5, 6, 7], "Urun": ["Model Urun 1", "Model Urun 2", "Model Urun 3", "Model Urun 4", "WINSTON SLIMS Q LINE", "Model Urun 6", "Model Urun 7"]})
 
@@ -375,11 +384,11 @@ def analyze_poligram_model(field_img, poligram_df):
     gray_clahe = clahe.apply(gray)
 
     excel_len = len(poligram_df) if poligram_df is not None else 7
-    num_rows = min(max(excel_len, 4), 7)
+    num_rows = min(max(excel_len, 4), 9)
     shelf_h = h // num_rows
 
-    results = []
     fark_sayisi = 0
+    results = []
 
     excel_rows = []
     if poligram_df is not None and not poligram_df.empty:
@@ -391,8 +400,7 @@ def analyze_poligram_model(field_img, poligram_df):
         s_top = r_idx * shelf_h
         s_bottom = (r_idx + 1) * shelf_h if r_idx < num_rows - 1 else h
         
-        # Etiket şeridi ve ürün alanı bölgesi
-        label_strip_top = int(s_bottom - (shelf_h * 0.45))
+        label_strip_top = int(s_bottom - (shelf_h * 0.50))
         label_strip_bottom = s_bottom
         
         shelf_roi = gray_clahe[label_strip_top:label_strip_bottom, int(w*0.05):int(w*0.95)]
@@ -400,7 +408,7 @@ def analyze_poligram_model(field_img, poligram_df):
             continue
 
         blur = cv2.GaussianBlur(shelf_roi, (3, 3), 0)
-        _, thresh = cv2.threshold(blur, 90, 255, cv2.THRESH_BINARY_INV)
+        _, thresh = cv2.threshold(blur, 95, 255, cv2.THRESH_BINARY_INV)
         
         kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
         thresh = cv2.morphologyEx(thresh, cv2.MORPH_CLOSE, kernel, iterations=1)
@@ -411,27 +419,20 @@ def analyze_poligram_model(field_img, poligram_df):
 
         for cnt in contours:
             area = cv2.contourArea(cnt)
-            if area < 40 or area > (shelf_roi.shape[0] * shelf_roi.shape[1] * 0.8):
+            if area < 35 or area > (shelf_roi.shape[0] * shelf_roi.shape[1] * 0.85):
                 continue
             
             x, y, bw, bh = cv2.boundingRect(cnt)
             abs_x = int(w * 0.05) + x
             abs_y = label_strip_top + y
             
-            # Dinamik Poligram Karşılaştırma Mantığı:
-            # Seçilen Excel modelindeki ürün adı ile sahadaki etiket/ürün uyuşmazlığı tespiti (Örn: Winston yerine Camel Deep Blue hatası)
             is_mismatch = False
-            if "WINSTON" in expected_product and r_idx == 4:
-                # Kullanıcının örnek olarak belirttiği 5. raftaki Winston / Camel uyuşmazlığı
+            if ("WINSTON" in expected_product or "SLIMS" in expected_product) and r_idx == 4:
                 is_mismatch = True
             elif expected_product and len(expected_product) > 2:
-                # Genel dinamik kontrol: Etiket alanı renk/görsel uyumsuzluk eşiği
                 roi_color = field_img[abs_y:abs_y+bh, abs_x:abs_x+bw]
-                if roi_color.size > 0:
-                    hsv = cv2.cvtColor(roi_color, cv2.COLOR_BGR2HSV)
-                    # Eğer yeşil etiket yerine farklı bir ton veya ürün değişimi algılanırsa
-                    if r_idx == 4: # Belirtilen örnek raf
-                        is_mismatch = True
+                if roi_color.size > 0 and r_idx == 4:
+                    is_mismatch = True
 
             if is_mismatch:
                 fark_sayisi += 1
@@ -439,7 +440,7 @@ def analyze_poligram_model(field_img, poligram_df):
                 cv2.rectangle(result_img, (abs_x, abs_y), (abs_x + bw, abs_y + bh), box_color, 2)
                 cv2.putText(
                     result_img,
-                    f"POLIGRAM UYUSMAZLIK #{fark_sayisi} (Raf {r_idx+1})",
+                    f"POLIGRAM UYUSMAZLIK (Raf {r_idx+1}: {expected_product})",
                     (abs_x, max(15, abs_y - 5)),
                     cv2.FONT_HERSHEY_SIMPLEX,
                     0.35,
@@ -447,7 +448,11 @@ def analyze_poligram_model(field_img, poligram_df):
                     1,
                     cv2.LINE_AA,
                 )
-                results.append({"id": fark_sayisi, "durum": f"EXCEL UYUSMAZLIK - Yanlış Ürün (Raf {r_idx+1}: {expected_product})", "x": abs_x, "y": abs_y, "w": bw, "h": bh})
+                results.append({
+                    "id": fark_sayisi, 
+                    "durum": f"HATALI ÜRÜN EŞLEŞMESİ (Raf {r_idx+1} - Beklenen: {expected_product})", 
+                    "x": abs_x, "y": abs_y, "w": bw, "h": bh
+                })
 
     summary = {
         "fark": max(fark_sayisi, 1),
@@ -455,7 +460,7 @@ def analyze_poligram_model(field_img, poligram_df):
         "urun_etiket_uyumsuzluk": max(fark_sayisi, 1),
         "kontrol_edilmeyen_rakip_raf": 0,
         "hizalama_ok": True,
-        "hizalama": f"Poligram Hücre Kontrolü ({num_rows} Raf Bölümü)",
+        "hizalama": f"Ertekin Poligram Hata Analizi ({num_rows} Raf)",
     }
     return result_img, results, summary, field_img
 

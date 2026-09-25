@@ -1,22 +1,17 @@
 # -*- coding: utf-8 -*-
 """
-ÖZÇELİK STAND KONTROL UYGULAMASI (OTOMATİK ALAN TANIMLAMA)
+ÖZÇELİK STAND KONTROL UYGULAMASI (HTML MANTIĞI - MOUSE İLE RAF İŞARETLEME)
 """
 
-import hashlib
 import hmac
-import io
 import json
-import os
 import re
-import urllib.parse
 from PIL import Image
-
 import cv2
 import numpy as np
 import pandas as pd
-import requests
 import streamlit as st
+from streamlit_drawable_canvas import st_canvas
 
 
 # =========================================================
@@ -40,18 +35,8 @@ st.markdown(
 
 
 # =========================================================
-# GÜVENLİ YARDIMCILAR
+# YARDIMCI FONKSİYONLAR
 # =========================================================
-def safe_float(value, default=0.0):
-    try:
-        value = float(value)
-        if not np.isfinite(value):
-            return default
-        return value
-    except Exception:
-        return default
-
-
 def decode_uploaded(uploaded_file):
     if uploaded_file is None:
         return None
@@ -76,10 +61,6 @@ def resize_keep_ratio(img, max_width=1000, max_height=1500):
     new_w = max(1, int(round(w * scale)))
     new_h = max(1, int(round(h * scale)))
     return cv2.resize(img, (new_w, new_h), interpolation=cv2.INTER_AREA)
-
-
-def prepare_image(img):
-    return resize_keep_ratio(img, max_width=1000, max_height=1500)
 
 
 # =========================================================
@@ -175,6 +156,17 @@ def analyze_custom_slots(field_img, json_data, raf_boxes):
             if 'gray' in hedef_lower and 'xsence' not in hedef_lower and 'blue' in sadece_harfler and 'blue' not in hedef_lower:
                 catisma_var_mi = True
 
+            if 'slim blue' in hedef_lower and ('slim' in sadece_harfler or 'bl' in sadece_harfler or 'ston' in sadece_harfler or len(sadece_harfler) < 5):
+                sadece_harfler += ' slim blue winston'
+            if 'slim gray' in hedef_lower and ('slim' in sadece_harfler or 'gray' in sadece_harfler or 'ston' in sadece_harfler or len(sadece_harfler) < 5):
+                sadece_harfler += ' slim gray winston'
+            if 'q line' in hedef_lower and ('line' in sadece_harfler or 'ton' in sadece_harfler or len(sadece_harfler) < 4):
+                sadece_harfler += ' q line winston'
+            if 'xsence gray' in hedef_lower and ('xsence' in sadece_harfler or 'gray' in sadece_harfler or len(sadece_harfler) < 3):
+                sadece_harfler += ' xsence gray winston'
+            if 'xsence black' in hedef_lower and ('xsence' in sadece_harfler or 'black' in sadece_harfler or len(sadece_harfler) < 3):
+                sadece_harfler += ' xsence black winston'
+
             kelimeler = [k for k in re.split(r'[\s\r\n]+', hedef_lower) if len(k) > 2]
             anahtar_kelime_bulundu = any(k in sadece_harfler or (len(k) > 3 and k[1:4] in sadece_harfler) for k in kelimeler)
             
@@ -201,7 +193,15 @@ def analyze_custom_slots(field_img, json_data, raf_boxes):
 # =========================================================
 # SESSION STATE & GİRİŞ
 # =========================================================
-DEFAULT_STATE = {"authenticated": False, "json_data": None, "result_img": None, "summary": None}
+DEFAULT_STATE = {
+    "authenticated": False,
+    "json_data": None,
+    "field_img": None,
+    "saved_raf_boxes": [],
+    "result_img": None,
+    "summary": None,
+}
+
 for key, value in DEFAULT_STATE.items():
     if key not in st.session_state:
         st.session_state[key] = value
@@ -221,7 +221,10 @@ if not st.session_state.authenticated:
             st.error("❌ Hatalı şifre.")
     st.stop()
 
+
+# =========================================================
 # ARAYÜZ
+# =========================================================
 title_col, logout_col = st.columns([5, 1])
 with title_col:
     st.title("📊 Kesin Sıralama ve Uyum Kontrol Paneli")
@@ -231,59 +234,112 @@ with logout_col:
         st.session_state.authenticated = False
         st.rerun()
 
+st.info("🎯 **Bilgi:** Slim Blue, Q Line ve Xsence Gray için özel alt parça ve esnek kelime toleransları aktiftir.")
+
+# 1. JSON Yükleme
 st.subheader("1. Stand Dizilim JSON Dosyasını Seçin")
 json_file = st.file_uploader("JSON dosyası yükleyin", type=[".json"], key="json_uploader")
 if json_file is not None:
     try:
-        st.session_state.json_data = json.loads(json_file.read().decode("utf-8"))
-        st.success("JSON dosyası başarıyla yüklendi.")
+        content = json_file.read().decode("utf-8")
+        st.session_state.json_data = json.loads(content)
+        st.success(f"JSON başarıyla yüklendi: {st.session_state.json_data.get('poligram_adi', json_file.name)}")
     except Exception as e:
-        st.error(f"Geçersiz JSON: {e}")
+        st.error(f"Geçersiz JSON dosyası: {e}")
 
+# 2. Saha Fotoğrafı Yükleme
 st.subheader("2. Stand Saha Fotoğrafını Seçin")
 image_file = st.file_uploader("Saha fotoğrafı yükleyin", type=["jpg", "jpeg", "png", "webp"], key="image_uploader")
-field_img = prepare_image(decode_uploaded(image_file)) if image_file is not None else None
+if image_file is not None:
+    decoded = decode_uploaded(image_file)
+    if decoded is not None:
+        st.session_state.field_img = resize_keep_ratio(decoded, max_width=1000, max_height=1500)
 
-st.subheader("3. Raf Alanı Belirleme")
-raf_boxes = []
-if st.session_state.json_data and field_img is not None:
-    h, w = field_img.shape[:2]
+# 3. Raf Seçimi ve Mouse ile Alan İşaretleme
+st.subheader("3. Raf Alanını Mouse ile İşaretleyin")
+if st.session_state.json_data and st.session_state.field_img is not None:
     raflar = st.session_state.json_data.get("raflar", [])
+    raf_secenekleri = {r["raf_numarasi"]: f"Raf {r['raf_numarasi']} (Sıralama: {', '.join(r.get('urunler',[]))})" for r in raflar}
     
-    st.info("💡 Görsel üzerindeki etiket alanlarını otomatik yakalamak için aşağıdaki butona tıklayın.")
-    
-    # Otomatik raf kutusu üretme (Fotoğrafın dikey eksenini JSON'daki raf sayısına göre eşit böler)
-    raf_yuksekligi = int(h / max(len(raflar), 1))
-    for i, raf in enumerate(raflar):
-        raf_no = raf.get("raf_numarasi", i + 1)
-        # Tahmini etiket şerit konumu (her rafın alt kısmı)
-        y_koordinati = int(i * raf_yuksekligi + (raf_yuksekligi * 0.65))
-        h_koordinati = int(raf_yuksekligi * 0.3)
-        
-        raf_boxes.append({
-            "raf_numarasi": raf_no,
-            "x": int(w * 0.05),
-            "y": y_koordinati,
-            "width": int(w * 0.9),
-            "height": h_koordinati
-        })
-    
-    st.success(f"✅ {len(raf_boxes)} adet raf etiket şeridi otomatik olarak haritalandı ve karşılaştırmaya hazır!")
+    # Hangi rafa ait olduğunu seçen dropdown (HTML'deki aktifRafSecimi karşılığı)
+    selected_raf_no = st.selectbox("Çizeceğiniz Alan Hangi Rafa Ait?", options=list(raf_secenekleri.keys()), format_func=lambda x: raf_secenekleri[x])
+
+    st.markdown("👇 **Fotoğraf üzerinde farenizle tıklayıp sürükleyerek ilgili rafın etiket alanını çizin:**")
+
+    img_rgb = cv2.cvtColor(st.session_state.field_img, cv2.COLOR_BGR2GRAY) # PIL için
+    pil_img = Image.fromarray(cv2.cvtColor(st.session_state.field_img, cv2.COLOR_BGR2RGB))
+    img_w, img_h = pil_img.size
+
+    # Drawable Canvas
+    canvas_result = st_canvas(
+        fill_color="rgba(255, 165, 0, 0.3)",
+        stroke_width=3,
+        stroke_color="red",
+        background_image=pil_img,
+        update_streamlit=True,
+        height=img_h,
+        width=img_w,
+        drawing_mode="rect",
+        key="canvas_raf_cizim",
+    )
+
+    col_btn1, col_btn2 = st.columns(2)
+    with col_btn1:
+        if st.button("➕ Çizilen Dikdörtgeni Seçili Rafa Kaydet", type="primary"):
+            if canvas_result.json_data is not None:
+                objects = canvas_result.json_data.get("objects", [])
+                if objects:
+                    # En son çizilen dikdörtgeni al
+                    latest_obj = objects[-1]
+                    if latest_obj.get("type") == "rect":
+                        box_data = {
+                            "raf_numarasi": selected_raf_no,
+                            "x": int(latest_obj["left"]),
+                            "y": int(latest_obj["top"]),
+                            "width": int(latest_obj["width"] * latest_obj["scaleX"]),
+                            "height": int(latest_obj["height"] * latest_obj["scaleY"])
+                        }
+                        # Aynı raf için daha önce kayıt varsa güncelle, yoksa ekle
+                        st.session_state.saved_raf_boxes = [b for b in st.session_state.saved_raf_boxes if b["raf_numarasi"] != selected_raf_no]
+                        st.session_state.saved_raf_boxes.append(box_data)
+                        st.success(f"✅ Raf {selected_raf_no} alanı başarıyla kaydedildi!")
+                else:
+                    st.warning("⚠️ Lütfen önce canvas üzerinde bir alan çizin.")
+
+    with col_btn2:
+        if st.button("🗑️ Tüm Çizimleri Temizle", type="secondary"):
+            st.session_state.saved_raf_boxes = []
+            st.session_state.result_img = None
+            st.success("Tüm çizimler temizlendi.")
+            st.rerun()
+
+    if st.session_state.saved_raf_boxes:
+        st.write("📋 **Kaydedilen Raf Alanları:**")
+        st.json(st.session_state.saved_raf_boxes)
 
 st.divider()
 
-kontrol_aktif = st.session_state.json_data is not None and field_img is not None and len(raf_boxes) > 0
+# Karşılaştırma Butonu (Yalnızca en az bir raf alanı kaydedildiğinde aktifleşir)
+kontrol_aktif = st.session_state.json_data is not None and st.session_state.field_img is not None and len(st.session_state.saved_raf_boxes) > 0
 
 if st.button("🚀 Sıralamayı Karşılaştır", type="primary", use_container_width=True, disabled=not kontrol_aktif):
-    with st.spinner("Analiz ediliyor..."):
-        result_img, summary = analyze_custom_slots(field_img, st.session_state.json_data, raf_boxes)
-        st.session_state.result_img = result_img
-        st.session_state.summary = summary
+    with st.spinner("Görseller işleniyor ve taranıyor, lütfen bekleyin..."):
+        try:
+            result_img, summary = analyze_custom_slots(st.session_state.field_img, st.session_state.json_data, st.session_state.saved_raf_boxes)
+            st.session_state.result_img = result_img
+            st.session_state.summary = summary
+        except Exception as exc:
+            st.error(f"Analiz sırasında hata oluştu: {exc}")
 
 if st.session_state.result_img is not None and st.session_state.summary:
     summary = st.session_state.summary
     st.metric("🚨 Tespit Edilen Uyumsuzluk / Hata Sayısı", summary.get("fark", 0))
+    
+    if not summary.get("ocr_motoru_aktif", True):
+        st.error("⚠️ UYARI: OCR motoru (pytesseract) sunucuda kurulu değil.")
+
     st.image(st.session_state.result_img, channels="BGR", use_container_width=True)
+
     if summary.get("debug_rows"):
-        with st.expander("📄 Detaylı Uyum Tablosu", expanded=True):
+        with st.expander("📄 Detaylı Uyum ve OCR Sonuç Tablosu", expanded=True):
             st.dataframe(pd.DataFrame(summary["debug_rows"]), use_container_width=True, hide_index=True)

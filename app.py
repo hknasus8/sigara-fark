@@ -220,11 +220,6 @@ def get_dealers(public_key, city):
 
 @st.cache_data(ttl=600, show_spinner=False)
 def get_yandex_poligram_models(public_key):
-    """
-    Yandex disk üzerinde esnek poligram arama fonksiyonu:
-    Önce kök dizine bakar, sonra alt klasörleri (BAYİ vb.) tarayarak 
-    içinde 'POLIGRAM' geçen klasörü veya doğrudan excel dosyalarını bulur.
-    """
     root_items, error = yandex_root_items(public_key)
     if error:
         return [], error
@@ -232,7 +227,6 @@ def get_yandex_poligram_models(public_key):
     poligram_folder_path = None
     poligram_files = []
 
-    # 1. Aşama: Kök dizinde doğrudan POLIGRAM klasörü veya dosyaları var mı?
     for item in root_items:
         name_norm = normalize_text(item.get("name"))
         if "POLIGRAM" in name_norm:
@@ -242,7 +236,6 @@ def get_yandex_poligram_models(public_key):
             elif item.get("type") == "file" and item.get("name", "").lower().endswith((".xlsx", ".xls")):
                 poligram_files.append({"name": item.get("name"), "file_url": item.get("file")})
 
-    # 2. Aşama: Eğer kökte bulunamadıysa alt klasörleri (örn: BAYİ) tara
     if not poligram_folder_path and not poligram_files:
         for item in root_items:
             if item.get("type") == "dir":
@@ -258,7 +251,6 @@ def get_yandex_poligram_models(public_key):
                 if poligram_folder_path:
                     break
 
-    # 3. Aşama: Bulunan POLIGRAM klasörünün içindeki excel dosyalarını listele
     if poligram_folder_path:
         items, error = yandex_list_dir(public_key, poligram_folder_path)
         if not error:
@@ -657,6 +649,7 @@ st.divider()
 
 city, dealer_name, dealer_path = "", "", ""
 selected_poligram_item = None
+field_img = None
 
 if kontrol_modu == "Standart Referans Kontrolü":
     st.subheader("1. Şehir ve Bayi Seçiniz")
@@ -687,39 +680,52 @@ if kontrol_modu == "Standart Referans Kontrolü":
         if selected_raw_dealer in dealer_choices:
             dealer_name = dealer_choices[selected_raw_dealer]["raw_name"]
             dealer_path = dealer_choices[selected_raw_dealer]["path"]
-else:
-    st.subheader("1. POLİGRAM Modeli Seçiniz (Yandex Disk)")
-    yandex_poligrams, pol_error = get_yandex_poligram_models(YANDEX_ROOT_PUBLIC_KEY)
-    if pol_error:
-        st.warning(str(pol_error))
 
-    poligram_dict = {item["name"]: item for item in yandex_poligrams}
-    selected_poligram_name = st.selectbox(
-        "Yandex Disk POLİGRAM Modelleri",
-        options=[""] + list(poligram_dict.keys()),
-        format_func=lambda x: "Poligram Excel modeli seçin..." if x == "" else x
-    )
-    if selected_poligram_name in poligram_dict:
-        selected_poligram_item = poligram_dict[selected_poligram_name]
+    st.divider()
+    st.subheader("2. Fotoğraf Yükleme ve Kontrol")
 
-st.divider()
-st.subheader("2. Fotoğraf Yükleme ve Kontrol")
+    ref_img = None
+    if dealer_path:
+        with st.spinner("Orijinal referans fotoğrafı yükleniyor..."):
+            ref_img, _ = get_reference_image(YANDEX_ROOT_PUBLIC_KEY, dealer_path)
 
-ref_img = None
-if kontrol_modu == "Standart Referans Kontrolü" and dealer_path:
-    with st.spinner("Orijinal referans fotoğrafı yükleniyor..."):
-        ref_img, _ = get_reference_image(YANDEX_ROOT_PUBLIC_KEY, dealer_path)
-
-u1, u2 = st.columns(2)
-with u1:
-    if kontrol_modu == "Standart Referans Kontrolü":
+    u1, u2 = st.columns(2)
+    with u1:
         st.markdown("**Orijinal Referans Fotoğrafı**")
         if ref_img is not None:
             st.image(ref_img, channels="BGR", use_container_width=True)
         else:
             st.info("Şehir/bayi seçin.")
-    else:
-        st.markdown("**Seçilen Poligram Excel Önizlemesi**")
+
+    with u2:
+        st.markdown("**Bayi Saha Fotoğrafı**")
+        field_upload = st.file_uploader("Kontrol edilecek bayi fotoğrafını yükleyin", type=["jpg", "jpeg", "png", "webp"], key="field_upload_std")
+        field_img = prepare_image(decode_uploaded(field_upload)) if field_upload is not None else None
+        if field_img is not None:
+            st.image(field_img, channels="BGR", use_container_width=True)
+        else:
+            st.info("Sahadan gelen fotoğrafı yükleyin.")
+
+else:
+    st.subheader("1. POLİGRAM Modeli ve Saha Fotoğrafı Seçimi")
+    
+    col_p1, col_p2 = st.columns(2)
+    with col_p1:
+        st.markdown("**Yandex Disk POLİGRAM Modelleri**")
+        yandex_poligrams, pol_error = get_yandex_poligram_models(YANDEX_ROOT_PUBLIC_KEY)
+        if pol_error:
+            st.warning(str(pol_error))
+
+        poligram_dict = {item["name"]: item for item in yandex_poligrams}
+        selected_poligram_name = st.selectbox(
+            "Poligram Excel modeli seçin",
+            options=[""] + list(poligram_dict.keys()),
+            format_func=lambda x: "Poligram Excel modeli seçin..." if x == "" else x,
+            label_visibility="collapsed"
+        )
+        if selected_poligram_name in poligram_dict:
+            selected_poligram_item = poligram_dict[selected_poligram_name]
+
         if selected_poligram_item:
             pol_df = load_excel_from_url(selected_poligram_item["file_url"])
             if pol_df is not None:
@@ -730,14 +736,14 @@ with u1:
         else:
             st.info("Yandex Disk'ten bir Poligram modeli seçin.")
 
-with u2:
-    st.markdown("**Bayi Saha Fotoğrafı**")
-    field_upload = st.file_uploader("Kontrol edilecek bayi fotoğrafını yükleyin", type=["jpg", "jpeg", "png", "webp"], key="field_upload")
-    field_img = prepare_image(decode_uploaded(field_upload)) if field_upload is not None else None
-    if field_img is not None:
-        st.image(field_img, channels="BGR", use_container_width=True)
-    else:
-        st.info("Sahadan gelen fotoğrafı yükleyin.")
+    with col_p2:
+        st.markdown("**Bayi Saha Fotoğrafı**")
+        field_upload_poly = st.file_uploader("Kontrol edilecek bayi fotoğrafını yükleyin", type=["jpg", "jpeg", "png", "webp"], key="field_upload_poly")
+        field_img = prepare_image(decode_uploaded(field_upload_poly)) if field_upload_poly is not None else None
+        if field_img is not None:
+            st.image(field_img, channels="BGR", use_container_width=True)
+        else:
+            st.info("Sahadan gelen fotoğrafı yükleyin.")
 
 st.divider()
 

@@ -234,7 +234,7 @@ def get_yandex_poligram_models(public_key):
                 poligram_folder_path = item.get("path")
                 break
             elif item.get("type") == "file" and item.get("name", "").lower().endswith((".xlsx", ".xls")):
-                poligram_files.append({"name": item.get("name"), "file_url": item.get("file")})
+                poligram_files.append({"name": item.get("name"), "file_url": item.get("file"), "path": item.get("path")})
 
     if not poligram_folder_path and not poligram_files:
         for item in root_items:
@@ -247,7 +247,7 @@ def get_yandex_poligram_models(public_key):
                             poligram_folder_path = sub.get("path")
                             break
                         elif sub.get("type") == "file" and sub.get("name", "").lower().endswith((".xlsx", ".xls")):
-                            poligram_files.append({"name": sub.get("name"), "file_url": sub.get("file")})
+                            poligram_files.append({"name": sub.get("name"), "file_url": sub.get("file"), "path": sub.get("path")})
                 if poligram_folder_path:
                     break
 
@@ -258,7 +258,7 @@ def get_yandex_poligram_models(public_key):
                 if item.get("type") == "file":
                     name = item.get("name", "")
                     if name.lower().endswith((".xlsx", ".xls")):
-                        poligram_files.append({"name": name, "file_url": item.get("file")})
+                        poligram_files.append({"name": name, "file_url": item.get("file"), "path": item.get("path")})
 
     if not poligram_files:
         return [], "Yandex Disk üzerinde 'POLİGRAM' içeren klasör veya Excel dosyası bulunamadı."
@@ -291,14 +291,31 @@ def get_reference_image(public_key, dealer_path):
     return None, "Bayi klasöründe okunabilir JPG/PNG görsel bulunamadı."
 
 
-def load_excel_from_url(file_url):
+def load_excel_from_url(public_key, file_item):
     try:
-        response = requests.get(file_url, timeout=20)
-        if response.status_code == 200:
-            df = pd.read_excel(io.BytesIO(response.content), sheet_name=0)
-            return df
-    except Exception:
-        pass
+        file_path = file_item.get("path")
+        download_url = file_item.get("file_url")
+        
+        if file_path:
+            api_url = (
+                "https://cloud-api.yandex.net/v1/disk/public/resources/download"
+                f"?public_key={urllib.parse.quote(public_key, safe='')}"
+                f"&path={urllib.parse.quote(file_path, safe='/')}"
+            )
+            res = requests.get(api_url, headers={"User-Agent": "Mozilla/5.0"}, timeout=20)
+            if res.status_code == 200:
+                href = res.json().get("href")
+                if href:
+                    file_res = requests.get(href, timeout=20)
+                    if file_res.status_code == 200:
+                        return pd.read_excel(io.BytesIO(file_res.content), sheet_name=0)
+
+        if download_url:
+            response = requests.get(download_url, headers={"User-Agent": "Mozilla/5.0"}, timeout=20)
+            if response.status_code == 200:
+                return pd.read_excel(io.BytesIO(response.content), sheet_name=0)
+    except Exception as e:
+        print("Excel yükleme hatası:", e)
     return None
 
 
@@ -726,8 +743,10 @@ else:
         if selected_poligram_name in poligram_dict:
             selected_poligram_item = poligram_dict[selected_poligram_name]
 
+        pol_df = None
         if selected_poligram_item:
-            pol_df = load_excel_from_url(selected_poligram_item["file_url"])
+            with st.spinner("Excel modeli yükleniyor..."):
+                pol_df = load_excel_from_url(YANDEX_ROOT_PUBLIC_KEY, selected_poligram_item)
             if pol_df is not None:
                 st.success(f"Model Yüklendi: {selected_poligram_item['name']}")
                 st.dataframe(pol_df.head(6), use_container_width=True)
@@ -764,7 +783,7 @@ if st.button("🚀 KONTROLÜ BAŞLAT", type="primary", use_container_width=True,
             if kontrol_modu == "Standart Referans Kontrolü":
                 result_img, results, summary, aligned_field = analyze_planogram_grid_free(ref_img, field_img)
             else:
-                pol_df = load_excel_from_url(selected_poligram_item["file_url"])
+                pol_df = load_excel_from_url(YANDEX_ROOT_PUBLIC_KEY, selected_poligram_item)
                 result_img, results, summary, aligned_field = analyze_poligram_model(field_img, pol_df)
 
             st.session_state.result_img = result_img

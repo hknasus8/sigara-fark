@@ -293,16 +293,9 @@ def get_reference_image(public_key, dealer_path):
 
 def load_excel_from_url(public_key, file_item):
     try:
-        download_url = file_item.get("file_url")
         file_path = file_item.get("path")
         
-        # 1. Önce doğrudan file_url deneyelim
-        if download_url:
-            response = requests.get(download_url, headers={"User-Agent": "Mozilla/5.0"}, timeout=20)
-            if response.status_code == 200:
-                return pd.read_excel(io.BytesIO(response.content), sheet_name=0, engine='openpyxl')
-
-        # 2. Eğer file_url yoksa veya başarısızsa API üzerinden href alalım
+        # Doğrudan Yandex Disk Public Download API üzerinden güvenli link çekme
         if file_path:
             api_url = (
                 "https://cloud-api.yandex.net/v1/disk/public/resources/download"
@@ -316,6 +309,14 @@ def load_excel_from_url(public_key, file_item):
                     file_res = requests.get(href, timeout=20)
                     if file_res.status_code == 200:
                         return pd.read_excel(io.BytesIO(file_res.content), sheet_name=0, engine='openpyxl')
+        
+        # Yedek olarak doğrudan file_url denemesi
+        download_url = file_item.get("file_url")
+        if download_url:
+            response = requests.get(download_url, headers={"User-Agent": "Mozilla/5.0"}, timeout=20)
+            if response.status_code == 200:
+                return pd.read_excel(io.BytesIO(response.content), sheet_name=0, engine='openpyxl')
+
     except Exception as e:
         print("Excel yükleme hatası:", e)
     return None
@@ -682,7 +683,7 @@ if kontrol_modu == "Standart Referans Kontrolü":
 
     dealers = []
     if city:
-        dealers, _ = get_dealers(YANDEX_ROOT_PUBLIC_KEY, city)
+        dealers, _ = get_dealers(YAND_ROOT_PUBLIC_KEY if 'YAND_ROOT_PUBLIC_KEY' in locals() else YANDEX_ROOT_PUBLIC_KEY, city)
 
     with c2:
         st.markdown("**Bayi Arama ve Seçim**")

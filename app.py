@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-ÖZÇELİK STAND KONTROL UYGULAMASI (MOUSE İLE RAF İŞARETLEME VE JSON SEÇİMLİ)
+ÖZÇELİK STAND KONTROL UYGULAMASI (HATASIZ TAM SÜRÜM)
 """
 
 import hmac
@@ -18,7 +18,7 @@ from streamlit_drawable_canvas import st_canvas
 # SAYFA YAPILANDIRMASI
 # =========================================================
 st.set_page_config(
-    page_title="Kesin Sıralama ve Uyum Kontrol Paneli",
+    page_title="Kesin Sıralama dan Uyum Kontrol Paneli",
     page_icon="📊",
     layout="wide",
     initial_sidebar_state="collapsed",
@@ -259,7 +259,7 @@ if image_file is not None:
 st.subheader("3. JSON Rafı Seçin ve Mouse ile İşaretleyin")
 if st.session_state.json_data and st.session_state.field_img is not None:
     raflar = st.session_state.json_data.get("raflar", [])
-    raf_secenekleri = {r["raf_numarasi"]: f"Raf {r['raf_numarasi']} (Sıralama: {', '.join(r.get('urunler',[]))})" for r inraflar}
+    raf_secenekleri = {r["raf_numarasi"]: f"Raf {r['raf_numarasi']} (Sıralama: {', '.join(r.get('urunler',[]))})" for r in raflar}
     
     selected_raf_no = st.selectbox("Kontrol Edilecek Rafı Seçin:", options=list(raf_secenekleri.keys()), format_func=lambda x: raf_secenekleri[x])
 

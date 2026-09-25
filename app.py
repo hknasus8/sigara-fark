@@ -439,7 +439,7 @@ def align_images_feature(reference, target):
 def analyze_poligram_json_model(field_img, poligram_data, match_threshold=0.55, label_band=(0.55, 0.98)):
     """
     JSON dosyasındaki raf_numarasi sıralamasına göre, saha fotoğrafındaki 
-    raf seviyelerini otomatik olarak (eşit aralıklarla veya dikey projeksiyonla) bölerek analiz eder.
+    raf seviyelerini otomatik olarak bölerek analiz eder.
     """
     h, w = field_img.shape[:2]
     result_img = field_img.copy()
@@ -450,11 +450,19 @@ def analyze_poligram_json_model(field_img, poligram_data, match_threshold=0.55, 
 
     ocr_engine = get_ocr_engine()
 
+    # Sayaçların ve listelerin en başta tanımlanması
+    fark_sayisi = 0
+    okunamayan_sayisi = 0
+    bos_kabul_edilen_sayisi = 0
+    kontrol_edilen_slot_sayisi = 0
+    results = []
+    debug_rows = []
+
     # JSON raflarını al ve raf_numarasi sırasına göre düzenle
     raflar = sorted(poligram_data.get("raflar", []), key=lambda x: safe_float(x.get("raf_numarasi", 1)))
     num_rows = len(raflar)
     if num_rows == 0:
-        return result_img, [], {"fark": 0, "hizalama": "Geçersiz JSON Raf Yapısı"}, field_img
+        return result_img, results, {"fark": 0, "hizalama": "Geçersiz JSON Raf Yapısı"}, field_img
 
     max_cols = 1
     for raf in raflar:
@@ -467,13 +475,6 @@ def analyze_poligram_json_model(field_img, poligram_data, match_threshold=0.55, 
     shelf_boundaries = [i * shelf_h for i in range(num_rows)] + [h]
 
     col_w = w // num_cols
-
-    fark_sayisi = 0
-    okunamayan_sayisi = 0
-    bos_kabul_edilen_sayisi = 0
-    kontrol_edilen_slot_sayisi = 0
-    results = []
-    debug_rows = []
 
     for r_idx, raf in enumerate(raflar):
         raf_no = raf.get("raf_numarasi", r_idx + 1)

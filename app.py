@@ -295,7 +295,6 @@ def load_excel_from_url(public_key, file_item):
     try:
         file_path = file_item.get("path")
         
-        # Yöntem 1: Yandex Disk Public Download API üzerinden href çekme
         if file_path:
             api_url = (
                 "https://cloud-api.yandex.net/v1/disk/public/resources/download"
@@ -310,7 +309,6 @@ def load_excel_from_url(public_key, file_item):
                     if file_res.status_code == 200 and len(file_res.content) > 100:
                         return pd.read_excel(io.BytesIO(file_res.content), sheet_name=0, engine='openpyxl')
         
-        # Yöntem 2: Doğrudan file_url denemesi
         download_url = file_item.get("file_url")
         if download_url:
             response = requests.get(download_url, headers={"User-Agent": "Mozilla/5.0"}, timeout=20, allow_redirects=True)
@@ -320,7 +318,6 @@ def load_excel_from_url(public_key, file_item):
     except Exception as e:
         print("Excel yükleme hatası detay:", e)
     
-    # Hata durumunda uygulamanın çökmemesi ve test edilebilmesi için yedek boş/örnek şema döndür
     return pd.DataFrame({"Raf": [1, 2, 3, 4, 5, 6], "Urun": ["Model Urun 1", "Model Urun 2", "Model Urun 3", "Model Urun 4", "Model Urun 5", "Model Urun 6"]})
 
 
@@ -413,7 +410,7 @@ def analyze_poligram_model(field_img, poligram_df):
             patch = shelf_roi[y:y+bh, x:x+bw]
             if patch.size > 0 and np.mean(patch) > 170:
                 fark_sayisi += 1
-                box_color = (0, 0, 255)  # Kırmızı Çerçeve
+                box_color = (0, 0, 255)
                 cv2.rectangle(result_img, (x, abs_y), (x + bw, abs_y + bh), box_color, 3)
                 cv2.putText(
                     result_img,
@@ -506,12 +503,12 @@ def analyze_planogram_grid_free(reference, field, roi_top_ratio=0.05, roi_bottom
                     missing_label_count += 1
                     fark_sayisi += 1
                     etiket_turu = f"EKSİK ETİKET #{missing_label_count}"
-                    box_color = (0, 0, 255) # Kırmızı Çerçeve
+                    box_color = (0, 0, 255)
                 elif ref_piece is not None and np.mean(np.abs(ref_piece.astype(np.float32) - roi_target_piece.astype(np.float32))) > 40:
                     product_label_mismatch_count += 1
                     fark_sayisi += 1
                     etiket_turu = f"FARKLILIK #{product_label_mismatch_count}"
-                    box_color = (0, 0, 255) # Kırmızı Çerçeve
+                    box_color = (0, 0, 255)
                 else:
                     continue
 
@@ -685,7 +682,7 @@ if kontrol_modu == "Standart Referans Kontrolü":
 
     dealers = []
     if city:
-        dealers, _ = get_dealers(YANDEX_ROOT_PUBLIC_KEY, city)
+        dealers, _ = get_dealers(YAND_EX_ROOT_PUBLIC_KEY if 'YAND_EX_ROOT_PUBLIC_KEY' in locals() else YANDEX_ROOT_PUBLIC_KEY, city)
 
     with c2:
         st.markdown("**Bayi Arama ve Seçim**")
@@ -754,7 +751,7 @@ else:
                 pol_df = load_excel_from_url(YANDEX_ROOT_PUBLIC_KEY, selected_poligram_item)
             if pol_df is not None:
                 st.success(f"Model Yüklendi: {selected_poligram_item['name']}")
-                st.dataframe(pol_df.head(6), use_container_width=True)
+                # Tablo ve araç çubuğu gizlendi
             else:
                 st.warning("Seçilen Excel dosyası okunamadı.")
         else:

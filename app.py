@@ -328,6 +328,55 @@ def load_excel_from_url(public_key, file_item):
 
 
 # =========================================================
+# OCR MOTORU (RAF ETİKETİ / SİGARA İSMİ OKUMA)
+# =========================================================
+def get_ocr_engine():
+    """Tesseract OCR motorunu (varsa) yükler. Kurulu değilse None döner."""
+    try:
+        import pytesseract
+        # Sistemde tesseract binary'si gerçekten çalışıyor mu diye hızlı kontrol
+        pytesseract.get_tesseract_version()
+        return pytesseract
+    except Exception:
+        return None
+
+
+def ocr_read_label(gray_roi, ocr_engine):
+    """Tek bir raf gözündeki (kırpılmış) etiket bölgesinden metin okur."""
+    if ocr_engine is None or gray_roi is None or gray_roi.size == 0:
+        return ""
+    try:
+        h, w = gray_roi.shape[:2]
+        if h < 5 or w < 5:
+            return ""
+        # OCR doğruluğunu artırmak için küçük kırpımları büyüt
+        scale = max(1.0, 220.0 / float(h))
+        roi = cv2.resize(gray_roi, (int(w * scale), int(h * scale)), interpolation=cv2.INTER_CUBIC)
+        roi = cv2.GaussianBlur(roi, (3, 3), 0)
+        _, thresh = cv2.threshold(roi, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+        # Tek satır/tek blok metin okuma modu, Türkçe + İngilizce
+        config = "--oem 3 --psm 7"
+        try:
+            text = ocr_engine.image_to_string(thresh, config=config, lang="tur+eng")
+        except Exception:
+            text = ocr_engine.image_to_string(thresh, config=config)
+        return text.strip()
+    except Exception:
+        return ""
+
+
+def text_match_ratio(detected, expected):
+    """Okunan metin ile Excel'deki beklenen ürün adını normalize edip bulanık eşleştirir."""
+    det_n = normalize_text(detected)
+    exp_n = normalize_text(expected)
+    if not det_n or not exp_n:
+        return 0.0
+    if exp_n in det_n or det_n in exp_n:
+        return 1.0
+    return difflib.SequenceMatcher(None, det_n, exp_n).ratio()
+
+
+# =========================================================
 # GÖRSEL HİZALAMA VE ANALİZ MOTORLARI
 # =========================================================
 def gray_normalize(img):
@@ -375,13 +424,27 @@ def align_images_feature(reference, target):
     return aligned, True
 
 
-def analyze_poligram_model(field_img, poligram_df):
+def analyze_poligram_model(field_img, poligram_df, match_threshold=0.55, label_band=(0.55, 0.98)):
+    """
+    Poligram modeli (Excel) ile saha fotoğrafını karşılaştırır.
+    - Excel: satır = raf, sütun 1..N = o raftaki slotların beklenen sigara/ürün ismi.
+    - Fotoğraf aynı (raf x slot) grid'ine bölünür.
+    - Her gözün etiket bandı (rafın alt kısmı, fiyat/isim etiketinin olduğu yer) OCR ile okunur.
+    - Okunan metin, Excel'deki beklenen isimle bulanık (fuzzy) karşılaştırılır.
+    - Eşleşme oranı eşik değerin altındaysa (ya da okunamadıysa) o slot kırmızı çerçeveyle işaretlenir.
+    """
     h, w = field_img.shape[:2]
     result_img = field_img.copy()
 
+    gray = cv2.cvtColor(field_img, cv2.COLOR_BGR2GRAY)
+    clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+    gray_clahe = clahe.apply(gray)
+
+    ocr_engine = get_ocr_engine()
+
     if poligram_df is not None and not poligram_df.empty:
         num_rows = len(poligram_df)
-        num_cols = max(1, poligram_df.shape[1] - 1)
+        num_cols = poligram_df.shape[1] - 1
     else:
         num_rows = 7
         num_cols = 11
@@ -390,69 +453,81 @@ def analyze_poligram_model(field_img, poligram_df):
     col_w = w // max(num_cols, 1)
 
     fark_sayisi = 0
+    okunamayan_sayisi = 0
     results = []
 
-    # Excel modelindeki her hücreyi tarayarak uyumsuzlukları grid üzerinde işaretle
-    if poligram_df is not None and not poligram_df.empty:
-        for r_idx, row in poligram_df.iterrows():
-            for c_idx in range(1, len(row)):
-                val = row.iloc[c_idx]
-                val_str = str(val).strip()
-                
-                # Hücre boşsa veya hatalı/eksik bir ifade içeriyorsa
-                is_faulty = pd.isna(val) or val_str == "" or any(err in val_str.upper() for err in ["HATA", "EKSİK", "YANLIŞ", "BOŞ", "YOK"])
-                
-                if is_faulty:
-                    fark_sayisi += 1
-                    x = (c_idx - 1) * col_w
-                    y = r_idx * shelf_h
-                    bw = col_w
-                    bh = shelf_h
+    for r_idx in range(num_rows):
+        s_top = r_idx * shelf_h
+        s_bottom = (r_idx + 1) * shelf_h if r_idx < num_rows - 1 else h
 
-                    cv2.rectangle(result_img, (x, y), (x + bw, y + bh), (0, 0, 255), 3)
-                    cv2.putText(
-                        result_img,
-                        f"UYUMSUZLUK #{fark_sayisi}",
-                        (x + 5, max(15, y + 20)),
-                        cv2.FONT_HERSHEY_SIMPLEX,
-                        0.35,
-                        (0, 0, 255),
-                        1,
-                        cv2.LINE_AA,
-                    )
-                    results.append({
-                        "id": fark_sayisi,
-                        "durum": f"POLIGRAM UYUMSUZLUGU (Raf {r_idx+1}, Kolon {c_idx}): {val_str if val_str else 'Boş Hücre'}",
-                        "x": x, "y": y, "w": bw, "h": bh, "alan": bw * bh
-                    })
+        if poligram_df is not None and not poligram_df.empty and r_idx < len(poligram_df):
+            row_data = poligram_df.iloc[r_idx]
+        else:
+            row_data = None
 
-    # Eğer Excel'de hiç boşluk yok ama model hatalı seçildiyse genel alan uyarısı ver
-    if fark_sayisi == 0 and poligram_df is not None and not poligram_df.empty:
-        fark_sayisi += 1
-        cv2.rectangle(result_img, (20, 20), (w - 20, h - 20), (0, 0, 255), 3)
-        cv2.putText(
-            result_img,
-            "POLIGRAM MODELI SAHA FOTOGRAFI ILE UYUSMUYOR",
-            (30, 50),
-            cv2.FONT_HERSHEY_SIMPLEX,
-            0.5,
-            (0, 0, 255),
-            2,
-            cv2.LINE_AA,
-        )
-        results.append({
-            "id": 1,
-            "durum": "GENEL MODEL UYUMSUZLUGU",
-            "x": 20, "y": 20, "w": w - 40, "h": h - 40, "alan": (w - 40) * (h - 40)
-        })
+        for c_idx in range(num_cols):
+            expected_raw = row_data.iloc[c_idx + 1] if row_data is not None and (c_idx + 1) < len(row_data) else None
+            expected_product = "" if expected_raw is None or pd.isna(expected_raw) else str(expected_raw).strip()
+
+            # Poligram modelinde o slot boş bırakılmışsa (ürün beklenmiyorsa) kontrol dışı bırak
+            if not expected_product:
+                continue
+
+            c_left = c_idx * col_w
+            c_right = (c_idx + 1) * col_w if c_idx < num_cols - 1 else w
+
+            # Etiket bandı: rafın alt kısmı (fiyat/isim etiketinin tipik olarak bulunduğu yer)
+            label_top = s_top + int(shelf_h * label_band[0])
+            label_bottom = s_top + int(shelf_h * label_band[1])
+            roi = gray_clahe[label_top:label_bottom, c_left:c_right]
+
+            detected_text = ocr_read_label(roi, ocr_engine)
+            similarity = text_match_ratio(detected_text, expected_product)
+            is_mismatch = similarity < match_threshold
+
+            if not detected_text:
+                okunamayan_sayisi += 1
+
+            if is_mismatch:
+                fark_sayisi += 1
+                box_x1 = c_left + int(col_w * 0.05)
+                box_y1 = s_top + int(shelf_h * 0.10)
+                box_x2 = c_right - int(col_w * 0.05)
+                box_y2 = s_bottom - int(shelf_h * 0.05)
+
+                cv2.rectangle(result_img, (box_x1, box_y1), (box_x2, box_y2), (0, 0, 255), 2)
+                etiket = "OKUNAMADI" if not detected_text else "UYUMSUZ"
+                cv2.putText(
+                    result_img,
+                    f"{etiket} (Raf {r_idx+1})",
+                    (box_x1, max(15, box_y1 - 5)),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    0.35,
+                    (0, 0, 255),
+                    1,
+                    cv2.LINE_AA,
+                )
+                results.append({
+                    "id": fark_sayisi,
+                    "durum": (
+                        f"POLİGRAM UYUMSUZLUĞU: Raf {r_idx+1}, Slot {c_idx+1} | "
+                        f"Beklenen: {expected_product} | Okunan: {detected_text or '—'} "
+                        f"(Benzerlik: {similarity:.2f})"
+                    ),
+                    "x": box_x1, "y": box_y1, "w": box_x2 - box_x1, "h": box_y2 - box_y1
+                })
+
+    ocr_uyarisi = ""
+    if ocr_engine is None:
+        ocr_uyarisi = " | UYARI: OCR motoru (pytesseract/tesseract) sunucuda kurulu değil, hiçbir etiket okunamadı."
 
     summary = {
         "fark": fark_sayisi,
-        "etiket_eksigi": 0,
+        "etiket_eksigi": okunamayan_sayisi,
         "urun_etiket_uyumsuzluk": fark_sayisi,
         "kontrol_edilmeyen_rakip_raf": 0,
-        "hizalama_ok": True,
-        "hizalama": f"Dinamik Poligram Matrisi ({num_rows} Raf, {num_cols} Kolon - {fark_sayisi} Tespit)",
+        "hizalama_ok": ocr_engine is not None,
+        "hizalama": f"Poligram OCR Eşleştirmesi ({num_rows} Raf, {num_cols} Kolon){ocr_uyarisi}",
     }
     return result_img, results, summary, field_img
 

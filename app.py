@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-ÖZÇELİK STAND KONTROL UYGULAMASI (HTML MANTIĞI - MOUSE İLE RAF İŞARETLEME)
+ÖZÇELİK STAND KONTROL UYGULAMASI (OTOMATİK ALGILAMALI MOUSE İLE RAF İŞARETLEME)
 """
 
 import hmac
@@ -261,16 +261,13 @@ if st.session_state.json_data and st.session_state.field_img is not None:
     raflar = st.session_state.json_data.get("raflar", [])
     raf_secenekleri = {r["raf_numarasi"]: f"Raf {r['raf_numarasi']} (Sıralama: {', '.join(r.get('urunler',[]))})" for r in raflar}
     
-    # Hangi rafa ait olduğunu seçen dropdown (HTML'deki aktifRafSecimi karşılığı)
-    selected_raf_no = st.selectbox("Çizeceğiniz Alan Hangi Rafa Ait?", options=list(raf_secenekleri.keys()), format_func=lambda x: raf_secenekleri[x])
+    selected_raf_no = st.selectbox("Kontrol Edilecek Rafı Seçin:", options=list(raf_secenekleri.keys()), format_func=lambda x: raf_secenekleri[x])
 
-    st.markdown("👇 **Fotoğraf üzerinde farenizle tıklayıp sürükleyerek ilgili rafın etiket alanını çizin:**")
+    st.markdown("👇 **Fotoğraf üzerinde farenizle ilgili raf etiket alanını çizin (Çizdiğiniz anda otomatik kaydedilir):**")
 
-    img_rgb = cv2.cvtColor(st.session_state.field_img, cv2.COLOR_BGR2GRAY) # PIL için
     pil_img = Image.fromarray(cv2.cvtColor(st.session_state.field_img, cv2.COLOR_BGR2RGB))
     img_w, img_h = pil_img.size
 
-    # Drawable Canvas
     canvas_result = st_canvas(
         fill_color="rgba(255, 165, 0, 0.3)",
         stroke_width=3,
@@ -283,43 +280,29 @@ if st.session_state.json_data and st.session_state.field_img is not None:
         key="canvas_raf_cizim",
     )
 
-    col_btn1, col_btn2 = st.columns(2)
-    with col_btn1:
-        if st.button("➕ Çizilen Dikdörtgeni Seçili Rafa Kaydet", type="primary"):
-            if canvas_result.json_data is not None:
-                objects = canvas_result.json_data.get("objects", [])
-                if objects:
-                    # En son çizilen dikdörtgeni al
-                    latest_obj = objects[-1]
-                    if latest_obj.get("type") == "rect":
-                        box_data = {
-                            "raf_numarasi": selected_raf_no,
-                            "x": int(latest_obj["left"]),
-                            "y": int(latest_obj["top"]),
-                            "width": int(latest_obj["width"] * latest_obj["scaleX"]),
-                            "height": int(latest_obj["height"] * latest_obj["scaleY"])
-                        }
-                        # Aynı raf için daha önce kayıt varsa güncelle, yoksa ekle
-                        st.session_state.saved_raf_boxes = [b for b in st.session_state.saved_raf_boxes if b["raf_numarasi"] != selected_raf_no]
-                        st.session_state.saved_raf_boxes.append(box_data)
-                        st.success(f"✅ Raf {selected_raf_no} alanı başarıyla kaydedildi!")
-                else:
-                    st.warning("⚠️ Lütfen önce canvas üzerinde bir alan çizin.")
-
-    with col_btn2:
-        if st.button("🗑️ Tüm Çizimleri Temizle", type="secondary"):
-            st.session_state.saved_raf_boxes = []
-            st.session_state.result_img = None
-            st.success("Tüm çizimler temizlendi.")
-            st.rerun()
+    # Otomatik algılama ve kayıt mekanizması
+    if canvas_result.json_data is not None:
+        objects = canvas_result.json_data.get("objects", [])
+        if objects:
+            latest_obj = objects[-1]
+            if latest_obj.get("type") == "rect":
+                box_data = {
+                    "raf_numarasi": selected_raf_no,
+                    "x": int(latest_obj["left"]),
+                    "y": int(latest_obj["top"]),
+                    "width": int(latest_obj["width"] * latest_obj["scaleX"]),
+                    "height": int(latest_obj["height"] * latest_obj["scaleY"])
+                }
+                # Listede bu raf varsa güncelle, yoksa ekle
+                st.session_state.saved_raf_boxes = [b for b in st.session_state.saved_raf_boxes if b["raf_numarasi"] != selected_raf_no]
+                st.session_state.saved_raf_boxes.append(box_data)
 
     if st.session_state.saved_raf_boxes:
-        st.write("📋 **Kaydedilen Raf Alanları:**")
-        st.json(st.session_state.saved_raf_boxes)
+        st.success(f"✅ Toplam {len(st.session_state.saved_raf_boxes)} adet raf alanı başarıyla hafızaya alındı!")
 
 st.divider()
 
-# Karşılaştırma Butonu (Yalnızca en az bir raf alanı kaydedildiğinde aktifleşir)
+# Karşılaştırma Butonu (Alan çizildiği an otomatik aktifleşir)
 kontrol_aktif = st.session_state.json_data is not None and st.session_state.field_img is not None and len(st.session_state.saved_raf_boxes) > 0
 
 if st.button("🚀 Sıralamayı Karşılaştır", type="primary", use_container_width=True, disabled=not kontrol_aktif):

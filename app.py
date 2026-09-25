@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-ÖZÇELİK STAND KONTROL UYGULAMASI (ETİKET, UYUM VE POLİGRAM ENTEGRELI)
+ÖZÇELİK STAND KONTROL UYGULAMASI (ETİKET, UYUM VE YANDEX POLİGRAM ENTEGRELI)
 """
 
 import difflib
@@ -219,6 +219,39 @@ def get_dealers(public_key, city):
 
 
 @st.cache_data(ttl=600, show_spinner=False)
+def get_yandex_poligram_models(public_key):
+    root_items, error = yandex_root_items(public_key)
+    if error:
+        return [], error
+    
+    poligram_folder_path = None
+    for item in root_items:
+        if normalize_text(item.get("name")) == "BAYI" and item.get("type") == "dir":
+            sub_items, _ = yandex_list_dir(public_key, item.get("path", ""))
+            for sub in sub_items:
+                if normalize_text(sub.get("name")) == "POLIGRAM" and sub.get("type") == "dir":
+                    poligram_folder_path = sub.get("path")
+                    break
+            break
+
+    if not poligram_folder_path:
+        return [], "BAYI/POLİGRAM klasörü Yandex üzerinde bulunamadı."
+
+    items, error = yandex_list_dir(public_key, poligram_folder_path)
+    if error:
+        return [], error
+
+    poligram_files = []
+    for item in items:
+        if item.get("type") == "file":
+            name = item.get("name", "")
+            if name.lower().endswith((".xlsx", ".xls")):
+                poligram_files.append({"name": name, "file_url": item.get("file")})
+                
+    return poligram_files, None
+
+
+@st.cache_data(ttl=600, show_spinner=False)
 def get_reference_image(public_key, dealer_path):
     items, error = yandex_list_dir(public_key, dealer_path)
     if error:
@@ -243,18 +276,15 @@ def get_reference_image(public_key, dealer_path):
     return None, "Bayi klasöründe okunabilir JPG/PNG görsel bulunamadı."
 
 
-def get_poligram_models():
-    # Yerel dizindeki veya Yandex'teki poligram excel dosyaları listelenir
-    files = [f for f in os.listdir('.') if f.endswith(('.xlsx', '.xls'))]
-    return files
-
-
-def load_poligram_excel(file_path):
+def load_excel_from_url(file_url):
     try:
-        df = pd.read_excel(file_path, sheet_name=0)
-        return df
-    except Exception as e:
-        return None
+        response = requests.get(file_url, timeout=20)
+        if response.status_code == 200:
+            df = pd.read_excel(io.BytesIO(response.content), sheet_name=0)
+            return df
+    except Exception:
+        pass
+    return None
 
 
 # =========================================================
@@ -306,11 +336,6 @@ def align_images_feature(reference, target):
 
 
 def analyze_poligram_model(field_img, poligram_df):
-    """
-    Seçilen Poligram modeline (Excel) göre saha fotoğrafını tarar ve 
-    farklılıkları kırmızı çerçeve ile işaretler.
-    Yatay sıra aralığı: 6-15, Dikey sıra aralığı: 4-7
-    """
     h, w = field_img.shape[:2]
     result_img = field_img.copy()
     
@@ -318,7 +343,6 @@ def analyze_poligram_model(field_img, poligram_df):
     clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
     gray_clahe = clahe.apply(gray)
 
-    # Dinamik raf ve sütun sınırları tespiti (Min 4, Max 7 dikey sıra / Min 6, Max 15 yatay sıra)
     num_rows = min(max(len(poligram_df), 4), 7)
     shelf_h = h // num_rows
 
@@ -349,9 +373,8 @@ def analyze_poligram_model(field_img, poligram_df):
             if x < 5 or (x + bw) > (w - 5):
                 continue
             
-            # Poligram uyumsuzluk/fark kontrol simülasyonu (etiket bölgesi analizi)
             patch = shelf_roi[y:y+bh, x:x+bw]
-            if patch.size > 0 and np.mean(patch) > 170:  # Etiket boş veya uyumsuz
+            if patch.size > 0 and np.mean(patch) > 170:
                 fark_sayisi += 1
                 box_color = (0, 0, 255)  # Kırmızı Çerçeve
                 cv2.rectangle(result_img, (x, abs_y), (x + bw, abs_y + bh), box_color, 3)
@@ -519,7 +542,7 @@ def build_report(dealer, results, summary):
     from datetime import datetime
     lines = [
         "=== ÖZÇELİK STAND DENETİM RAPORU ===",
-        f"Bayi: {dealer}",
+        f"Bayi / Model: {dealer}",
         "Tarih: " + datetime.now().strftime("%d.%m.%Y %H:%M:%S"),
         "",
         "Toplam Fark / Hata Sayısı: " + str(summary.get('fark', 0)),
@@ -600,7 +623,6 @@ with logout_col:
         st.session_state.summary = None
         st.rerun()
 
-# KONTROL SEÇENEĞİ SEÇİMİ (Standart vs POLİGRAM)
 st.subheader("0. Kontrol Modu Seçimi")
 kontrol_modu = st.radio(
     "Kontrol Yöntemini Seçin",
@@ -611,7 +633,7 @@ kontrol_modu = st.radio(
 st.divider()
 
 city, dealer_name, dealer_path = "", "", ""
-selected_poligram_file = None
+selected_poligram_item = None
 
 if kontrol_modu == "Standart Referans Kontrolü":
     st.subheader("1. Şehir ve Bayi Seçiniz")
@@ -643,13 +665,19 @@ if kontrol_modu == "Standart Referans Kontrolü":
             dealer_name = dealer_choices[selected_raw_dealer]["raw_name"]
             dealer_path = dealer_choices[selected_raw_dealer]["path"]
 else:
-    st.subheader("1. POLİGRAM Modeli Seçiniz")
-    poligram_files = get_poligram_models()
-    selected_poligram_file = st.selectbox(
-        "Yandex / Disk Üzerindeki Poligram Modelleri",
-        options=[""] + poligram_files,
-        format_func=lambda x: "Poligram Modeli Seçin..." if x == "" else x
+    st.subheader("1. POLİGRAM Modeli Seçiniz (Yandex Disk: BAYİ/POLİGRAM)")
+    yandex_poligrams, pol_error = get_yandex_poligram_models(YANDEX_ROOT_PUBLIC_KEY)
+    if pol_error:
+        st.warning(str(pol_error))
+
+    poligram_dict = {item["name"]: item for item in yandex_poligrams}
+    selected_poligram_name = st.selectbox(
+        "Yandex Disk POLİGRAM Modelleri",
+        options=[""] + list(poligram_dict.keys()),
+        format_func=lambda x: "Poligram Excel modeli seçin..." if x == "" else x
     )
+    if selected_poligram_name in poligram_dict:
+        selected_poligram_item = poligram_dict[selected_poligram_name]
 
 st.divider()
 st.subheader("2. Fotoğraf Yükleme ve Kontrol")
@@ -668,16 +696,16 @@ with u1:
         else:
             st.info("Şehir/bayi seçin.")
     else:
-        st.markdown("**Seçilen Poligram Modeli (Excel Bilgisi)**")
-        if selected_poligram_file:
-            poligram_df = load_poligram_excel(selected_poligram_file)
-            if poligram_df is not None:
-                st.success(f"Model Yüklendi: {selected_poligram_file}")
-                st.dataframe(poligram_df.head(6), use_container_width=True)
+        st.markdown("**Seçilen Poligram Excel Önizlemesi**")
+        if selected_poligram_item:
+            pol_df = load_excel_from_url(selected_poligram_item["file_url"])
+            if pol_df is not None:
+                st.success(f"Model Yüklendi: {selected_poligram_item['name']}")
+                st.dataframe(pol_df.head(6), use_container_width=True)
             else:
-                st.warning("Seçilen model dosyası okunamadı.")
+                st.warning("Seçilen Excel dosyası okunamadı.")
         else:
-            st.info("Lütfen yukarıdan bir Poligram modeli seçin.")
+            st.info("Yandex Disk'ten bir Poligram modeli seçin.")
 
 with u2:
     st.markdown("**Bayi Saha Fotoğrafı**")
@@ -693,7 +721,7 @@ st.divider()
 if kontrol_modu == "Standart Referans Kontrolü":
     ready = ref_img is not None and field_img is not None
 else:
-    ready = selected_poligram_file is not None and field_img is not None
+    ready = selected_poligram_item is not None and field_img is not None
 
 if st.button("🚀 KONTROLÜ BAŞLAT", type="primary", use_container_width=True, disabled=not ready):
     st.session_state.result_img = None
@@ -707,14 +735,14 @@ if st.button("🚀 KONTROLÜ BAŞLAT", type="primary", use_container_width=True,
             if kontrol_modu == "Standart Referans Kontrolü":
                 result_img, results, summary, aligned_field = analyze_planogram_grid_free(ref_img, field_img)
             else:
-                pol_df = load_poligram_excel(selected_poligram_file)
+                pol_df = load_excel_from_url(selected_poligram_item["file_url"])
                 result_img, results, summary, aligned_field = analyze_poligram_model(field_img, pol_df)
 
             st.session_state.result_img = result_img
             st.session_state.aligned_field = aligned_field
             st.session_state.results = results
             st.session_state.summary = summary
-            st.session_state.report = build_report(dealer_name or selected_poligram_file or "Poligram", results, summary)
+            st.session_state.report = build_report(dealer_name or selected_poligram_item["name"], results, summary)
         except Exception as exc:
             st.error("Analiz sırasında hata oluştu: " + str(exc))
 

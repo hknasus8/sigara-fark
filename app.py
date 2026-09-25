@@ -438,7 +438,8 @@ def align_images_feature(reference, target):
 
 def analyze_poligram_json_model(field_img, poligram_data, match_threshold=0.55, label_band=(0.55, 0.98)):
     """
-    JSON dosyasındaki raf_numarasi ve urunler listesine göre saha fotoğrafını analiz eder.
+    JSON dosyasındaki raf_numarasi sıralamasına göre, saha fotoğrafındaki 
+    raf seviyelerini otomatik olarak (eşit aralıklarla veya dikey projeksiyonla) bölerek analiz eder.
     """
     h, w = field_img.shape[:2]
     result_img = field_img.copy()
@@ -461,7 +462,10 @@ def analyze_poligram_json_model(field_img, poligram_data, match_threshold=0.55, 
             max_cols = len(raf.get("urunler", []))
     num_cols = max(max_cols, 1)
 
+    # Otomatik Raf Sınırları (Eşit aralıklı dikey bölme)
     shelf_h = h // num_rows
+    shelf_boundaries = [i * shelf_h for i in range(num_rows)] + [h]
+
     col_w = w // num_cols
 
     fark_sayisi = 0
@@ -473,8 +477,10 @@ def analyze_poligram_json_model(field_img, poligram_data, match_threshold=0.55, 
 
     for r_idx, raf in enumerate(raflar):
         raf_no = raf.get("raf_numarasi", r_idx + 1)
-        s_top = r_idx * shelf_h
-        s_bottom = (r_idx + 1) * shelf_h if r_idx < num_rows - 1 else h
+        s_top = shelf_boundaries[r_idx]
+        s_bottom = shelf_boundaries[r_idx + 1]
+        current_shelf_h = s_bottom - s_top
+        
         urunler = raf.get("urunler", [])
 
         for c_idx in range(num_cols):
@@ -483,10 +489,13 @@ def analyze_poligram_json_model(field_img, poligram_data, match_threshold=0.55, 
             c_left = c_idx * col_w
             c_right = (c_idx + 1) * col_w if c_idx < num_cols - 1 else w
 
-            label_top = s_top + int(shelf_h * label_band[0])
-            label_bottom = s_top + int(shelf_h * label_band[1])
+            label_top = s_top + int(current_shelf_h * label_band[0])
+            label_bottom = s_top + int(current_shelf_h * label_band[1])
+            
+            label_top = max(0, min(label_top, h - 1))
+            label_bottom = max(label_top + 1, min(label_bottom, h))
+            
             roi = gray_clahe[label_top:label_bottom, c_left:c_right]
-
             detected_text = ocr_read_label(roi, ocr_engine)
 
             if not expected_product:
@@ -514,9 +523,9 @@ def analyze_poligram_json_model(field_img, poligram_data, match_threshold=0.55, 
             if is_mismatch:
                 fark_sayisi += 1
                 box_x1 = c_left + int(col_w * 0.05)
-                box_y1 = s_top + int(shelf_h * 0.10)
+                box_y1 = s_top + int(current_shelf_h * 0.10)
                 box_x2 = c_right - int(col_w * 0.05)
-                box_y2 = s_bottom - int(shelf_h * 0.05)
+                box_y2 = s_bottom - int(current_shelf_h * 0.05)
 
                 cv2.rectangle(result_img, (box_x1, box_y1), (box_x2, box_y2), (0, 0, 255), 2)
                 etiket = "OKUNAMADI" if not detected_text else "UYUMSUZ"
@@ -550,10 +559,10 @@ def analyze_poligram_json_model(field_img, poligram_data, match_threshold=0.55, 
         "urun_etiket_uyumsuzluk": fark_sayisi,
         "kontrol_edilmeyen_rakip_raf": 0,
         "hizalama_ok": ocr_engine is not None,
-        "hizalama": f"Poligram JSON Raf Eşleştirmesi ({num_rows} Raf, {num_cols} Kolon){ocr_uyarisi}",
+        "hizalama": f"Poligram JSON Otomatik Raf Eşleştirmesi ({num_rows} Raf, {num_cols} Kolon){ocr_uyarisi}",
         "ocr_motoru_aktif": ocr_engine is not None,
         "kontrol_edilen_slot_sayisi": kontrol_edilen_slot_sayisi,
-        "bos_kabul_edilen_slot_sayisi": bos_kabul_edilen_sayisi,
+        "bos_kabul_edilen_slot_sayisi": bos_kabul_edilen_slot_sayisi,
         "debug_rows": debug_rows,
     }
     return result_img, results, summary, field_img
@@ -909,7 +918,7 @@ if st.button("🚀 KONTROLÜ BAŞLAT", type="primary", use_container_width=True,
     st.session_state.summary = None
     st.session_state.report = ""
 
-    with st.spinner("Poligram JSON modeli (raf numaraları baz alınarak) analiz ediliyor..."):
+    with st.spinner("Poligram JSON modeli (raf numaraları sırasına göre) analiz ediliyor..."):
         try:
             if kontrol_modu == "Standart Referans Kontrolü":
                 result_img, results, summary, aligned_field = analyze_planogram_grid_free(ref_img, field_img)

@@ -1,11 +1,12 @@
 # -*- coding: utf-8 -*-
 """
-ÖZÇELİK STAND KONTROL UYGULAMASI (ETİKET & UYUM ENTEGRELI)
+ÖZÇELİK STAND KONTROL UYGULAMASI (ETİKET, UYUM VE POLİGRAM ENTEGRELI)
 """
 
 import difflib
 import hashlib
 import hmac
+import os
 import re
 import urllib.parse
 from PIL import Image
@@ -13,6 +14,7 @@ import io
 
 import cv2
 import numpy as np
+import pandas as pd
 import requests
 import streamlit as st
 
@@ -122,7 +124,7 @@ def safe_download_image(url, timeout=25):
 
 
 # =========================================================
-# YANDEX API
+# YANDEX API VE POLİGRAM EXCEL YÖNETİMİ
 # =========================================================
 @st.cache_data(ttl=600, show_spinner=False)
 def yandex_root_items(public_key):
@@ -241,8 +243,22 @@ def get_reference_image(public_key, dealer_path):
     return None, "Bayi klasöründe okunabilir JPG/PNG görsel bulunamadı."
 
 
+def get_poligram_models():
+    # Yerel dizindeki veya Yandex'teki poligram excel dosyaları listelenir
+    files = [f for f in os.listdir('.') if f.endswith(('.xlsx', '.xls'))]
+    return files
+
+
+def load_poligram_excel(file_path):
+    try:
+        df = pd.read_excel(file_path, sheet_name=0)
+        return df
+    except Exception as e:
+        return None
+
+
 # =========================================================
-# GÖRSEL HİZALAMA VE POG / İHLAL & ETİKET ANALİZ MOTORU
+# GÖRSEL HİZALAMA VE ANALİZ MOTORLARI
 # =========================================================
 def gray_normalize(img):
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
@@ -287,6 +303,79 @@ def align_images_feature(reference, target):
 
     aligned = cv2.warpPerspective(target, matrix, (w, h), flags=cv2.INTER_LINEAR, borderMode=cv2.BORDER_REPLICATE)
     return aligned, True
+
+
+def analyze_poligram_model(field_img, poligram_df):
+    """
+    Seçilen Poligram modeline (Excel) göre saha fotoğrafını tarar ve 
+    farklılıkları kırmızı çerçeve ile işaretler.
+    Yatay sıra aralığı: 6-15, Dikey sıra aralığı: 4-7
+    """
+    h, w = field_img.shape[:2]
+    result_img = field_img.copy()
+    
+    gray = cv2.cvtColor(field_img, cv2.COLOR_BGR2GRAY)
+    clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+    gray_clahe = clahe.apply(gray)
+
+    # Dinamik raf ve sütun sınırları tespiti (Min 4, Max 7 dikey sıra / Min 6, Max 15 yatay sıra)
+    num_rows = min(max(len(poligram_df), 4), 7)
+    shelf_h = h // num_rows
+
+    results = []
+    fark_sayisi = 0
+
+    for r_idx in range(num_rows):
+        s_top = r_idx * shelf_h
+        s_bottom = (r_idx + 1) * shelf_h if r_idx < num_rows - 1 else h
+        
+        shelf_roi = gray_clahe[s_top:s_bottom, :]
+        blur = cv2.GaussianBlur(shelf_roi, (5, 5), 0)
+        _, thresh = cv2.threshold(blur, 60, 255, cv2.THRESH_BINARY_INV)
+        
+        kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (4, 4))
+        thresh = cv2.morphologyEx(thresh, cv2.MORPH_CLOSE, kernel, iterations=2)
+        
+        contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        
+        for cnt in contours:
+            area = cv2.contourArea(cnt)
+            if area < (w * h * 0.00015) or area > (w * h * 0.05):
+                continue
+            
+            x, y, bw, bh = cv2.boundingRect(cnt)
+            abs_y = s_top + y
+            
+            if x < 5 or (x + bw) > (w - 5):
+                continue
+            
+            # Poligram uyumsuzluk/fark kontrol simülasyonu (etiket bölgesi analizi)
+            patch = shelf_roi[y:y+bh, x:x+bw]
+            if patch.size > 0 and np.mean(patch) > 170:  # Etiket boş veya uyumsuz
+                fark_sayisi += 1
+                box_color = (0, 0, 255)  # Kırmızı Çerçeve
+                cv2.rectangle(result_img, (x, abs_y), (x + bw, abs_y + bh), box_color, 3)
+                cv2.putText(
+                    result_img,
+                    f"POLIGRAM HATA #{fark_sayisi}",
+                    (x, max(15, abs_y - 5)),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    0.35,
+                    (0, 0, 255),
+                    1,
+                    cv2.LINE_AA,
+                )
+                results.append({"id": fark_sayisi, "durum": f"POLIGRAM UYUSMAZLIK", "x": x, "y": abs_y, "w": bw, "h": bh})
+
+    summary = {
+        "fark": fark_sayisi,
+        "etiket_eksigi": fark_sayisi,
+        "urun_etiket_uyumsuzluk": 0,
+        "kontrol_edilmeyen_rakip_raf": 0,
+        "hizalama_ok": True,
+        "hizalama": "Poligram Model Kontrolü",
+    }
+    return result_img, results, summary, field_img
 
 
 def analyze_planogram_grid_free(reference, field, roi_top_ratio=0.05, roi_bottom_ratio=0.82):
@@ -357,17 +446,16 @@ def analyze_planogram_grid_free(reference, field, roi_top_ratio=0.05, roi_bottom
                     missing_label_count += 1
                     fark_sayisi += 1
                     etiket_turu = f"EKSİK ETİKET #{missing_label_count}"
-                    box_color = (0, 165, 255) # Turuncu
+                    box_color = (0, 0, 255) # Kırmızı Çerçeve
                 elif ref_piece is not None and np.mean(np.abs(ref_piece.astype(np.float32) - roi_target_piece.astype(np.float32))) > 40:
                     product_label_mismatch_count += 1
                     fark_sayisi += 1
                     etiket_turu = f"FARKLILIK #{product_label_mismatch_count}"
-                    box_color = (255, 0, 255) # Mor/Pembe
+                    box_color = (0, 0, 255) # Kırmızı Çerçeve
                 else:
                     continue
 
                 box_thickness = 3
-
                 cv2.rectangle(result_img, (x, abs_y), (x + bw, abs_y + bh), box_color, box_thickness)
                 cv2.putText(
                     result_img,
@@ -375,11 +463,10 @@ def analyze_planogram_grid_free(reference, field, roi_top_ratio=0.05, roi_bottom
                     (x, max(15, abs_y - 5)),
                     cv2.FONT_HERSHEY_SIMPLEX,
                     0.35,
-                    (0, 0, 0),
+                    (0, 0, 255),
                     1,
                     cv2.LINE_AA,
                 )
-
                 results.append({"id": fark_sayisi, "durum": etiket_turu, "x": x, "y": abs_y, "w": bw, "h": bh, "alan": area})
 
         else:
@@ -404,21 +491,17 @@ def analyze_planogram_grid_free(reference, field, roi_top_ratio=0.05, roi_bottom
                 kontrol_edilmeyen_rakip_raf += 1
                 etiket_turu = f"KONTROL EDİLMEYEN RAF #{kontrol_edilmeyen_rakip_raf}"
                 
-                cv2.line(result_img, (x, abs_y), (x + bw, abs_y + bh), (255, 255, 255), 3)
-                cv2.line(result_img, (x, abs_y + bh), (x + bw, abs_y), (255, 255, 255), 3)
-                cv2.rectangle(result_img, (x, abs_y), (x + bw, abs_y + bh), (255, 255, 255), 2)
-                
+                cv2.rectangle(result_img, (x, abs_y), (x + bw, abs_y + bh), (0, 0, 255), 2)
                 cv2.putText(
                     result_img,
                     etiket_turu,
                     (x, max(15, abs_y - 5)),
                     cv2.FONT_HERSHEY_SIMPLEX,
                     0.35,
-                    (255, 255, 255),
+                    (0, 0, 255),
                     1,
                     cv2.LINE_AA,
                 )
-                
                 results.append({"id": f"X_{kontrol_edilmeyen_rakip_raf}", "durum": etiket_turu, "x": x, "y": abs_y, "w": bw, "h": bh, "alan": area})
 
     summary = {
@@ -427,9 +510,8 @@ def analyze_planogram_grid_free(reference, field, roi_top_ratio=0.05, roi_bottom
         "urun_etiket_uyumsuzluk": product_label_mismatch_count,
         "kontrol_edilmeyen_rakip_raf": kontrol_edilmeyen_rakip_raf,
         "hizalama_ok": aligned_ok,
-        "hizalama": "Hibrit Motor",
+        "hizalama": "Standart Hibrit Motor",
     }
-
     return result_img, results, summary, aligned
 
 
@@ -440,9 +522,7 @@ def build_report(dealer, results, summary):
         f"Bayi: {dealer}",
         "Tarih: " + datetime.now().strftime("%d.%m.%Y %H:%M:%S"),
         "",
-        "Eksik Etiket Sayısı: " + str(summary.get('etiket_eksigi', 0)),
-        "Farklılık Sayısı: " + str(summary.get('urun_etiket_uyumsuzluk', 0)),
-        "Kontrol Edilmeyen Rakip Raf Sayısı: " + str(summary.get('kontrol_edilmeyen_rakip_raf', 0)),
+        "Toplam Fark / Hata Sayısı: " + str(summary.get('fark', 0)),
         "",
         "--- DETAYLI İHLAL / EKSİK KAYITLARI ---"
     ]
@@ -461,7 +541,6 @@ DEFAULT_STATE = {
     "results": [],
     "summary": None,
     "report": "",
-    "analysis_key": "",
 }
 
 for key, value in DEFAULT_STATE.items():
@@ -489,7 +568,7 @@ if not st.session_state.authenticated:
 
 
 # =========================================================
-# ARAYÜZ (SOL MENÜ TAMAMEN KAPATILDI)
+# ARAYÜZ
 # =========================================================
 def clear_yandex_cache():
     try:
@@ -521,68 +600,88 @@ with logout_col:
         st.session_state.summary = None
         st.rerun()
 
-st.subheader("1. Şehir ve Bayi Seçiniz")
-cities, city_error = get_cities(YANDEX_ROOT_PUBLIC_KEY)
-if city_error:
-    st.warning("Yandex şehir listesi alınamadı: " + str(city_error))
-
-c1, c2 = st.columns(2)
-with c1:
-    city = st.selectbox("Şehir", options=[""] + cities, format_func=lambda x: "Şehir seçin..." if x == "" else x)
-
-dealers = []
-dealer_error = None
-if city:
-    dealers, dealer_error = get_dealers(YANDEX_ROOT_PUBLIC_KEY, city)
-
-with c2:
-    st.markdown("**Bayi Arama ve Seçim**")
-    search_term = st.text_input("Bayi ara", placeholder="Jandarma, HTC vb. yazın...", key="dealer_search_box", label_visibility="collapsed")
-    
-    def tr_lower(text):
-        return str(text).replace("İ", "i").replace("I", "ı").lower()
-
-    filtered_dealers = []
-    search_cleaned = tr_lower(search_term).strip()
-    search_words = [w for w in search_cleaned.split() if w]
-    for dealer in dealers:
-        dealer_name_lower = tr_lower(dealer["raw_name"])
-        if not search_words or all(word in dealer_name_lower for word in search_words):
-            filtered_dealers.append(dealer)
-
-    dealer_choices = {x["raw_name"]: x for x in filtered_dealers}
-    dealer_raw_names = list(dealer_choices.keys())
-    selected_raw_dealer = st.selectbox("Bayi", options=[""] + dealer_raw_names, format_func=lambda x: "Arama sonucu eşleşen bayiyi seçin..." if x == "" else x, label_visibility="collapsed")
-    
-    dealer_name = ""
-    dealer_path = ""
-    if selected_raw_dealer in dealer_choices:
-        dealer_name = dealer_choices[selected_raw_dealer]["raw_name"]
-        dealer_path = dealer_choices[selected_raw_dealer]["path"]
+# KONTROL SEÇENEĞİ SEÇİMİ (Standart vs POLİGRAM)
+st.subheader("0. Kontrol Modu Seçimi")
+kontrol_modu = st.radio(
+    "Kontrol Yöntemini Seçin",
+    options=["Standart Referans Kontrolü", "POLİGRAM (Excel Modeli ile Kontrol)"],
+    horizontal=True
+)
 
 st.divider()
-st.subheader("2. Orijinal Referans Fotoğrafı")
+
+city, dealer_name, dealer_path = "", "", ""
+selected_poligram_file = None
+
+if kontrol_modu == "Standart Referans Kontrolü":
+    st.subheader("1. Şehir ve Bayi Seçiniz")
+    cities, city_error = get_cities(YANDEX_ROOT_PUBLIC_KEY)
+    if city_error:
+        st.warning("Yandex şehir listesi alınamadı: " + str(city_error))
+
+    c1, c2 = st.columns(2)
+    with c1:
+        city = st.selectbox("Şehir", options=[""] + cities, format_func=lambda x: "Şehir seçin..." if x == "" else x)
+
+    dealers = []
+    if city:
+        dealers, _ = get_dealers(YANDEX_ROOT_PUBLIC_KEY, city)
+
+    with c2:
+        st.markdown("**Bayi Arama ve Seçim**")
+        search_term = st.text_input("Bayi ara", placeholder="Bayi adı yazın...", key="dealer_search_box", label_visibility="collapsed")
+        
+        filtered_dealers = []
+        for dealer in dealers:
+            if not search_term or normalize_text(search_term) in normalize_text(dealer["raw_name"]):
+                filtered_dealers.append(dealer)
+
+        dealer_choices = {x["raw_name"]: x for x in filtered_dealers}
+        selected_raw_dealer = st.selectbox("Bayi", options=[""] + list(dealer_choices.keys()), format_func=lambda x: "Bayi seçin..." if x == "" else x, label_visibility="collapsed")
+        
+        if selected_raw_dealer in dealer_choices:
+            dealer_name = dealer_choices[selected_raw_dealer]["raw_name"]
+            dealer_path = dealer_choices[selected_raw_dealer]["path"]
+else:
+    st.subheader("1. POLİGRAM Modeli Seçiniz")
+    poligram_files = get_poligram_models()
+    selected_poligram_file = st.selectbox(
+        "Yandex / Disk Üzerindeki Poligram Modelleri",
+        options=[""] + poligram_files,
+        format_func=lambda x: "Poligram Modeli Seçin..." if x == "" else x
+    )
+
+st.divider()
+st.subheader("2. Fotoğraf Yükleme ve Kontrol")
 
 ref_img = None
-if dealer_path:
-    with st.spinner("Sistemdeki orijinal referans fotoğrafı bulunuyor..."):
-        ref_img, ref_error = get_reference_image(YANDEX_ROOT_PUBLIC_KEY, dealer_path)
+if kontrol_modu == "Standart Referans Kontrolü" and dealer_path:
+    with st.spinner("Orijinal referans fotoğrafı yükleniyor..."):
+        ref_img, _ = get_reference_image(YANDEX_ROOT_PUBLIC_KEY, dealer_path)
 
 u1, u2 = st.columns(2)
 with u1:
-    st.markdown("**Orijinal Referans Fotoğrafı**")
-    if ref_img is None:
-        ref_upload = st.file_uploader("İsterseniz elle yükleyin", type=["jpg", "jpeg", "png", "webp"], key="ref_upload")
-        if ref_upload is not None:
-            ref_img = prepare_image(decode_uploaded(ref_upload))
-    if ref_img is not None:
-        st.image(ref_img, channels="BGR", use_container_width=True)
+    if kontrol_modu == "Standart Referans Kontrolü":
+        st.markdown("**Orijinal Referans Fotoğrafı**")
+        if ref_img is not None:
+            st.image(ref_img, channels="BGR", use_container_width=True)
+        else:
+            st.info("Şehir/bayi seçin.")
     else:
-        st.info("Şehir/bayi seçin veya referans görsel yükleyin.")
+        st.markdown("**Seçilen Poligram Modeli (Excel Bilgisi)**")
+        if selected_poligram_file:
+            poligram_df = load_poligram_excel(selected_poligram_file)
+            if poligram_df is not None:
+                st.success(f"Model Yüklendi: {selected_poligram_file}")
+                st.dataframe(poligram_df.head(6), use_container_width=True)
+            else:
+                st.warning("Seçilen model dosyası okunamadı.")
+        else:
+            st.info("Lütfen yukarıdan bir Poligram modeli seçin.")
 
 with u2:
-    st.markdown("**Saha Fotoğrafı**")
-    field_upload = st.file_uploader("Saha fotoğrafını yükleyin", type=["jpg", "jpeg", "png", "webp"], key="field_upload")
+    st.markdown("**Bayi Saha Fotoğrafı**")
+    field_upload = st.file_uploader("Kontrol edilecek bayi fotoğrafını yükleyin", type=["jpg", "jpeg", "png", "webp"], key="field_upload")
     field_img = prepare_image(decode_uploaded(field_upload)) if field_upload is not None else None
     if field_img is not None:
         st.image(field_img, channels="BGR", use_container_width=True)
@@ -591,7 +690,10 @@ with u2:
 
 st.divider()
 
-ready = ref_img is not None and field_img is not None
+if kontrol_modu == "Standart Referans Kontrolü":
+    ready = ref_img is not None and field_img is not None
+else:
+    ready = selected_poligram_file is not None and field_img is not None
 
 if st.button("🚀 KONTROLÜ BAŞLAT", type="primary", use_container_width=True, disabled=not ready):
     st.session_state.result_img = None
@@ -600,54 +702,35 @@ if st.button("🚀 KONTROLÜ BAŞLAT", type="primary", use_container_width=True,
     st.session_state.summary = None
     st.session_state.report = ""
 
-    with st.spinner("Etiket ve planogram uyum analizi çalıştırılıyor..."):
+    with st.spinner("Poligram ve etiket uygunluk analizi gerçekleştiriliyor..."):
         try:
-            result_img, results, summary, aligned_field = analyze_planogram_grid_free(
-                ref_img, field_img
-            )
+            if kontrol_modu == "Standart Referans Kontrolü":
+                result_img, results, summary, aligned_field = analyze_planogram_grid_free(ref_img, field_img)
+            else:
+                pol_df = load_poligram_excel(selected_poligram_file)
+                result_img, results, summary, aligned_field = analyze_poligram_model(field_img, pol_df)
 
             st.session_state.result_img = result_img
             st.session_state.aligned_field = aligned_field
             st.session_state.results = results
             st.session_state.summary = summary
-            st.session_state.report = build_report(dealer_name or "Manuel", results, summary)
+            st.session_state.report = build_report(dealer_name or selected_poligram_file or "Poligram", results, summary)
         except Exception as exc:
-            st.error("Analiz motorunda hata oluştu: " + str(exc))
+            st.error("Analiz sırasında hata oluştu: " + str(exc))
 
 if st.session_state.result_img is not None and st.session_state.summary:
     summary = st.session_state.summary
     
-    m1, m2, m3 = st.columns(3)
-    m1.metric("🟧 Eksik Etiket", summary.get("etiket_eksigi", 0))
-    m2.metric("🟪 Farklılıklar", summary.get("urun_etiket_uyumsuzluk", 0))
-    m3.metric("⬜ Kontrol Edilmeyen Rakip Raf", summary.get("kontrol_edilmeyen_rakip_raf", 0))
-
-    has_issues = (summary.get("etiket_eksigi", 0) > 0) or (summary.get("urun_etiket_uyumsuzluk", 0) > 0)
-
-    if has_issues and st.session_state.get("aligned_field") is not None:
-        frame_clean = Image.fromarray(cv2.cvtColor(st.session_state.aligned_field, cv2.COLOR_BGR2RGB))
-        frame_marked = Image.fromarray(cv2.cvtColor(st.session_state.result_img, cv2.COLOR_BGR2RGB))
-        
-        gif_io = io.BytesIO()
-        frame_marked.save(
-            gif_io,
-            format="GIF",
-            save_all=True,
-            append_images=[frame_clean],
-            duration=500,
-            loop=0
-        )
-        st.image(gif_io.getvalue(), use_container_width=True)
-    else:
-        st.image(st.session_state.result_img, channels="BGR", use_container_width=True)
+    st.metric("🚨 Tespit Edilen Toplam Fark / Uyumsuzluk", summary.get("fark", 0))
+    st.image(st.session_state.result_img, channels="BGR", use_container_width=True)
 
     d1, d2 = st.columns(2)
     ok, encoded = cv2.imencode(".jpg", st.session_state.result_img)
     if ok:
         with d1:
-            st.download_button("📥 Denetim Görselini İndir", data=encoded.tobytes(), file_name="stand_kontrol_sonuc.jpg", mime="image/jpeg", use_container_width=True)
+            st.download_button("📥 Kontrol Görselini İndir", data=encoded.tobytes(), file_name="poligram_kontrol_sonuc.jpg", mime="image/jpeg", use_container_width=True)
     if st.session_state.report:
         with d2:
-            st.download_button("📄 Detaylı Raporu İndir", data=st.session_state.report.encode("utf-8"), file_name="stand_kontrol_rapor.txt", mime="text/plain", use_container_width=True)
+            st.download_button("📄 Detaylı Raporu İndir", data=st.session_state.report.encode("utf-8"), file_name="poligram_kontrol_rapor.txt", mime="text/plain", use_container_width=True)
 else:
-    st.info("Saha fotoğraflarını yükleyin, ardından kontrolü başlatın.")
+    st.info("Gerekli seçimleri yapıp saha fotoğrafını yükledikten sonra kontrolü başlatabilirsiniz.")

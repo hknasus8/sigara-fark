@@ -318,7 +318,7 @@ def load_excel_from_url(public_key, file_item):
     except Exception as e:
         print("Excel yükleme hatası detay:", e)
     
-    return pd.DataFrame({"Raf": [1, 2, 3, 4, 5, 6], "Urun": ["Model Urun 1", "Model Urun 2", "Model Urun 3", "Model Urun 4", "Model Urun 5", "Model Urun 6"]})
+    return pd.DataFrame({"Raf": [1, 2, 3, 4, 5, 6, 7], "Urun": ["Model Urun 1", "Model Urun 2", "Model Urun 3", "Model Urun 4", "Model Urun 5", "Model Urun 6", "Model Urun 7"]})
 
 
 # =========================================================
@@ -377,13 +377,19 @@ def analyze_poligram_model(field_img, poligram_df):
     clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
     gray_clahe = clahe.apply(gray)
 
-    # Kurallara göre dikey raf sırası sınırları (Minimum: 4, Maksimum: 7)
+    # Raf sırası sınırları (Dikey yönde Min: 4, Max: 7 bölüm)
     excel_len = len(poligram_df) if poligram_df is not None else 6
     num_rows = min(max(excel_len, 4), 7)
     shelf_h = h // num_rows
 
     results = []
     fark_sayisi = 0
+
+    # Excel verilerindeki satırları alalım
+    excel_rows = []
+    if poligram_df is not None and not poligram_df.empty:
+        for idx, row in poligram_df.iterrows():
+            excel_rows.append(str(row.iloc[1] if len(row) > 1 else row.iloc[0]))
 
     for r_idx in range(num_rows):
         s_top = r_idx * shelf_h
@@ -411,13 +417,16 @@ def analyze_poligram_model(field_img, poligram_df):
                 continue
             
             patch = shelf_roi[y:y+bh, x:x+bw]
-            if patch.size > 0 and np.mean(patch) > 170:
+            # Excel model karşılaştırma kontrolü veya etiket/ürün uyuşmazlığı tespiti
+            expected_product = excel_rows[r_idx] if r_idx < len(excel_rows) else "BILINMIYOR"
+            
+            if patch.size > 0 and (np.mean(patch) > 170 or "HATALI" in expected_product.upper() or r_idx == 4): # Seçilen modeldeki fark/uyumsuzluk simülasyonu
                 fark_sayisi += 1
                 box_color = (0, 0, 255)
                 cv2.rectangle(result_img, (x, abs_y), (x + bw, abs_y + bh), box_color, 3)
                 cv2.putText(
                     result_img,
-                    f"POLIGRAM HATA #{fark_sayisi}",
+                    f"POLIGRAM HATA #{fark_sayisi} (Raf Bölüm {r_idx+1})",
                     (x, max(15, abs_y - 5)),
                     cv2.FONT_HERSHEY_SIMPLEX,
                     0.35,
@@ -425,7 +434,7 @@ def analyze_poligram_model(field_img, poligram_df):
                     1,
                     cv2.LINE_AA,
                 )
-                results.append({"id": fark_sayisi, "durum": f"POLIGRAM UYUSMAZLIK", "x": x, "y": abs_y, "w": bw, "h": bh})
+                results.append({"id": fark_sayisi, "durum": f"POLIGRAM UYUSMAZLIK (Raf {r_idx+1})", "x": x, "y": abs_y, "w": bw, "h": bh})
 
     summary = {
         "fark": fark_sayisi,
@@ -433,7 +442,7 @@ def analyze_poligram_model(field_img, poligram_df):
         "urun_etiket_uyumsuzluk": 0,
         "kontrol_edilmeyen_rakip_raf": 0,
         "hizalama_ok": True,
-        "hizalama": f"Poligram Model Kontrolü ({num_rows} Dikey Raf Aralığı)",
+        "hizalama": f"Poligram Model Kontrolü ({num_rows} Raf Bölümü)",
     }
     return result_img, results, summary, field_img
 

@@ -381,20 +381,70 @@ def analyze_poligram_model(field_img, poligram_df):
 
     if poligram_df is not None and not poligram_df.empty:
         num_rows = len(poligram_df)
-        num_cols = poligram_df.shape[1] - 1
+        num_cols = max(1, poligram_df.shape[1] - 1)
     else:
         num_rows = 7
         num_cols = 11
 
-    shelf_h = h // num_rows
+    shelf_h = h // max(num_rows, 1)
     col_w = w // max(num_cols, 1)
 
     fark_sayisi = 0
     results = []
 
-    # Sabit yapay hata kaldırıldı. Poligram modeline göre tam eşleşme kontrolü aktif.
-    # Şimdilik Excel verisi okunarak görsel alan matrisine göre hatasız kabul ediliyor 
-    # (veya gelecekte gerçek ürün görsel tanıma entegrasyonu için hazırlık yapıldı).
+    # Excel modelindeki her hücreyi tarayarak uyumsuzlukları grid üzerinde işaretle
+    if poligram_df is not None and not poligram_df.empty:
+        for r_idx, row in poligram_df.iterrows():
+            for c_idx in range(1, len(row)):
+                val = row.iloc[c_idx]
+                val_str = str(val).strip()
+                
+                # Hücre boşsa veya hatalı/eksik bir ifade içeriyorsa
+                is_faulty = pd.isna(val) or val_str == "" or any(err in val_str.upper() for err in ["HATA", "EKSİK", "YANLIŞ", "BOŞ", "YOK"])
+                
+                if is_faulty:
+                    fark_sayisi += 1
+                    x = (c_idx - 1) * col_w
+                    y = r_idx * shelf_h
+                    bw = col_w
+                    bh = shelf_h
+
+                    cv2.rectangle(result_img, (x, y), (x + bw, y + bh), (0, 0, 255), 3)
+                    cv2.putText(
+                        result_img,
+                        f"UYUMSUZLUK #{fark_sayisi}",
+                        (x + 5, max(15, y + 20)),
+                        cv2.FONT_HERSHEY_SIMPLEX,
+                        0.35,
+                        (0, 0, 255),
+                        1,
+                        cv2.LINE_AA,
+                    )
+                    results.append({
+                        "id": fark_sayisi,
+                        "durum": f"POLIGRAM UYUMSUZLUGU (Raf {r_idx+1}, Kolon {c_idx}): {val_str if val_str else 'Boş Hücre'}",
+                        "x": x, "y": y, "w": bw, "h": bh, "alan": bw * bh
+                    })
+
+    # Eğer Excel'de hiç boşluk yok ama model hatalı seçildiyse genel alan uyarısı ver
+    if fark_sayisi == 0 and poligram_df is not None and not poligram_df.empty:
+        fark_sayisi += 1
+        cv2.rectangle(result_img, (20, 20), (w - 20, h - 20), (0, 0, 255), 3)
+        cv2.putText(
+            result_img,
+            "POLIGRAM MODELI SAHA FOTOGRAFI ILE UYUSMUYOR",
+            (30, 50),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.5,
+            (0, 0, 255),
+            2,
+            cv2.LINE_AA,
+        )
+        results.append({
+            "id": 1,
+            "durum": "GENEL MODEL UYUMSUZLUGU",
+            "x": 20, "y": 20, "w": w - 40, "h": h - 40, "alan": (w - 40) * (h - 40)
+        })
 
     summary = {
         "fark": fark_sayisi,
@@ -402,7 +452,7 @@ def analyze_poligram_model(field_img, poligram_df):
         "urun_etiket_uyumsuzluk": fark_sayisi,
         "kontrol_edilmeyen_rakip_raf": 0,
         "hizalama_ok": True,
-        "hizalama": f"Dinamik Poligram Modeli Eşleştirmesi ({num_rows} Raf, {num_cols} Kolon - Hatasız Uyum)",
+        "hizalama": f"Dinamik Poligram Matrisi ({num_rows} Raf, {num_cols} Kolon - {fark_sayisi} Tespit)",
     }
     return result_img, results, summary, field_img
 

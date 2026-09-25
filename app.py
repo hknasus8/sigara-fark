@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-ÖZÇELİK STAND KONTROL UYGULAMASI (KARARLI SÜRÜM)
+ÖZÇELİK STAND KONTROL UYGULAMASI (MOUSE İLE RAF İŞARETLEME VE JSON SEÇİMLİ)
 """
 
 import hmac
@@ -11,6 +11,7 @@ import cv2
 import numpy as np
 import pandas as pd
 import streamlit as st
+from streamlit_drawable_canvas import st_canvas
 
 
 # =========================================================
@@ -196,6 +197,7 @@ DEFAULT_STATE = {
     "authenticated": False,
     "json_data": None,
     "field_img": None,
+    "saved_raf_boxes": [],
     "result_img": None,
     "summary": None,
 }
@@ -232,7 +234,7 @@ with logout_col:
         st.session_state.authenticated = False
         st.rerun()
 
-st.info("🎯 **Bilgi:** Sistem, yüklenen stand fotoğrafındaki etiket şeritlerini otomatik olarak algılayıp en kararlı şekilde eşleştirir.")
+st.info("🎯 **Bilgi:** JSON dosyanızı yükleyin, saha fotoğrafını seçin, ardından JSON'dan ilgili rafı seçerek fotoğraf üzerinde mouse ile kutu çizin ve kaydedin.")
 
 # 1. JSON Yükleme
 st.subheader("1. Stand Dizilim JSON Dosyasını Seçin")
@@ -253,38 +255,63 @@ if image_file is not None:
     if decoded is not None:
         st.session_state.field_img = resize_keep_ratio(decoded, max_width=1000, max_height=1500)
 
-# Otomatik Raf Alanı Haritalandırma (Bağlantı hatası vermeyen kararlı mimari)
-raf_boxes = []
+# 3. Raf Seçimi ve Mouse ile Alan İşaretleme
+st.subheader("3. JSON Rafı Seçin ve Mouse ile İşaretleyin")
 if st.session_state.json_data and st.session_state.field_img is not None:
-    h, w = st.session_state.field_img.shape[:2]
     raflar = st.session_state.json_data.get("raflar", [])
+    raf_secenekleri = {r["raf_numarasi"]: f"Raf {r['raf_numarasi']} (Sıralama: {', '.join(r.get('urunler',[]))})" for r inraflar}
     
-    st.success("✅ Fotoğraf ve JSON başarıyla eşleştirildi. Karşılaştırmaya hazırsınız.")
-    
-    # Rafları otomatik ve kusursuz konumlandır
-    raf_yuksekligi = int(h / max(len(raflar), 1))
-    for i, raf in enumerate(raflar):
-        raf_no = raf.get("raf_numarasi", i + 1)
-        y_koordinati = int(i * raf_yuksekligi + (raf_yuksekligi * 0.65))
-        h_koordinati = int(raf_yuksekligi * 0.3)
-        
-        raf_boxes.append({
-            "raf_numarasi": raf_no,
-            "x": int(w * 0.05),
-            "y": y_koordinati,
-            "width": int(w * 0.9),
-            "height": h_koordinati
-        })
+    selected_raf_no = st.selectbox("Kontrol Edilecek Rafı Seçin:", options=list(raf_secenekleri.keys()), format_func=lambda x: raf_secenekleri[x])
+
+    st.markdown("👇 **Fotoğraf üzerinde farenizle seçtiğiniz rafa ait etiket alanını çizin:**")
+
+    pil_img = Image.fromarray(cv2.cvtColor(st.session_state.field_img, cv2.COLOR_BGR2RGB))
+    img_w, img_h = pil_img.size
+
+    canvas_result = st_canvas(
+        fill_color="rgba(255, 165, 0, 0.3)",
+        stroke_width=3,
+        stroke_color="red",
+        background_image=pil_img,
+        update_streamlit=False,
+        height=img_h,
+        width=img_w,
+        drawing_mode="rect",
+        key=f"canvas_raf_{selected_raf_no}",
+    )
+
+    if st.button("💾 Çizilen Dikdörtgeni Seçili Rafa Kaydet", type="primary"):
+        if canvas_result.json_data is not None:
+            objects = canvas_result.json_data.get("objects", [])
+            if objects:
+                latest_obj = objects[-1]
+                if latest_obj.get("type") == "rect":
+                    box_data = {
+                        "raf_numarasi": selected_raf_no,
+                        "x": int(latest_obj["left"]),
+                        "y": int(latest_obj["top"]),
+                        "width": int(latest_obj["width"] * latest_obj["scaleX"]),
+                        "height": int(latest_obj["height"] * latest_obj["scaleY"])
+                    }
+                    st.session_state.saved_raf_boxes = [b for b in st.session_state.saved_raf_boxes if b["raf_numarasi"] != selected_raf_no]
+                    st.session_state.saved_raf_boxes.append(box_data)
+                    st.success(f"✅ Raf {selected_raf_no} başarıyla kaydedildi!")
+            else:
+                st.warning("⚠️ Lütfen önce görsel üzerinde bir dikdörtgen çizin.")
+
+    if st.session_state.saved_raf_boxes:
+        kayitli_raflar_str = ", ".join([str(b["raf_numarasi"]) for b in st.session_state.saved_raf_boxes])
+        st.info(f"💡 Hafızaya kaydedilen raflar: [ Raf {kayitli_raflar_str} ]")
 
 st.divider()
 
-# Karşılaştırma Butonu
-kontrol_aktif = st.session_state.json_data is not None and st.session_state.field_img is not None and len(raf_boxes) > 0
+# Karşılaştırma Butonu (En az 1 raf kaydedildiğinde aktifleşir)
+kontrol_aktif = st.session_state.json_data is not None and st.session_state.field_img is not None and len(st.session_state.saved_raf_boxes) > 0
 
 if st.button("🚀 Sıralamayı Karşılaştır", type="primary", use_container_width=True, disabled=not kontrol_aktif):
     with st.spinner("Görseller işleniyor ve taranıyor, lütfen bekleyin..."):
         try:
-            result_img, summary = analyze_custom_slots(st.session_state.field_img, st.session_state.json_data, raf_boxes)
+            result_img, summary = analyze_custom_slots(st.session_state.field_img, st.session_state.json_data, st.session_state.saved_raf_boxes)
             st.session_state.result_img = result_img
             st.session_state.summary = summary
         except Exception as exc:

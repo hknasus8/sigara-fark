@@ -383,10 +383,9 @@ def analyze_poligram_model(field_img, poligram_df):
     clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
     gray_clahe = clahe.apply(gray)
 
-    # Excel modelindeki raf sayısı ve sütun (slot) yapısını dinamik al
     if poligram_df is not None and not poligram_df.empty:
         num_rows = len(poligram_df)
-        num_cols = poligram_df.shape[1] - 1  # İlk sütun raf numarası/başlık varsayımı
+        num_cols = poligram_df.shape[1] - 1
     else:
         num_rows = 7
         num_cols = 11
@@ -412,7 +411,6 @@ def analyze_poligram_model(field_img, poligram_df):
             c_left = c_idx * col_w
             c_right = (c_idx + 1) * col_w if c_idx < num_cols - 1 else w
 
-            # 5. rafta (r_idx == 4) dinamik uyumsuzluk kontrolü
             is_mismatch = False
             if r_idx == 4 and c_idx in [0, 1]:
                 is_mismatch = True
@@ -698,7 +696,7 @@ if kontrol_modu == "Standart Referans Kontrolü":
 
     dealers = []
     if city:
-        dealers, _ = get_dealers(YAND_ROOT_PUBLIC_KEY, city)
+        dealers, _ = get_dealers(YANDEX_ROOT_PUBLIC_KEY, city)
 
     with c2:
         st.markdown("**Bayi Arama ve Seçim**")

@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-ÖZÇELİK STAND KONTROL UYGULAMASI (SADELEŞTİRİLMİŞ JSON KONTROLÜ)
+ÖZÇELİK STAND KONTROL UYGULAMASI (BÜTÜNCÜL RAF KONTROLÜ)
 """
 
 import hmac
@@ -132,7 +132,6 @@ def analyze_custom_slots(field_img, json_data, raf_boxes):
 
         slot_genislik = bw / urun_sayisi
 
-        # Rafın tamamını görselde belirginleştirmek için tek bir çerçeve çizelim
         bx1, by1 = max(0, int(bx)), max(0, int(by))
         bx2, by2 = min(w, int(bx + bw)), min(h, int(by + bh))
         
@@ -177,10 +176,10 @@ def analyze_custom_slots(field_img, json_data, raf_boxes):
                 toplam_fark += 1
                 raf_hatali_slot_sayisi += 1
 
-        # Eğer rafta hata varsa tüm raf kutusunu kırmızı yap, yoksa yeşil yap
+        # Rafın bütününe tek bir çerçeve çizilir (Hata varsa Kırmızı, yoksa Yeşil)
         renk = (0, 0, 255) if raf_hatali_slot_sayisi > 0 else (0, 255, 0)
-        cv2.rectangle(result_img, (bx1, by1), (bx2, by2), renk, 2)
-        cv2.putText(result_img, f"Raf {raf_no} (Hata: {raf_hatali_slot_sayisi})", (bx1, max(20, by1 - 8)), cv2.FONT_HERSHEY_SIMPLEX, 0.5, renk, 2, cv2.LINE_AA)
+        cv2.rectangle(result_img, (bx1, by1), (bx2, by2), renk, 3)
+        cv2.putText(result_img, f"Raf {raf_no} - Hata: {raf_hatali_slot_sayisi}", (bx1, max(25, by1 - 8)), cv2.FONT_HERSHEY_SIMPLEX, 0.6, renk, 2, cv2.LINE_AA)
 
     summary = {"fark": toplam_fark, "ocr_motoru_aktif": ocr_engine is not None, "debug_rows": debug_rows}
     return result_img, summary
@@ -230,7 +229,7 @@ with logout_col:
         st.session_state.authenticated = False
         st.rerun()
 
-st.info("🎯 **Bilgi:** JSON dosyanızı yükleyin, saha fotoğrafını seçin, ardından JSON'dan ilgili rafı seçerek fotoğraf üzerinde mouse ile kutu çizin ve kaydedin.")
+st.info("🎯 **Bilgi:** JSON dosyanızı yükleyin, saha fotoğrafını seçin, ardından JSON'dan ilgili rafı seçerek fotoğraf üzerinde mouse ile rafın tamamını kapsayacak şekilde çerçeve çizin ve kaydedin.")
 
 # 1. JSON Yükleme
 st.subheader("1. Stand Dizilim JSON Dosyasını Seçin")
@@ -259,7 +258,7 @@ if st.session_state.json_data and st.session_state.field_img is not None:
     
     selected_raf_no = st.selectbox("Kontrol Edilecek Rafı Seçin:", options=list(raf_secenekleri.keys()), format_func=lambda x: raf_secenekleri[x])
 
-    st.markdown("👇 **Fotoğraf üzerinde farenizle seçtiğiniz rafa ait etiket alanını çizin:**")
+    st.markdown("👇 **Fotoğraf üzerinde farenizle seçtiğiniz rafın tamamını çevreleyen alanı çizin:**")
 
     pil_img = Image.fromarray(cv2.cvtColor(st.session_state.field_img, cv2.COLOR_BGR2RGB))
     img_w, img_h = pil_img.size
@@ -302,7 +301,7 @@ if st.session_state.json_data and st.session_state.field_img is not None:
 
 st.divider()
 
-# Karşılaştırma Butonu (En az 1 raf kaydedildiğinde aktifleşir)
+# Karşılaştırma Butonu
 kontrol_aktif = st.session_state.json_data is not None and st.session_state.field_img is not None and len(st.session_state.saved_raf_boxes) > 0
 
 if st.button("🚀 Sıralamayı Karşılaştır", type="primary", use_container_width=True, disabled=not kontrol_aktif):

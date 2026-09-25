@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-ÖZÇELİK STAND KONTROL UYGULAMASI (JSON ODAKLI GÜNCELLENMİŞ SÜRÜM)
+ÖZÇELİK STAND KONTROL UYGULAMASI (SADELEŞTİRİLMİŞ JSON KONTROLÜ)
 """
 
 import hmac
@@ -100,7 +100,7 @@ def ocr_read_label(gray_roi, ocr_engine):
 
 
 # =========================================================
-# ANALİZ MOTORU (JSON UYUMLU)
+# ANALİZ MOTORU (BÜTÜNCÜL RAF KONTROLÜ)
 # =========================================================
 def analyze_custom_slots(field_img, json_data, raf_boxes):
     h, w = field_img.shape[:2]
@@ -132,6 +132,12 @@ def analyze_custom_slots(field_img, json_data, raf_boxes):
 
         slot_genislik = bw / urun_sayisi
 
+        # Rafın tamamını görselde belirginleştirmek için tek bir çerçeve çizelim
+        bx1, by1 = max(0, int(bx)), max(0, int(by))
+        bx2, by2 = min(w, int(bx + bw)), min(h, int(by + bh))
+        
+        raf_hatali_slot_sayisi = 0
+
         for s_idx, olmasi_gereken_urun in enumerate(beklenen_urunler):
             slot_sirasi = s_idx + 1
             slot_x = int(bx + (s_idx * slot_genislik))
@@ -149,19 +155,15 @@ def analyze_custom_slots(field_img, json_data, raf_boxes):
 
             sadece_harfler = re.sub(r'[^a-zğüşıöç]', '', ham_metin.lower())
             hedef_lower = olmasi_gereken_urun.lower()
+            json_kelimeleri = [kw for kw in re.findall(r'[a-zğüşıöç]+', hedef_lower) if len(kw) > 2]
 
-            # JSON'daki ürün adını anlamlı anahtar kelimelere ayır (örn: "Camel Deep Blue" -> ["camel", "deep", "blue"])
-            json_kelimeleri = [w for w in re.findall(r'[a-zğüşıöç]+', hedef_lower) if len(w) > 2]
-
-            # Doğrudan JSON kelimelerinin taranan etikette geçip geçmediğini kontrol et
             if json_kelimeleri:
                 uyumlu_mu = any(kw in sadece_harfler for kw in json_kelimeleri)
             else:
                 uyumlu_mu = True
 
-            # Eğer okunan metin çok boşsa veya hiç kelime tutturamadıysa ama etiket alanı dolu görünüyorsa esneklik tanıyalım
             if not uyumlu_mu and len(sadece_harfler) <= 2 and len(ham_metin) > 0:
-                uyumlu_mu = True # Silik okumalar için tolerans
+                uyumlu_mu = True
 
             debug_rows.append({
                 "Raf No": raf_no,
@@ -173,8 +175,12 @@ def analyze_custom_slots(field_img, json_data, raf_boxes):
 
             if not uyumlu_mu:
                 toplam_fark += 1
-                cv2.rectangle(result_img, (slot_x1, slot_y1), (slot_x2, slot_y2), (0, 0, 255), 2)
-                cv2.putText(result_img, f"R{raf_no}-S{slot_sirasi}", (slot_x1, max(15, slot_y1 - 5)), cv2.FONT_HERSHEY_SIMPLEX, 0.35, (0, 0, 255), 1, cv2.LINE_AA)
+                raf_hatali_slot_sayisi += 1
+
+        # Eğer rafta hata varsa tüm raf kutusunu kırmızı yap, yoksa yeşil yap
+        renk = (0, 0, 255) if raf_hatali_slot_sayisi > 0 else (0, 255, 0)
+        cv2.rectangle(result_img, (bx1, by1), (bx2, by2), renk, 2)
+        cv2.putText(result_img, f"Raf {raf_no} (Hata: {raf_hatali_slot_sayisi})", (bx1, max(20, by1 - 8)), cv2.FONT_HERSHEY_SIMPLEX, 0.5, renk, 2, cv2.LINE_AA)
 
     summary = {"fark": toplam_fark, "ocr_motoru_aktif": ocr_engine is not None, "debug_rows": debug_rows}
     return result_img, summary

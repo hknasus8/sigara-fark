@@ -23,7 +23,7 @@ import streamlit as st
 # SAYFA YAPILANDIRMASI
 # =========================================================
 st.set_page_config(
-    page_title="Kesin Sıralama ve Uyum Kontrol Paneli",
+    page_title="Kesin Sıralama dan Uyum Kontrol Paneli",
     page_icon="📊",
     layout="wide",
     initial_sidebar_state="collapsed",
@@ -91,6 +91,10 @@ def resize_keep_ratio(img, max_width=1200, max_height=1800):
     return cv2.resize(img, (new_w, new_h), interpolation=cv2.INTER_AREA)
 
 
+def prepare_image(img):
+    return resize_keep_ratio(img, max_width=1200, max_height=1800)
+
+
 # =========================================================
 # OCR MOTORU
 # =========================================================
@@ -111,11 +115,9 @@ def ocr_read_label(gray_roi, ocr_engine):
         if h < 5 or w < 5:
             return ""
         
-        # HTML tarafındaki tCtx 3 kat büyütme ve kontrast filtresi uyarlaması
         scale = max(1.0, 300.0 / float(h))
         roi = cv2.resize(gray_roi, (int(w * scale), int(h * scale)), interpolation=cv2.INTER_CUBIC)
         
-        # Kontrast artırma (Contrast Factor 1.4 benzeri)
         f = 1.4
         roi = cv2.convertScaleAbs(roi, alpha=f, beta=128 * (1 - f))
         
@@ -133,10 +135,6 @@ def ocr_read_label(gray_roi, ocr_engine):
 # ANALİZ MOTORU (HTML MANTIĞI)
 # =========================================================
 def analyze_custom_slots(field_img, json_data, raf_boxes):
-    """
-    Kullanıcının belirttiği raf koordinatlarına ve JSON sıralamasına göre 
-    slot slot bölerek OCR ve özel tolerans kontrolü yapar.
-    """
     h, w = field_img.shape[:2]
     result_img = field_img.copy()
 
@@ -147,7 +145,6 @@ def analyze_custom_slots(field_img, json_data, raf_boxes):
     ocr_engine = get_ocr_engine()
 
     toplam_fark = 0
-    rapor_detaylari = []
     debug_rows = []
 
     raflar = json_data.get("raflar", [])
@@ -174,7 +171,6 @@ def analyze_custom_slots(field_img, json_data, raf_boxes):
             slot_w = int(slot_genislik)
             slot_h = int(bh)
 
-            # Sınır güvenliği
             slot_x1 = max(0, min(slot_x, w - 1))
             slot_y1 = max(0, min(slot_y, h - 1))
             slot_x2 = max(slot_x1 + 1, min(slot_x + slot_w, w))
@@ -189,7 +185,6 @@ def analyze_custom_slots(field_img, json_data, raf_boxes):
             catisma_var_mi = False
             catisma_sebebi = ""
 
-            # Çeşit Çatışma Kontrolleri
             if 'blue' in hedef_lower and 'dark' not in hedef_lower and 'deep' not in hedef_lower and 'gray' in sadece_harfler and 'gray' not in hedef_lower:
                 catisma_var_mi = True
                 catisma_sebebi = "Çeşit Çatışması (Beklenen Blue iken etikette Gray algılandı)"
@@ -197,7 +192,6 @@ def analyze_custom_slots(field_img, json_data, raf_boxes):
                 catisma_var_mi = True
                 catisma_sebebi = "Çeşit Çatışması (Beklenen Gray iken etikette Blue algılandı)"
 
-            # Genişletilmiş Akıllı Parça ve Substring Toleransları
             if 'slim blue' in hedef_lower and ('slim' in sadece_harfler or 'bl' in sadece_harfler or 'ston' in sadece_harfler or len(sadece_harfler) < 5):
                 sadece_harfler += ' slim blue winston'
             if 'slim gray' in hedef_lower and ('slim' in sadece_harfler or 'gray' in sadece_harfler or 'ston' in sadece_harfler or len(sadece_harfler) < 5):
@@ -291,7 +285,6 @@ with logout_col:
 
 st.info("🎯 **Bilgi:** Slim Blue, Q Line ve Xsence Gray için özel alt parça ve esnek kelime toleransları aktiftir.")
 
-# 1. JSON Yükleme
 st.subheader("1. Stand Dizilim JSON Dosyasını Seçin")
 json_file = st.file_uploader("JSON dosyası yükleyin", type=[".json"], key="json_uploader")
 if json_file is not None:
@@ -302,12 +295,10 @@ if json_file is not None:
     except Exception as e:
         st.error(f"Geçersiz JSON dosyası: {e}")
 
-# 2. Saha Fotoğrafı Yükleme
 st.subheader("2. Stand Saha Fotoğrafını Seçin")
 image_file = st.file_uploader("Saha fotoğrafı yükleyin", type=["jpg", "jpeg", "png", "webp"], key="image_uploader")
 field_img = prepare_image(decode_uploaded(image_file)) if image_file is not None else None
 
-# 3. Raf Seçimi ve Alan Koordinat Tanımlama
 st.subheader("3. Raf Alanlarını Tanımlayın")
 if st.session_state.json_data and field_img is not None:
     raflar = st.session_state.json_data.get("raflar", [])
@@ -315,9 +306,6 @@ if st.session_state.json_data and field_img is not None:
     
     selected_raf_no = st.selectbox("Çizeceğiniz Alan Hangi Rafa Ait?", options=list(raf_secenekleri.keys()), format_func=lambda x: raf_secenekleri[x])
 
-    st.markdown("*(Not: Web arayüzünde pratik olması amacıyla her raf için yaklaşık koordinatları veya tüm standı kapsayan otomatik bölme mantığını kullanabilirsiniz. Aşağıdan örnek koordinat ekleme arayüzünü kullanabilirsiniz.)*")
-    
-    # Kullanıcının manuel veya hızlı koordinat girmesi ya da tüm fotoğrafı raflara bölmesi için pratik girdi:
     h, w = field_img.shape[:2]
     
     col_a, col_b, col_c, col_d = st.columns(4)
@@ -331,7 +319,6 @@ if st.session_state.json_data and field_img is not None:
         box_h = st.number_input("Yükseklik (Height)", value=int(h / max(len(raflar), 1)), min_value=10, max_value=h)
 
     if st.button("➕ Bu Raf Alanını Kaydet"):
-        # Aynı raf numarası varsa güncelle, yoksa ekle
         st.session_state.raf_boxes = [b for b in st.session_state.raf_boxes if b["raf_numarasi"] != selected_raf_no]
         st.session_state.raf_boxes.append({
             "raf_numarasi": selected_raf_no,
@@ -350,7 +337,6 @@ if st.session_state.json_data and field_img is not None:
 
 st.divider()
 
-# Kontrol Butonu
 kontrol_aktif = st.session_state.json_data is not None and field_img is not None and len(st.session_state.raf_boxes) > 0
 
 if st.button("🚀 Sıralamayı Karşılaştır", type="primary", use_container_width=True, disabled=not kontrol_aktif):

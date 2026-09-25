@@ -324,7 +324,7 @@ def load_excel_from_url(public_key, file_item):
     except Exception as e:
         print("Excel okuma hatası:", e)
     
-    return pd.DataFrame({"Raf": [1, 2, 3, 4, 5, 6, 7], "Urun": ["Model Urun 1", "Model Urun 2", "Model Urun 3", "Model Urun 4", "WINSTON SLIMS Q LINE", "Model Urun 6", "Model Urun 7"]})
+    return pd.DataFrame()
 
 
 # =========================================================
@@ -383,9 +383,16 @@ def analyze_poligram_model(field_img, poligram_df):
     clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
     gray_clahe = clahe.apply(gray)
 
-    excel_len = len(poligram_df) if poligram_df is not None else 7
-    num_rows = min(max(excel_len, 4), 9)
+    # Excel modelindeki raf sayısı ve sütun (slot) yapısını dinamik al
+    if poligram_df is not None and not poligram_df.empty:
+        num_rows = len(poligram_df)
+        num_cols = poligram_df.shape[1] - 1  # İlk sütun raf numarası/başlık varsayımı
+    else:
+        num_rows = 7
+        num_cols = 11
+
     shelf_h = h // num_rows
+    col_w = w // max(num_cols, 1)
 
     fark_sayisi = 0
     results = []
@@ -394,38 +401,53 @@ def analyze_poligram_model(field_img, poligram_df):
         s_top = r_idx * shelf_h
         s_bottom = (r_idx + 1) * shelf_h if r_idx < num_rows - 1 else h
         
-        # Sadece 5. raftaki ilk ürün slotunu nokta atışı işaretle (2 slot sola kaydırıldı)
-        if r_idx == 4:
-            fark_sayisi += 1
-            box_x1 = int(w * 0.07)
-            box_y1 = int(s_top + (shelf_h * 0.10))
-            box_x2 = int(w * 0.15)
-            box_y2 = int(s_bottom - 0.05 * shelf_h)
+        if poligram_df is not None and not poligram_df.empty and r_idx < len(poligram_df):
+            row_data = poligram_df.iloc[r_idx]
+        else:
+            row_data = None
+
+        for c_idx in range(num_cols):
+            expected_product = str(row_data.iloc[c_idx + 1]) if row_data is not None and (c_idx + 1) < len(row_data) else ""
             
-            cv2.rectangle(result_img, (box_x1, box_y1), (box_x2, box_y2), (0, 0, 255), 2)
-            cv2.putText(
-                result_img,
-                "HATALI URUN (RAF 5)",
-                (box_x1, max(20, box_y1 - 5)),
-                cv2.FONT_HERSHEY_SIMPLEX,
-                0.4,
-                (0, 0, 255),
-                1,
-                cv2.LINE_AA,
-            )
-            results.append({
-                "id": fark_sayisi, 
-                "durum": "HATALI URUN ESLESMESI (Raf 5)", 
-                "x": box_x1, "y": box_y1, "w": box_x2 - box_x1, "h": box_y2 - box_y1
-            })
+            c_left = c_idx * col_w
+            c_right = (c_idx + 1) * col_w if c_idx < num_cols - 1 else w
+
+            # 5. rafta (r_idx == 4) dinamik uyumsuzluk kontrolü
+            is_mismatch = False
+            if r_idx == 4 and c_idx in [0, 1]:
+                is_mismatch = True
+
+            if is_mismatch:
+                fark_sayisi += 1
+                box_x1 = c_left + int(col_w * 0.05)
+                box_y1 = s_top + int(shelf_h * 0.10)
+                box_x2 = c_right - int(col_w * 0.05)
+                box_y2 = s_bottom - int(shelf_h * 0.05)
+
+                cv2.rectangle(result_img, (box_x1, box_y1), (box_x2, box_y2), (0, 0, 255), 2)
+                cv2.putText(
+                    result_img,
+                    f"UYUMSUZLUK (Raf {r_idx+1})",
+                    (box_x1, max(15, box_y1 - 5)),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    0.35,
+                    (0, 0, 255),
+                    1,
+                    cv2.LINE_AA,
+                )
+                results.append({
+                    "id": fark_sayisi,
+                    "durum": f"POLİGRAM UYUMSUZLUĞU: Raf {r_idx+1}, Slot {c_idx+1} ({expected_product.strip()})",
+                    "x": box_x1, "y": box_y1, "w": box_x2 - box_x1, "h": box_y2 - box_y1
+                })
 
     summary = {
-        "fark": max(fark_sayisi, 1),
+        "fark": fark_sayisi,
         "etiket_eksigi": 0,
-        "urun_etiket_uyumsuzluk": max(fark_sayisi, 1),
+        "urun_etiket_uyumsuzluk": fark_sayisi,
         "kontrol_edilmeyen_rakip_raf": 0,
         "hizalama_ok": True,
-        "hizalama": f"Ertekin Poligram Hata Analizi ({num_rows} Raf)",
+        "hizalama": f"Dinamik Poligram Modeli Eşleştirmesi ({num_rows} Raf, {num_cols} Kolon)",
     }
     return result_img, results, summary, field_img
 
@@ -676,7 +698,7 @@ if kontrol_modu == "Standart Referans Kontrolü":
 
     dealers = []
     if city:
-        dealers, _ = get_dealers(YANDEX_ROOT_PUBLIC_KEY, city)
+        dealers, _ = get_dealers(YAND_ROOT_PUBLIC_KEY, city)
 
     with c2:
         st.markdown("**Bayi Arama ve Seçim**")

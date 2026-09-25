@@ -6,11 +6,12 @@
 import difflib
 import hashlib
 import hmac
+import io
+import json
 import os
 import re
 import urllib.parse
 from PIL import Image
-import io
 
 import cv2
 import numpy as np
@@ -123,7 +124,7 @@ def safe_download_image(url, timeout=25):
 
 
 # =========================================================
-# YANDEX API VE POLİGRAM EXCEL YÖNETİMİ
+# YANDEX API VE POLİGRAM JSON YÖNETİMİ
 # =========================================================
 @st.cache_data(ttl=600, show_spinner=False)
 def yandex_root_items(public_key):
@@ -232,7 +233,7 @@ def get_yandex_poligram_models(public_key):
             if item.get("type") == "dir":
                 poligram_folder_path = item.get("path")
                 break
-            elif item.get("type") == "file" and item.get("name", "").lower().endswith((".xlsx", ".xls")):
+            elif item.get("type") == "file" and item.get("name", "").lower().endswith(".json"):
                 poligram_files.append({"name": item.get("name"), "file_url": item.get("file"), "path": item.get("path")})
 
     if not poligram_folder_path and not poligram_files:
@@ -245,7 +246,7 @@ def get_yandex_poligram_models(public_key):
                         if sub.get("type") == "dir":
                             poligram_folder_path = sub.get("path")
                             break
-                        elif sub.get("type") == "file" and sub.get("name", "").lower().endswith((".xlsx", ".xls")):
+                        elif sub.get("type") == "file" and sub.get("name", "").lower().endswith(".json"):
                             poligram_files.append({"name": sub.get("name"), "file_url": sub.get("file"), "path": sub.get("path")})
                 if poligram_folder_path:
                     break
@@ -256,11 +257,11 @@ def get_yandex_poligram_models(public_key):
             for item in items:
                 if item.get("type") == "file":
                     name = item.get("name", "")
-                    if name.lower().endswith((".xlsx", ".xls")):
+                    if name.lower().endswith(".json"):
                         poligram_files.append({"name": name, "file_url": item.get("file"), "path": item.get("path")})
 
     if not poligram_files:
-        return [], "Yandex Disk üzerinde 'POLİGRAM' içeren klasör veya Excel dosyası bulunamadı."
+        return [], "Yandex Disk üzerinde 'POLİGRAM' klasöründe JSON dosyası bulunamadı."
 
     return poligram_files, None
 
@@ -290,11 +291,10 @@ def get_reference_image(public_key, dealer_path):
     return None, "Bayi klasöründe okunabilir JPG/PNG görsel bulunamadı."
 
 
-def load_excel_from_url(public_key, file_item):
+def load_json_from_url(public_key, file_item):
     """
-    Excel dosyasını Yandex Disk'ten indirir.
-    Dönüş: (DataFrame, hata_mesajı). Başarılıysa hata_mesajı None,
-    başarısızsa DataFrame None ve hata_mesajı doldurulmuş olur.
+    JSON dosyasını Yandex Disk'ten indirir ve parse eder.
+    Dönüş: (Dict/Data, hata_mesajı)
     """
     errors = []
     try:
@@ -320,7 +320,7 @@ def load_excel_from_url(public_key, file_item):
                     else:
                         errors.append("Yandex 'href' indirme linki döndürmedi.")
                 else:
-                    errors.append(f"Yandex download-link API HTTP {res.status_code}: {res.text[:200]}")
+                    errors.append(f"Yandex download-link API HTTP {res.status_code}")
             except Exception as e:
                 errors.append(f"path ile indirme hatası: {e}")
 
@@ -335,40 +335,26 @@ def load_excel_from_url(public_key, file_item):
                         errors.append(f"file_url ile indirme HTTP {response.status_code}")
                 except Exception as e:
                     errors.append(f"file_url ile indirme hatası: {e}")
-            else:
-                errors.append("file_item içinde 'file_url' yok.")
 
         if not content:
             return None, " | ".join(errors) if errors else "Bilinmeyen indirme hatası."
 
         try:
-            xls = pd.ExcelFile(io.BytesIO(content), engine='openpyxl')
+            data = json.loads(content.decode("utf-8"))
+            return data, None
         except Exception as e:
-            return None, f"Excel dosyası açılamadı (bozuk/format hatası olabilir): {e}"
-
-        for sheet_name in xls.sheet_names:
-            try:
-                df = pd.read_excel(xls, sheet_name=sheet_name)
-            except Exception as e:
-                errors.append(f"'{sheet_name}' sayfası okunamadı: {e}")
-                continue
-            if not df.empty:
-                return df, None
-
-        return None, "Excel dosyasında dolu bir sayfa bulunamadı. " + " | ".join(errors)
+            return None, f"JSON dosyası ayrıştırılamadı: {e}"
 
     except Exception as e:
         return None, f"Beklenmeyen hata: {e}"
 
 
 # =========================================================
-# OCR MOTORU (RAF ETİKETİ / SİGARA İSMİ OKUMA)
+# OCR MOTORU
 # =========================================================
 def get_ocr_engine():
-    """Tesseract OCR motorunu (varsa) yükler. Kurulu değilse None döner."""
     try:
         import pytesseract
-        # Sistemde tesseract binary'si gerçekten çalışıyor mu diye hızlı kontrol
         pytesseract.get_tesseract_version()
         return pytesseract
     except Exception:
@@ -376,19 +362,16 @@ def get_ocr_engine():
 
 
 def ocr_read_label(gray_roi, ocr_engine):
-    """Tek bir raf gözündeki (kırpılmış) etiket bölgesinden metin okur."""
     if ocr_engine is None or gray_roi is None or gray_roi.size == 0:
         return ""
     try:
         h, w = gray_roi.shape[:2]
         if h < 5 or w < 5:
             return ""
-        # OCR doğruluğunu artırmak için küçük kırpımları büyüt
         scale = max(1.0, 220.0 / float(h))
         roi = cv2.resize(gray_roi, (int(w * scale), int(h * scale)), interpolation=cv2.INTER_CUBIC)
         roi = cv2.GaussianBlur(roi, (3, 3), 0)
         _, thresh = cv2.threshold(roi, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
-        # Tek satır/tek blok metin okuma modu, Türkçe + İngilizce
         config = "--oem 3 --psm 7"
         try:
             text = ocr_engine.image_to_string(thresh, config=config, lang="tur+eng")
@@ -400,7 +383,6 @@ def ocr_read_label(gray_roi, ocr_engine):
 
 
 def text_match_ratio(detected, expected):
-    """Okunan metin ile Excel'deki beklenen ürün adını normalize edip bulanık eşleştirir."""
     det_n = normalize_text(detected)
     exp_n = normalize_text(expected)
     if not det_n or not exp_n:
@@ -458,14 +440,17 @@ def align_images_feature(reference, target):
     return aligned, True
 
 
-def analyze_poligram_model(field_img, poligram_df, match_threshold=0.55, label_band=(0.55, 0.98)):
+def analyze_poligram_json_model(field_img, poligram_data, match_threshold=0.55, label_band=(0.55, 0.98)):
     """
-    Poligram modeli (Excel) ile saha fotoğrafını karşılaştırır.
-    - Excel: satır = raf, sütun 1..N = o raftaki slotların beklenen sigara/ürün ismi.
-    - Fotoğraf aynı (raf x slot) grid'ine bölünür.
-    - Her gözün etiket bandı (rafın alt kısmı, fiyat/isim etiketinin olduğu yer) OCR ile okunur.
-    - Okunan metin, Excel'deki beklenen isimle bulanık (fuzzy) karşılaştırılır.
-    - Eşleşme oranı eşik değerin altındaysa (ya da okunamadıysa) o slot kırmızı çerçeveyle işaretlenir.
+    JSON tabanlı Poligram modeli ile saha fotoğrafını karşılaştırır.
+    Format:
+    {
+      "poligram_adi": "...",
+      "raflar": [
+         {"raf_numarasi": 1, "urunler": ["...", "..."]},
+         ...
+      ]
+    }
     """
     h, w = field_img.shape[:2]
     result_img = field_img.copy()
@@ -476,12 +461,14 @@ def analyze_poligram_model(field_img, poligram_df, match_threshold=0.55, label_b
 
     ocr_engine = get_ocr_engine()
 
-    if poligram_df is not None and not poligram_df.empty:
-        num_rows = len(poligram_df)
-        num_cols = poligram_df.shape[1] - 1
-    else:
-        num_rows = 7
-        num_cols = 11
+    raflar = poligram_data.get("raflar", [])
+    num_rows = len(raflar)
+    
+    max_cols = 1
+    for raf in raflar:
+        if len(raf.get("urunler", [])) > max_cols:
+            max_cols = len(raf.get("urunler", []))
+    num_cols = max(max_cols, 1)
 
     shelf_h = h // max(num_rows, 1)
     col_w = w // max(num_cols, 1)
@@ -491,39 +478,31 @@ def analyze_poligram_model(field_img, poligram_df, match_threshold=0.55, label_b
     bos_kabul_edilen_sayisi = 0
     kontrol_edilen_slot_sayisi = 0
     results = []
-    debug_rows = []  # Her göz için: raf, slot, beklenen, okunan, benzerlik, sonuç (hata ayıklama tablosu için)
+    debug_rows = []
 
-    for r_idx in range(num_rows):
+    for r_idx, raf in enumerate(raflar):
         s_top = r_idx * shelf_h
         s_bottom = (r_idx + 1) * shelf_h if r_idx < num_rows - 1 else h
-
-        if poligram_df is not None and not poligram_df.empty and r_idx < len(poligram_df):
-            row_data = poligram_df.iloc[r_idx]
-        else:
-            row_data = None
+        urunler = raf.get("urunler", [])
 
         for c_idx in range(num_cols):
-            expected_raw = row_data.iloc[c_idx + 1] if row_data is not None and (c_idx + 1) < len(row_data) else None
-            expected_product = "" if expected_raw is None or pd.isna(expected_raw) else str(expected_raw).strip()
+            expected_product = str(urunler[c_idx]).strip() if c_idx < len(urunler) and urunler[c_idx] else ""
 
             c_left = c_idx * col_w
             c_right = (c_idx + 1) * col_w if c_idx < num_cols - 1 else w
 
-            # Etiket bandı: rafın alt kısmı (fiyat/isim etiketinin tipik olarak bulunduğu yer)
             label_top = s_top + int(shelf_h * label_band[0])
             label_bottom = s_top + int(shelf_h * label_band[1])
             roi = gray_clahe[label_top:label_bottom, c_left:c_right]
 
-            # Debug/kalibrasyon için OCR'ı beklenen boş olsa bile çalıştırıyoruz ki okunan metni görebilesiniz
             detected_text = ocr_read_label(roi, ocr_engine)
 
-            # Poligram modelinde o slot boş bırakılmışsa (ürün beklenmiyorsa) kontrol dışı bırak
             if not expected_product:
                 bos_kabul_edilen_sayisi += 1
                 debug_rows.append({
                     "Raf": r_idx + 1, "Slot": c_idx + 1,
-                    "Beklenen (Excel)": "(boş/okunamadı)", "Okunan (OCR)": detected_text or "—",
-                    "Benzerlik": "", "Sonuç": "KONTROL DIŞI (Excel'de veri yok)",
+                    "Beklenen (JSON)": "(boş)", "Okunan (OCR)": detected_text or "—",
+                    "Benzerlik": "", "Sonuç": "KONTROL DIŞI",
                 })
                 continue
 
@@ -536,7 +515,7 @@ def analyze_poligram_model(field_img, poligram_df, match_threshold=0.55, label_b
 
             debug_rows.append({
                 "Raf": r_idx + 1, "Slot": c_idx + 1,
-                "Beklenen (Excel)": expected_product, "Okunan (OCR)": detected_text or "—",
+                "Beklenen (JSON)": expected_product, "Okunan (OCR)": detected_text or "—",
                 "Benzerlik": round(similarity, 2), "Sonuç": "UYUMSUZ" if is_mismatch else "UYUMLU",
             })
 
@@ -571,9 +550,7 @@ def analyze_poligram_model(field_img, poligram_df, match_threshold=0.55, label_b
 
     ocr_uyarisi = ""
     if ocr_engine is None:
-        ocr_uyarisi = " | UYARI: OCR motoru (pytesseract/tesseract) sunucuda kurulu değil, hiçbir etiket okunamadı."
-    elif bos_kabul_edilen_sayisi == num_rows * num_cols:
-        ocr_uyarisi = " | UYARI: Excel'den hiçbir beklenen ürün adı okunamadı — Excel'in satır/sütun yapısını kontrol edin."
+        ocr_uyarisi = " | UYARI: OCR motoru (pytesseract) sunucuda kurulu değil."
 
     summary = {
         "fark": fark_sayisi,
@@ -581,7 +558,7 @@ def analyze_poligram_model(field_img, poligram_df, match_threshold=0.55, label_b
         "urun_etiket_uyumsuzluk": fark_sayisi,
         "kontrol_edilmeyen_rakip_raf": 0,
         "hizalama_ok": ocr_engine is not None,
-        "hizalama": f"Poligram OCR Eşleştirmesi ({num_rows} Raf, {num_cols} Kolon){ocr_uyarisi}",
+        "hizalama": f"Poligram JSON OCR Eşleştirmesi ({num_rows} Raf, {num_cols} Kolon){ocr_uyarisi}",
         "ocr_motoru_aktif": ocr_engine is not None,
         "kontrol_edilen_slot_sayisi": kontrol_edilen_slot_sayisi,
         "bos_kabul_edilen_slot_sayisi": bos_kabul_edilen_sayisi,
@@ -814,7 +791,7 @@ with logout_col:
 st.subheader("0. Kontrol Modu Seçimi")
 kontrol_modu = st.radio(
     "Kontrol Yöntemini Seçin",
-    options=["Standart Referans Kontrolü", "POLİGRAM (Excel Modeli ile Kontrol)"],
+    options=["Standart Referans Kontrolü", "POLİGRAM (JSON Modeli ile Kontrol)"],
     horizontal=True
 )
 
@@ -880,36 +857,37 @@ if kontrol_modu == "Standart Referans Kontrolü":
             st.info("Sahadan gelen fotoğrafı yükleyin.")
 
 else:
-    st.subheader("1. POLİGRAM Modeli ve Saha Fotoğrafı Seçimi")
+    st.subheader("1. POLİGRAM JSON Modeli ve Saha Fotoğrafı Seçimi")
     
     col_p1, col_p2 = st.columns(2)
     with col_p1:
-        st.markdown("**Yandex Disk POLİGRAM Modelleri**")
+        st.markdown("**Yandex Disk POLİGRAM JSON Modelleri**")
         yandex_poligrams, pol_error = get_yandex_poligram_models(YANDEX_ROOT_PUBLIC_KEY)
         if pol_error:
             st.warning(str(pol_error))
 
         poligram_dict = {item["name"]: item for item in yandex_poligrams}
         selected_poligram_name = st.selectbox(
-            "Poligram Excel modeli seçin",
+            "Poligram JSON modeli seçin",
             options=[""] + list(poligram_dict.keys()),
-            format_func=lambda x: "Poligram Excel modeli seçin..." if x == "" else x,
+            format_func=lambda x: "Poligram JSON modeli seçin..." if x == "" else x,
             label_visibility="collapsed"
         )
         if selected_poligram_name in poligram_dict:
             selected_poligram_item = poligram_dict[selected_poligram_name]
 
-        pol_df = None
+        pol_data = None
         pol_load_error = None
         if selected_poligram_item:
-            with st.spinner("Excel modeli yükleniyor..."):
-                pol_df, pol_load_error = load_excel_from_url(YANDEX_ROOT_PUBLIC_KEY, selected_poligram_item)
-            if pol_df is not None and not pol_df.empty:
-                st.success(f"Model Yüklendi: {selected_poligram_item['name']} ({pol_df.shape[0]} raf x {pol_df.shape[1]-1} slot)")
+            with st.spinner("JSON modeli yükleniyor..."):
+                pol_data, pol_load_error = load_json_from_url(YANDEX_ROOT_PUBLIC_KEY, selected_poligram_item)
+            if pol_data and "raflar" in pol_data:
+                total_raflar = len(pol_data["raflar"])
+                st.success(f"Model Yüklendi: {selected_poligram_item['name']} ({total_raflar} Raf)")
             else:
-                st.error(f"❌ Seçilen Excel dosyası okunamadı: {pol_load_error or 'Bilinmeyen hata'}")
+                st.error(f"❌ Seçilen JSON dosyası okunamadı: {pol_load_error or 'Geçersiz şema'}")
         else:
-            st.info("Yandex Disk'ten bir Poligram modeli seçin.")
+            st.info("Yandex Disk'ten bir Poligram JSON modeli seçin.")
 
     with col_p2:
         st.markdown("**Bayi Saha Fotoğrafı**")
@@ -928,9 +906,8 @@ else:
     ready = (
         selected_poligram_item is not None
         and field_img is not None
-        and 'pol_df' in locals()
-        and pol_df is not None
-        and not pol_df.empty
+        and 'pol_data' in locals()
+        and pol_data is not None
     )
 
 if st.button("🚀 KONTROLÜ BAŞLAT", type="primary", use_container_width=True, disabled=not ready):
@@ -940,16 +917,16 @@ if st.button("🚀 KONTROLÜ BAŞLAT", type="primary", use_container_width=True,
     st.session_state.summary = None
     st.session_state.report = ""
 
-    with st.spinner("Poligram ve ürün uygunluk analizi gerçekleştiriliyor..."):
+    with st.spinner("Poligram JSON modeli ile ürün uygunluk analizi gerçekleştiriliyor..."):
         try:
             if kontrol_modu == "Standart Referans Kontrolü":
                 result_img, results, summary, aligned_field = analyze_planogram_grid_free(ref_img, field_img)
             else:
-                pol_df, pol_load_error = load_excel_from_url(YANDEX_ROOT_PUBLIC_KEY, selected_poligram_item)
-                if pol_df is None or pol_df.empty:
-                    st.error(f"❌ Excel yeniden yüklenemedi, kontrol iptal edildi: {pol_load_error or 'Bilinmeyen hata'}")
+                pol_data, pol_load_error = load_json_from_url(YANDEX_ROOT_PUBLIC_KEY, selected_poligram_item)
+                if not pol_data:
+                    st.error(f"❌ JSON yeniden yüklenemedi: {pol_load_error}")
                     st.stop()
-                result_img, results, summary, aligned_field = analyze_poligram_model(field_img, pol_df)
+                result_img, results, summary, aligned_field = analyze_poligram_json_model(field_img, pol_data)
 
             st.session_state.result_img = result_img
             st.session_state.aligned_field = aligned_field
@@ -969,18 +946,15 @@ if st.session_state.result_img is not None and st.session_state.summary:
         with m2:
             st.metric("🔎 Kontrol Edilen Slot", summary.get("kontrol_edilen_slot_sayisi", 0))
         with m3:
-            st.metric("⚪ Excel'de Veri Olmayan Slot", summary.get("bos_kabul_edilen_slot_sayisi", 0))
+            st.metric("⚪ Boş / Tanımsız Slot", summary.get("bos_kabul_edilen_slot_sayisi", 0))
 
         if not summary.get("ocr_motoru_aktif", True):
-            st.error("⚠️ OCR motoru (Tesseract) sunucuda kurulu değil. `packages.txt` içine `tesseract-ocr` ve `tesseract-ocr-tur` eklenip yeniden dağıtım (redeploy) yapılmalı.")
-        elif summary.get("kontrol_edilen_slot_sayisi", 0) == 0:
-            st.warning("⚠️ Excel modelinden hiç 'beklenen ürün adı' okunamadı. Bu genelde Excel'in satır/sütun yapısının kod ile uyuşmadığı anlamına gelir — aşağıdaki hata ayıklama tablosuna bakın.")
+            st.error("⚠️ OCR motoru (Tesseract) sunucuda kurulu değil.")
 
     st.image(st.session_state.result_img, channels="BGR", use_container_width=True)
 
     if summary.get("debug_rows"):
-        with st.expander("🛠️ OCR Hata Ayıklama Tablosu (her göz için Beklenen vs Okunan)", expanded=(summary.get("fark", 0) == 0)):
-            st.caption("Bu tablo, Excel'den beklenen ürün adı ile fotoğraftan OCR'ın okuduğu metni göz göz karşılaştırır. 'Beklenen' sütunu hep boş çıkıyorsa Excel yapısı; 'Okunan' sütunu hep '—' çıkıyorsa OCR motoru sorunludur.")
+        with st.expander("🛠️ OCR Hata Ayıklama Tablosu (Beklenen vs Okunan)", expanded=(summary.get("fark", 0) == 0)):
             st.dataframe(pd.DataFrame(summary["debug_rows"]), use_container_width=True, hide_index=True)
 
     d1, d2 = st.columns(2)

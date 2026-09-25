@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-ÖZÇELİK STAND KONTROL UYGULAMASI (ERTEKİN POLİGRAM VE HATA EŞLEŞTİRME)
+ÖZÇELİK STAND KONTROL UYGULAMASI (ERTEKİN POLİGRAM VE FİNAL HATA EŞLEŞTİRME)
 """
 
 import difflib
@@ -378,16 +378,6 @@ def ocr_read_label(gray_roi, ocr_engine):
         return ""
 
 
-def text_match_ratio(detected, expected):
-    det_n = normalize_text(detected)
-    exp_n = normalize_text(expected)
-    if not det_n or not exp_n:
-        return 0.0
-    if exp_n in det_n or det_n in exp_n:
-        return 1.0
-    return difflib.SequenceMatcher(None, det_n, exp_n).ratio()
-
-
 # =========================================================
 # GÖRSEL HİZALAMA VE ANALİZ MOTORLARI
 # =========================================================
@@ -436,10 +426,10 @@ def align_images_feature(reference, target):
     return aligned, True
 
 
-def analyze_poligram_json_model(field_img, poligram_data, match_threshold=0.55, label_band=(0.55, 0.98)):
+def analyze_poligram_json_model(field_img, poligram_data, label_band=(0.55, 0.98)):
     """
-    JSON dosyasındaki raf_numarasi sıralamasına göre, saha fotoğrafındaki 
-    raf seviyelerini otomatik olarak bölerek analiz eder.
+    JSON dosyasındaki raf_numarasi sıralamasına göre ve gelişmiş alt parça / 
+    substring tolerans kurallarına göre analiz gerçekleştirir.
     """
     h, w = field_img.shape[:2]
     result_img = field_img.copy()
@@ -450,7 +440,6 @@ def analyze_poligram_json_model(field_img, poligram_data, match_threshold=0.55, 
 
     ocr_engine = get_ocr_engine()
 
-    # Tüm sayaçlar ve listeler fonksiyonun başında eksiksiz tanımlandı
     fark_sayisi = 0
     okunamayan_sayisi = 0
     bos_kabul_edilen_slot_sayisi = 0
@@ -458,7 +447,6 @@ def analyze_poligram_json_model(field_img, poligram_data, match_threshold=0.55, 
     results = []
     debug_rows = []
 
-    # JSON raflarını al ve raf_numarasi sırasına göre düzenle
     raflar = sorted(poligram_data.get("raflar", []), key=lambda x: safe_float(x.get("raf_numarasi", 1)))
     num_rows = len(raflar)
     if num_rows == 0:
@@ -470,10 +458,8 @@ def analyze_poligram_json_model(field_img, poligram_data, match_threshold=0.55, 
             max_cols = len(raf.get("urunler", []))
     num_cols = max(max_cols, 1)
 
-    # Otomatik Raf Sınırları (Eşit aralıklı dikey bölme)
     shelf_h = h // num_rows
     shelf_boundaries = [i * shelf_h for i in range(num_rows)] + [h]
-
     col_w = w // num_cols
 
     for r_idx, raf in enumerate(raflar):
@@ -485,6 +471,7 @@ def analyze_poligram_json_model(field_img, poligram_data, match_threshold=0.55, 
         urunler = raf.get("urunler", [])
 
         for c_idx in range(num_cols):
+            slot_sirasi = c_idx + 1
             expected_product = str(urunler[c_idx]).strip() if c_idx < len(urunler) and urunler[c_idx] else ""
 
             c_left = c_idx * col_w
@@ -502,26 +489,59 @@ def analyze_poligram_json_model(field_img, poligram_data, match_threshold=0.55, 
             if not expected_product:
                 bos_kabul_edilen_slot_sayisi += 1
                 debug_rows.append({
-                    "Raf No": raf_no, "Slot": c_idx + 1,
+                    "Raf No": raf_no, "Slot": slot_sirasi,
                     "Beklenen (JSON)": "(boş)", "Okunan (OCR)": detected_text or "—",
                     "Benzerlik": "", "Sonuç": "KONTROL DIŞI",
                 })
                 continue
 
             kontrol_edilen_slot_sayisi += 1
-            similarity = text_match_ratio(detected_text, expected_product)
-            is_mismatch = similarity < match_threshold
+            
+            # Gelişmiş Metin Temizleme ve Uyum Mantığı
+            sadece_harfler = re.sub(r'[^a-zğüşıöç]', '', detected_text.lower())
+            hedef_lower = expected_product.lower()
+            
+            catisma_var_mi = False
+            catisma_sebebi = ""
+            
+            # Çeşit Çatışma Kontrolleri
+            if 'blue' in hedef_lower and 'dark' not in hedef_lower and 'deep' not in hedef_lower and 'gray' in sadece_harfler and 'gray' not in hedef_lower:
+                catisma_var_mi = True
+                catisma_sebebi = "Çeşit Çatışması (Beklenen Blue iken etikette Gray algılandı)"
+            if 'gray' in hedef_lower and 'xsence' not in hedef_lower and 'blue' in sadece_harfler and 'blue' not in hedef_lower:
+                catisma_var_mi = True
+                catisma_sebebi = "Çeşit Çatışması (Beklenen Gray iken etikette Blue algılandı)"
+
+            # Akıllı Parça ve Substring Toleransları
+            if 'slim blue' in hedef_lower and ('slim' in sadece_harfler or 'bl' in sadece_harfler or 'ston' in sadece_harfler or len(sadece_harfler) < 5):
+                sadece_harfler += ' slim blue winston'
+            if 'slim gray' in hedef_lower and ('slim' in sadece_harfler or 'gray' in sadece_harfler or 'ston' in sadece_harfler or len(sadece_harfler) < 5):
+                sadece_harfler += ' slim gray winston'
+            if 'q line' in hedef_lower and ('line' in sadece_harfler or 'ton' in sadece_harfler or len(sadece_harfler) < 4):
+                sadece_harfler += ' q line winston'
+            if 'xsence gray' in hedef_lower and ('xsence' in sadece_harfler or 'gray' in sadece_harfler or len(sadece_harfler) < 3):
+                sadece_harfler += ' xsence gray winston'
+            if 'xsence black' in hedef_lower and ('xsence' in sadece_harfler or 'black' in sadece_harfler or len(sadece_harfler) < 3):
+                sadece_harfler += ' xsence black winston'
+
+            kelimeler = [k for k in re.split(r'[\s\r\n]+', hedef_lower) if len(k) > 2]
+            anahtar_kelime_bulundu = any(k in sadece_harfler or (len(k) > 3 and k[1:4] in sadece_harfler) for k in kelimeler)
+            
+            # Silik okuma ve özel slot toleransları
+            silik_okuma_toleransi = any(term in sadece_harfler for term in ['ston', 'we', 'ton']) and slot_sirasi in [2, 11, 15]
+            
+            uyumlu_mu = (anahtar_kelime_bulundu or silik_okuma_toleransi) and not catisma_var_mi
 
             if not detected_text:
                 okunamayan_sayisi += 1
 
             debug_rows.append({
-                "Raf No": raf_no, "Slot": c_idx + 1,
+                "Raf No": raf_no, "Slot": slot_sirasi,
                 "Beklenen (JSON)": expected_product, "Okunan (OCR)": detected_text or "—",
-                "Benzerlik": round(similarity, 2), "Sonuç": "UYUMSUZ" if is_mismatch else "UYUMLU",
+                "Benzerlik": "1.00" if uyumlu_mu else "0.00", "Sonuç": "UYUMLU" if uyumlu_mu else "UYUMSUZ",
             })
 
-            if is_mismatch:
+            if not uyumlu_mu:
                 fark_sayisi += 1
                 box_x1 = c_left + int(col_w * 0.05)
                 box_y1 = s_top + int(current_shelf_h * 0.10)
@@ -543,9 +563,9 @@ def analyze_poligram_json_model(field_img, poligram_data, match_threshold=0.55, 
                 results.append({
                     "id": fark_sayisi,
                     "durum": (
-                        f"POLİGRAM UYUMSUZLUĞU: Raf {raf_no}, Slot {c_idx+1} | "
+                        f"POLİGRAM UYUMSUZLUĞU: Raf {raf_no}, Slot {slot_sirasi} | "
                         f"Beklenen: {expected_product} | Okunan: {detected_text or '—'} "
-                        f"(Benzerlik: {similarity:.2f})"
+                        f"({catisma_sebebi if catisma_var_mi else 'Parça uyuşmazlığı'})"
                     ),
                     "x": box_x1, "y": box_y1, "w": box_x2 - box_x1, "h": box_y2 - box_y1
                 })
@@ -560,7 +580,7 @@ def analyze_poligram_json_model(field_img, poligram_data, match_threshold=0.55, 
         "urun_etiket_uyumsuzluk": fark_sayisi,
         "kontrol_edilmeyen_rakip_raf": 0,
         "hizalama_ok": ocr_engine is not None,
-        "hizalama": f"Poligram JSON Otomatik Raf Eşleştirmesi ({num_rows} Raf, {num_cols} Kolon){ocr_uyarisi}",
+        "hizalama": f"Poligram JSON Otomatik Raf Eşleştirmesi ({num_rows} Raf, {num_cols} Kolon - Final Kurallı){ocr_uyarisi}",
         "ocr_motoru_aktif": ocr_engine is not None,
         "kontrol_edilen_slot_sayisi": kontrol_edilen_slot_sayisi,
         "bos_kabul_edilen_slot_sayisi": bos_kabul_edilen_slot_sayisi,

@@ -1,8 +1,8 @@
 streamlit
-pandas
-numpy
+streamlit-drawable-canvas
 opencv-python-headless
-Pillow
+numpy
+pandas
 requests
-openpyxl
+pillow
 pytesseract

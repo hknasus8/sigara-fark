@@ -450,10 +450,10 @@ def analyze_poligram_json_model(field_img, poligram_data, match_threshold=0.55, 
 
     ocr_engine = get_ocr_engine()
 
-    # Sayaçların ve listelerin en başta tanımlanması
+    # Tüm sayaçlar ve listeler fonksiyonun başında eksiksiz tanımlandı
     fark_sayisi = 0
     okunamayan_sayisi = 0
-    bos_kabul_edilen_sayisi = 0
+    bos_kabul_edilen_slot_sayisi = 0
     kontrol_edilen_slot_sayisi = 0
     results = []
     debug_rows = []
@@ -500,7 +500,7 @@ def analyze_poligram_json_model(field_img, poligram_data, match_threshold=0.55, 
             detected_text = ocr_read_label(roi, ocr_engine)
 
             if not expected_product:
-                bos_kabul_edilen_sayisi += 1
+                bos_kabul_edilen_slot_sayisi += 1
                 debug_rows.append({
                     "Raf No": raf_no, "Slot": c_idx + 1,
                     "Beklenen (JSON)": "(boş)", "Okunan (OCR)": detected_text or "—",

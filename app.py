@@ -220,34 +220,57 @@ def get_dealers(public_key, city):
 
 @st.cache_data(ttl=600, show_spinner=False)
 def get_yandex_poligram_models(public_key):
+    """
+    Yandex disk üzerinde esnek poligram arama fonksiyonu:
+    Önce kök dizine bakar, sonra alt klasörleri (BAYİ vb.) tarayarak 
+    içinde 'POLIGRAM' geçen klasörü veya doğrudan excel dosyalarını bulur.
+    """
     root_items, error = yandex_root_items(public_key)
     if error:
         return [], error
     
     poligram_folder_path = None
-    for item in root_items:
-        if normalize_text(item.get("name")) == "BAYI" and item.get("type") == "dir":
-            sub_items, _ = yandex_list_dir(public_key, item.get("path", ""))
-            for sub in sub_items:
-                if normalize_text(sub.get("name")) == "POLIGRAM" and sub.get("type") == "dir":
-                    poligram_folder_path = sub.get("path")
-                    break
-            break
-
-    if not poligram_folder_path:
-        return [], "BAYI/POLİGRAM klasörü Yandex üzerinde bulunamadı."
-
-    items, error = yandex_list_dir(public_key, poligram_folder_path)
-    if error:
-        return [], error
-
     poligram_files = []
-    for item in items:
-        if item.get("type") == "file":
-            name = item.get("name", "")
-            if name.lower().endswith((".xlsx", ".xls")):
-                poligram_files.append({"name": name, "file_url": item.get("file")})
-                
+
+    # 1. Aşama: Kök dizinde doğrudan POLIGRAM klasörü veya dosyaları var mı?
+    for item in root_items:
+        name_norm = normalize_text(item.get("name"))
+        if "POLIGRAM" in name_norm:
+            if item.get("type") == "dir":
+                poligram_folder_path = item.get("path")
+                break
+            elif item.get("type") == "file" and item.get("name", "").lower().endswith((".xlsx", ".xls")):
+                poligram_files.append({"name": item.get("name"), "file_url": item.get("file")})
+
+    # 2. Aşama: Eğer kökte bulunamadıysa alt klasörleri (örn: BAYİ) tara
+    if not poligram_folder_path and not poligram_files:
+        for item in root_items:
+            if item.get("type") == "dir":
+                sub_items, _ = yandex_list_dir(public_key, item.get("path", ""))
+                for sub in sub_items:
+                    sub_name_norm = normalize_text(sub.get("name"))
+                    if "POLIGRAM" in sub_name_norm:
+                        if sub.get("type") == "dir":
+                            poligram_folder_path = sub.get("path")
+                            break
+                        elif sub.get("type") == "file" and sub.get("name", "").lower().endswith((".xlsx", ".xls")):
+                            poligram_files.append({"name": sub.get("name"), "file_url": sub.get("file")})
+                if poligram_folder_path:
+                    break
+
+    # 3. Aşama: Bulunan POLIGRAM klasörünün içindeki excel dosyalarını listele
+    if poligram_folder_path:
+        items, error = yandex_list_dir(public_key, poligram_folder_path)
+        if not error:
+            for item in items:
+                if item.get("type") == "file":
+                    name = item.get("name", "")
+                    if name.lower().endswith((".xlsx", ".xls")):
+                        poligram_files.append({"name": name, "file_url": item.get("file")})
+
+    if not poligram_files:
+        return [], "Yandex Disk üzerinde 'POLİGRAM' içeren klasör veya Excel dosyası bulunamadı."
+
     return poligram_files, None
 
 
@@ -665,7 +688,7 @@ if kontrol_modu == "Standart Referans Kontrolü":
             dealer_name = dealer_choices[selected_raw_dealer]["raw_name"]
             dealer_path = dealer_choices[selected_raw_dealer]["path"]
 else:
-    st.subheader("1. POLİGRAM Modeli Seçiniz (Yandex Disk: BAYİ/POLİGRAM)")
+    st.subheader("1. POLİGRAM Modeli Seçiniz (Yandex Disk)")
     yandex_poligrams, pol_error = get_yandex_poligram_models(YANDEX_ROOT_PUBLIC_KEY)
     if pol_error:
         st.warning(str(pol_error))

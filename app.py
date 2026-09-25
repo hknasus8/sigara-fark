@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-ÖZÇELİK STAND KONTROL UYGULAMASI (GÜNCELLENMİŞ TAM KOD)
+ÖZÇELİK STAND KONTROL UYGULAMASI (JSON ODAKLI GÜNCELLENMİŞ SÜRÜM)
 """
 
 import hmac
@@ -100,7 +100,7 @@ def ocr_read_label(gray_roi, ocr_engine):
 
 
 # =========================================================
-# ANALİZ MOTORU
+# ANALİZ MOTORU (JSON UYUMLU)
 # =========================================================
 def analyze_custom_slots(field_img, json_data, raf_boxes):
     h, w = field_img.shape[:2]
@@ -150,33 +150,23 @@ def analyze_custom_slots(field_img, json_data, raf_boxes):
             sadece_harfler = re.sub(r'[^a-zğüşıöç]', '', ham_metin.lower())
             hedef_lower = olmasi_gereken_urun.lower()
 
-            catisma_var_mi = False
-            if 'blue' in hedef_lower and 'dark' not in hedef_lower and 'deep' not in hedef_lower and 'gray' in sadece_harfler and 'gray' not in hedef_lower:
-                catisma_var_mi = True
-            if 'gray' in hedef_lower and 'xsence' not in hedef_lower and 'blue' in sadece_harfler and 'blue' not in hedef_lower:
-                catisma_var_mi = True
+            # JSON'daki ürün adını anlamlı anahtar kelimelere ayır (örn: "Camel Deep Blue" -> ["camel", "deep", "blue"])
+            json_kelimeleri = [w for w in re.findall(r'[a-zğüşıöç]+', hedef_lower) if len(w) > 2]
 
-            if 'slim blue' in hedef_lower and ('slim' in sadece_harfler or 'bl' in sadece_harfler or 'ston' in sadece_harfler or len(sadece_harfler) < 5):
-                sadece_harfler += ' slim blue winston'
-            if 'slim gray' in hedef_lower and ('slim' in sadece_harfler or 'gray' in sadece_harfler or 'ston' in sadece_harfler or len(sadece_harfler) < 5):
-                sadece_harfler += ' slim gray winston'
-            if 'q line' in hedef_lower and ('line' in sadece_harfler or 'ton' in sadece_harfler or len(sadece_harfler) < 4):
-                sadece_harfler += ' q line winston'
-            if 'xsence gray' in hedef_lower and ('xsence' in sadece_harfler or 'gray' in sadece_harfler or len(sadece_harfler) < 3):
-                sadece_harfler += ' xsence gray winston'
-            if 'xsence black' in hedef_lower and ('xsence' in sadece_harfler or 'black' in sadece_harfler or len(sadece_harfler) < 3):
-                sadece_harfler += ' xsence black winston'
+            # Doğrudan JSON kelimelerinin taranan etikette geçip geçmediğini kontrol et
+            if json_kelimeleri:
+                uyumlu_mu = any(kw in sadece_harfler for kw in json_kelimeleri)
+            else:
+                uyumlu_mu = True
 
-            kelimeler = [k for k in re.split(r'[\s\r\n]+', hedef_lower) if len(k) > 2]
-            anahtar_kelime_bulundu = any(k in sadece_harfler or (len(k) > 3 and k[1:4] in sadece_harfler) for k in kelimeler)
-            
-            silik_okuma_toleransi = any(term in sadece_harfler for term in ['ston', 'we', 'ton']) and slot_sirasi in [2, 11, 15]
-            uyumlu_mu = (anahtar_kelime_bulundu or silik_okuma_toleransi) and not catisma_var_mi
+            # Eğer okunan metin çok boşsa veya hiç kelime tutturamadıysa ama etiket alanı dolu görünüyorsa esneklik tanıyalım
+            if not uyumlu_mu and len(sadece_harfler) <= 2 and len(ham_metin) > 0:
+                uyumlu_mu = True # Silik okumalar için tolerans
 
             debug_rows.append({
                 "Raf No": raf_no,
                 "Slot": slot_sirasi,
-                "Beklenen": olmasi_gereken_urun,
+                "Beklenen (JSON)": olmasi_gereken_urun,
                 "Okunan Ham": ham_metin or "—",
                 "Durum": "UYUMLU" if uyumlu_mu else "HATALI"
             })
@@ -268,7 +258,6 @@ if st.session_state.json_data and st.session_state.field_img is not None:
     pil_img = Image.fromarray(cv2.cvtColor(st.session_state.field_img, cv2.COLOR_BGR2RGB))
     img_w, img_h = pil_img.size
 
-    # Güncellenmiş st_canvas bileşeni (update_streamlit=True yapıldı)
     canvas_result = st_canvas(
         fill_color="rgba(255, 165, 0, 0.3)",
         stroke_width=3,

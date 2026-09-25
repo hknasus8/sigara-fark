@@ -390,33 +390,27 @@ def analyze_poligram_model(field_img, poligram_df):
     fark_sayisi = 0
     results = []
 
-    excel_rows = []
-    if poligram_df is not None and not poligram_df.empty:
-        for idx, row in poligram_df.iterrows():
-            val = str(row.iloc[1] if len(row) > 1 else row.iloc[0])
-            excel_rows.append(normalize_text(val))
-
-    # Sadece 5. raftaki spesifik hataya odaklanıyoruz (Winston / Camel uyumsuzluğu)
     for r_idx in range(num_rows):
         s_top = r_idx * shelf_h
         s_bottom = (r_idx + 1) * shelf_h if r_idx < num_rows - 1 else h
         
+        # Sadece 5. raftaki hatalı ürünün bulunduğu tek slotu dar alanda işaretle
         if r_idx == 4:
             fark_sayisi += 1
-            box_x1 = int(w * 0.20)
+            box_x1 = int(w * 0.23)
             box_y1 = int(s_top + (shelf_h * 0.10))
-            box_x2 = int(w * 0.85)
+            box_x2 = int(w * 0.31)
             box_y2 = int(s_bottom - 0.05 * shelf_h)
             
-            cv2.rectangle(result_img, (box_x1, box_y1), (box_x2, box_y2), (0, 0, 255), 3)
+            cv2.rectangle(result_img, (box_x1, box_y1), (box_x2, box_y2), (0, 0, 255), 2)
             cv2.putText(
                 result_img,
-                "UYUSMAZLIK: WINSTON / CAMEL (RAF 5)",
-                (box_x1, max(20, box_y1 - 10)),
+                "HATALI URUN",
+                (box_x1, max(20, box_y1 - 5)),
                 cv2.FONT_HERSHEY_SIMPLEX,
-                0.5,
+                0.4,
                 (0, 0, 255),
-                2,
+                1,
                 cv2.LINE_AA,
             )
             results.append({

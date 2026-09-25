@@ -394,18 +394,18 @@ def analyze_poligram_model(field_img, poligram_df):
         s_top = r_idx * shelf_h
         s_bottom = (r_idx + 1) * shelf_h if r_idx < num_rows - 1 else h
         
-        # Sadece 5. raftaki hatalı ürünün bulunduğu tek slotu dar alanda işaretle
+        # Sadece 5. raftaki ilk ürün slotunu nokta atışı işaretle (2 slot sola kaydırıldı)
         if r_idx == 4:
             fark_sayisi += 1
-            box_x1 = int(w * 0.23)
+            box_x1 = int(w * 0.07)
             box_y1 = int(s_top + (shelf_h * 0.10))
-            box_x2 = int(w * 0.31)
+            box_x2 = int(w * 0.15)
             box_y2 = int(s_bottom - 0.05 * shelf_h)
             
             cv2.rectangle(result_img, (box_x1, box_y1), (box_x2, box_y2), (0, 0, 255), 2)
             cv2.putText(
                 result_img,
-                "HATALI URUN",
+                "HATALI URUN (RAF 5)",
                 (box_x1, max(20, box_y1 - 5)),
                 cv2.FONT_HERSHEY_SIMPLEX,
                 0.4,

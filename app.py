@@ -308,12 +308,12 @@ def load_excel_from_url(public_key, file_item):
                 if href:
                     file_res = requests.get(href, timeout=20)
                     if file_res.status_code == 200:
-                        return pd.read_excel(io.BytesIO(file_res.content), sheet_name=0)
+                        return pd.read_excel(io.BytesIO(file_res.content), sheet_name=0, engine='openpyxl')
 
         if download_url:
             response = requests.get(download_url, headers={"User-Agent": "Mozilla/5.0"}, timeout=20)
             if response.status_code == 200:
-                return pd.read_excel(io.BytesIO(response.content), sheet_name=0)
+                return pd.read_excel(io.BytesIO(response.content), sheet_name=0, engine='openpyxl')
     except Exception as e:
         print("Excel yükleme hatası:", e)
     return None
@@ -769,7 +769,7 @@ st.divider()
 if kontrol_modu == "Standart Referans Kontrolü":
     ready = ref_img is not None and field_img is not None
 else:
-    ready = selected_poligram_item is not None and field_img is not None
+    ready = selected_poligram_item is not None and field_img is not None and 'pol_df' in locals() and pol_df is not None
 
 if st.button("🚀 KONTROLÜ BAŞLAT", type="primary", use_container_width=True, disabled=not ready):
     st.session_state.result_img = None

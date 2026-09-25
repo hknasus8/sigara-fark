@@ -454,7 +454,10 @@ def analyze_poligram_model(field_img, poligram_df, match_threshold=0.55, label_b
 
     fark_sayisi = 0
     okunamayan_sayisi = 0
+    bos_kabul_edilen_sayisi = 0
+    kontrol_edilen_slot_sayisi = 0
     results = []
+    debug_rows = []  # Her göz için: raf, slot, beklenen, okunan, benzerlik, sonuç (hata ayıklama tablosu için)
 
     for r_idx in range(num_rows):
         s_top = r_idx * shelf_h
@@ -469,10 +472,6 @@ def analyze_poligram_model(field_img, poligram_df, match_threshold=0.55, label_b
             expected_raw = row_data.iloc[c_idx + 1] if row_data is not None and (c_idx + 1) < len(row_data) else None
             expected_product = "" if expected_raw is None or pd.isna(expected_raw) else str(expected_raw).strip()
 
-            # Poligram modelinde o slot boş bırakılmışsa (ürün beklenmiyorsa) kontrol dışı bırak
-            if not expected_product:
-                continue
-
             c_left = c_idx * col_w
             c_right = (c_idx + 1) * col_w if c_idx < num_cols - 1 else w
 
@@ -481,12 +480,31 @@ def analyze_poligram_model(field_img, poligram_df, match_threshold=0.55, label_b
             label_bottom = s_top + int(shelf_h * label_band[1])
             roi = gray_clahe[label_top:label_bottom, c_left:c_right]
 
+            # Debug/kalibrasyon için OCR'ı beklenen boş olsa bile çalıştırıyoruz ki okunan metni görebilesiniz
             detected_text = ocr_read_label(roi, ocr_engine)
+
+            # Poligram modelinde o slot boş bırakılmışsa (ürün beklenmiyorsa) kontrol dışı bırak
+            if not expected_product:
+                bos_kabul_edilen_sayisi += 1
+                debug_rows.append({
+                    "Raf": r_idx + 1, "Slot": c_idx + 1,
+                    "Beklenen (Excel)": "(boş/okunamadı)", "Okunan (OCR)": detected_text or "—",
+                    "Benzerlik": "", "Sonuç": "KONTROL DIŞI (Excel'de veri yok)",
+                })
+                continue
+
+            kontrol_edilen_slot_sayisi += 1
             similarity = text_match_ratio(detected_text, expected_product)
             is_mismatch = similarity < match_threshold
 
             if not detected_text:
                 okunamayan_sayisi += 1
+
+            debug_rows.append({
+                "Raf": r_idx + 1, "Slot": c_idx + 1,
+                "Beklenen (Excel)": expected_product, "Okunan (OCR)": detected_text or "—",
+                "Benzerlik": round(similarity, 2), "Sonuç": "UYUMSUZ" if is_mismatch else "UYUMLU",
+            })
 
             if is_mismatch:
                 fark_sayisi += 1
@@ -520,6 +538,8 @@ def analyze_poligram_model(field_img, poligram_df, match_threshold=0.55, label_b
     ocr_uyarisi = ""
     if ocr_engine is None:
         ocr_uyarisi = " | UYARI: OCR motoru (pytesseract/tesseract) sunucuda kurulu değil, hiçbir etiket okunamadı."
+    elif bos_kabul_edilen_sayisi == num_rows * num_cols:
+        ocr_uyarisi = " | UYARI: Excel'den hiçbir beklenen ürün adı okunamadı — Excel'in satır/sütun yapısını kontrol edin."
 
     summary = {
         "fark": fark_sayisi,
@@ -528,6 +548,10 @@ def analyze_poligram_model(field_img, poligram_df, match_threshold=0.55, label_b
         "kontrol_edilmeyen_rakip_raf": 0,
         "hizalama_ok": ocr_engine is not None,
         "hizalama": f"Poligram OCR Eşleştirmesi ({num_rows} Raf, {num_cols} Kolon){ocr_uyarisi}",
+        "ocr_motoru_aktif": ocr_engine is not None,
+        "kontrol_edilen_slot_sayisi": kontrol_edilen_slot_sayisi,
+        "bos_kabul_edilen_slot_sayisi": bos_kabul_edilen_sayisi,
+        "debug_rows": debug_rows,
     }
     return result_img, results, summary, field_img
 
@@ -893,9 +917,27 @@ if st.button("🚀 KONTROLÜ BAŞLAT", type="primary", use_container_width=True,
 
 if st.session_state.result_img is not None and st.session_state.summary:
     summary = st.session_state.summary
-    
-    st.metric("🚨 Tespit Edilen Toplam Fark / Uyumsuzluk", summary.get("fark", 0))
+
+    m1, m2, m3 = st.columns(3)
+    with m1:
+        st.metric("🚨 Tespit Edilen Toplam Fark / Uyumsuzluk", summary.get("fark", 0))
+    if "debug_rows" in summary:
+        with m2:
+            st.metric("🔎 Kontrol Edilen Slot", summary.get("kontrol_edilen_slot_sayisi", 0))
+        with m3:
+            st.metric("⚪ Excel'de Veri Olmayan Slot", summary.get("bos_kabul_edilen_slot_sayisi", 0))
+
+        if not summary.get("ocr_motoru_aktif", True):
+            st.error("⚠️ OCR motoru (Tesseract) sunucuda kurulu değil. `packages.txt` içine `tesseract-ocr` ve `tesseract-ocr-tur` eklenip yeniden dağıtım (redeploy) yapılmalı.")
+        elif summary.get("kontrol_edilen_slot_sayisi", 0) == 0:
+            st.warning("⚠️ Excel modelinden hiç 'beklenen ürün adı' okunamadı. Bu genelde Excel'in satır/sütun yapısının kod ile uyuşmadığı anlamına gelir — aşağıdaki hata ayıklama tablosuna bakın.")
+
     st.image(st.session_state.result_img, channels="BGR", use_container_width=True)
+
+    if summary.get("debug_rows"):
+        with st.expander("🛠️ OCR Hata Ayıklama Tablosu (her göz için Beklenen vs Okunan)", expanded=(summary.get("fark", 0) == 0)):
+            st.caption("Bu tablo, Excel'den beklenen ürün adı ile fotoğraftan OCR'ın okuduğu metni göz göz karşılaştırır. 'Beklenen' sütunu hep boş çıkıyorsa Excel yapısı; 'Okunan' sütunu hep '—' çıkıyorsa OCR motoru sorunludur.")
+            st.dataframe(pd.DataFrame(summary["debug_rows"]), use_container_width=True, hide_index=True)
 
     d1, d2 = st.columns(2)
     ok, encoded = cv2.imencode(".jpg", st.session_state.result_img)

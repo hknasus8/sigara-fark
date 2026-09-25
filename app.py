@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-ÖZÇELİK STAND KONTROL UYGULAMASI (OTOMATİK ALGILAMALI MOUSE İLE RAF İŞARETLEME)
+ÖZÇELİK STAND KONTROL UYGULAMASI (GÜNCELLENMİŞ CANVAS MANTIĞI)
 """
 
 import hmac
@@ -263,7 +263,7 @@ if st.session_state.json_data and st.session_state.field_img is not None:
     
     selected_raf_no = st.selectbox("Kontrol Edilecek Rafı Seçin:", options=list(raf_secenekleri.keys()), format_func=lambda x: raf_secenekleri[x])
 
-    st.markdown("👇 **Fotoğraf üzerinde farenizle ilgili raf etiket alanını çizin (Çizdiğiniz anda otomatik kaydedilir):**")
+    st.markdown("👇 **Fotoğraf üzerinde farenizle ilgili raf etiket alanını çizin:**")
 
     pil_img = Image.fromarray(cv2.cvtColor(st.session_state.field_img, cv2.COLOR_BGR2RGB))
     img_w, img_h = pil_img.size
@@ -280,32 +280,35 @@ if st.session_state.json_data and st.session_state.field_img is not None:
         key="canvas_raf_cizim",
     )
 
-    # Otomatik algılama ve kayıt mekanizması
-    if canvas_result.json_data is not None:
-        objects = canvas_result.json_data.get("objects", [])
-        if objects:
-            latest_obj = objects[-1]
-            if latest_obj.get("type") == "rect":
-                box_data = {
-                    "raf_numarasi": selected_raf_no,
-                    "x": int(latest_obj["left"]),
-                    "y": int(latest_obj["top"]),
-                    "width": int(latest_obj["width"] * latest_obj["scaleX"]),
-                    "height": int(latest_obj["height"] * latest_obj["scaleY"])
-                }
-                # Listede bu raf varsa güncelle, yoksa ekle
-                st.session_state.saved_raf_boxes = [b for b in st.session_state.saved_raf_boxes if b["raf_numarasi"] != selected_raf_no]
-                st.session_state.saved_raf_boxes.append(box_data)
+    # Çizilen kutuyu hafızaya alan açık bir kayıt butonu ekleyelim ki veri kaybı yaşanmasın
+    if st.button("💾 Bu Raf Alanını Hafızaya Kaydet", type="primary"):
+        if canvas_result.json_data is not None:
+            objects = canvas_result.json_data.get("objects", [])
+            if objects:
+                latest_obj = objects[-1]
+                if latest_obj.get("type") == "rect":
+                    box_data = {
+                        "raf_numarasi": selected_raf_no,
+                        "x": int(latest_obj["left"]),
+                        "y": int(latest_obj["top"]),
+                        "width": int(latest_obj["width"] * latest_obj["scaleX"]),
+                        "height": int(latest_obj["height"] * latest_obj["scaleY"])
+                    }
+                    st.session_state.saved_raf_boxes = [b for b in st.session_state.saved_raf_boxes if b["raf_numarasi"] != selected_raf_no]
+                    st.session_state.saved_raf_boxes.append(box_data)
+                    st.success(f"✅ Raf {selected_raf_no} alanı başarıyla kaydedildi! Artık karşılaştırma yapabilirsiniz.")
+            else:
+                st.warning("⚠️ Lütfen önce görsel üzerinde bir kutu çizin.")
 
     if st.session_state.saved_raf_boxes:
-        st.success(f"✅ Toplam {len(st.session_state.saved_raf_boxes)} adet raf alanı başarıyla hafızaya alındı!")
+        st.info(f"💡 Hafızada kayıtlı raf sayısı: {len(st.session_state.saved_raf_boxes)}")
 
 st.divider()
 
-# Karşılaştırma Butonu (Alan çizildiği an otomatik aktifleşir)
+# Karşılaştırma Butonu (Kayıt tuşuna basılıp hafızaya alındığı an aktifleşir)
 kontrol_aktif = st.session_state.json_data is not None and st.session_state.field_img is not None and len(st.session_state.saved_raf_boxes) > 0
 
-if st.button("🚀 Sıralamayı Karşılaştır", type="primary", use_container_width=True, disabled=not kontrol_aktif):
+if st.button("🚀 Sıralamayı Karşılaştır", type="primary", use_container_width=True, disabled=not kontrol_atif if 'kontrol_atif' in locals() else not kontrol_aktif):
     with st.spinner("Görseller işleniyor ve taranıyor, lütfen bekleyin..."):
         try:
             result_img, summary = analyze_custom_slots(st.session_state.field_img, st.session_state.json_data, st.session_state.saved_raf_boxes)

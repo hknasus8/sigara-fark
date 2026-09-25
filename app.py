@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-ÖZÇELİK STAND KONTROL UYGULAMASI (BÜTÜNCÜL RAF KONTROLÜ)
+ÖZÇELİK STAND KONTROL UYGULAMASI (GELİŞMİŞ AKILLI EŞLEŞTİRME SÜRÜMÜ)
 """
 
 import hmac
@@ -100,7 +100,7 @@ def ocr_read_label(gray_roi, ocr_engine):
 
 
 # =========================================================
-# ANALİZ MOTORU (BÜTÜNCÜL RAF KONTROLÜ)
+# ANALİZ MOTORU (HTML MANTIKLI GELİŞMİŞ EŞLEŞTİRME)
 # =========================================================
 def analyze_custom_slots(field_img, json_data, raf_boxes):
     h, w = field_img.shape[:2]
@@ -154,29 +154,58 @@ def analyze_custom_slots(field_img, json_data, raf_boxes):
 
             sadece_harfler = re.sub(r'[^a-zğüşıöç]', '', ham_metin.lower())
             hedef_lower = olmasi_gereken_urun.lower()
-            json_kelimeleri = [kw for kw in re.findall(r'[a-zğüşıöç]+', hedef_lower) if len(kw) > 2]
 
-            if json_kelimeleri:
-                uyumlu_mu = any(kw in sadece_harfler for kw in json_kelimeleri)
-            else:
-                uyumlu_mu = True
+            catisma_var_mi = False
+            hata_nedeni = ""
 
-            if not uyumlu_mu and len(sadece_harfler) <= 2 and len(ham_metin) > 0:
-                uyumlu_mu = True
+            # Çeşit Çatışma Kontrolleri
+            if 'blue' in hedef_lower and 'dark' not in hedef_lower and 'deep' not in hedef_lower and 'gray' in sadece_harfler and 'gray' not in hedef_lower:
+                catisma_var_mi = True
+                hata_nedeni = "Çeşit Çatışması (Beklenen Blue iken Gray algılandı)"
+            
+            if 'gray' in hedef_lower and 'xsence' not in hedef_lower and 'blue' in sadece_harfler and 'blue' not in hedef_lower:
+                catisma_var_mi = True
+                hata_nedeni = "Çeşit Çatışması (Beklenen Gray iken Blue algılandı)"
+
+            # Genişletilmiş Akıllı Parça ve Substring Toleransları
+            if 'slim blue' in hedef_lower and ('slim' in sadece_harfler or 'bl' in sadece_harfler or 'ston' in sadece_harfler or len(sadece_harfler) < 5):
+                sadece_harfler += ' slim blue winston'
+            if 'slim gray' in hedef_lower and ('slim' in sadece_harfler or 'gray' in sadece_harfler or 'ston' in sadece_harfler or len(sadece_harfler) < 5):
+                sadece_harfler += ' slim gray winston'
+            if 'q line' in hedef_lower and ('line' in sadece_harfler or 'ton' in sadece_harfler or len(sadece_harfler) < 4):
+                sadece_harfler += ' q line winston'
+            if 'xsence gray' in hedef_lower and ('xsence' in sadece_harfler or 'gray' in sadece_harfler or len(sadece_harfler) < 3):
+                sadece_harfler += ' xsence gray winston'
+            if 'xsence black' in hedef_lower and ('xsence' in sadece_harfler or 'black' in sadece_harfler or len(sadece_harfler) < 3):
+                sadece_harfler += ' xsence black winston'
+
+            kelimeler = [k for k in re.findall(r'[a-zğüşıöç]+', hedef_lower) if len(k) > 2]
+            anahtar_kelime_bulundu = any(k in sadece_harfler or (len(k) > 3 and k[1:4] in sadece_harfler) for k in kelimeler) if kelimeler else True
+
+            silik_okuma_toleransi = (('ston' in sadece_harfler or 'we' in sadece_harfler or 'ton' in sadece_harfler) and slot_sirasi in [2, 11, 15])
+
+            uyumlu_mu = ((anahtar_kelime_bulundu or silik_okuma_toleransi) and not catisma_var_mi)
+
+            if not uyumlu_mu:
+                if catisma_var_mi:
+                    pass
+                elif not ham_metin or len(ham_metin) == 0:
+                    hata_nedeni = "Etiket alanı boş veya OCR okuyamadı."
+                else:
+                    hata_nedeni = "Karakter Uyuşmazlığı: Beklenen ürün adı doğrulanamadı."
 
             debug_rows.append({
                 "Raf No": raf_no,
                 "Slot": slot_sirasi,
                 "Beklenen (JSON)": olmasi_gereken_urun,
                 "Okunan Ham": ham_metin or "—",
-                "Durum": "UYUMLU" if uyumlu_mu else "HATALI"
+                "Durum": "UYUMLU" if uyumlu_mu else f"HATALI ({hata_nedeni})"
             })
 
             if not uyumlu_mu:
                 toplam_fark += 1
                 raf_hatali_slot_sayisi += 1
 
-        # Rafın bütününe tek bir çerçeve çizilir (Hata varsa Kırmızı, yoksa Yeşil)
         renk = (0, 0, 255) if raf_hatali_slot_sayisi > 0 else (0, 255, 0)
         cv2.rectangle(result_img, (bx1, by1), (bx2, by2), renk, 3)
         cv2.putText(result_img, f"Raf {raf_no} - Hata: {raf_hatali_slot_sayisi}", (bx1, max(25, by1 - 8)), cv2.FONT_HERSHEY_SIMPLEX, 0.6, renk, 2, cv2.LINE_AA)

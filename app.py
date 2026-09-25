@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-ÖZÇELİK STAND KONTROL UYGULAMASI (HTML STANDART KONTROLÜ PYTHON UYARLAMASI)
+ÖZÇELİK STAND KONTROL UYGULAMASI (MOUSE İLE ALAN ÇİZME ÖZELLİKLİ)
 """
 
 import hashlib
@@ -17,13 +17,14 @@ import numpy as np
 import pandas as pd
 import requests
 import streamlit as st
+from streamlit_drawable_canvas import st_canvas
 
 
 # =========================================================
 # SAYFA YAPILANDIRMASI
 # =========================================================
 st.set_page_config(
-    page_title="Kesin Sıralama dan Uyum Kontrol Paneli",
+    page_title="Kesin Sıralama ve Uyum Kontrol Paneli",
     page_icon="📊",
     layout="wide",
     initial_sidebar_state="collapsed",
@@ -75,7 +76,7 @@ def decode_uploaded(uploaded_file):
         return None
 
 
-def resize_keep_ratio(img, max_width=1200, max_height=1800):
+def resize_keep_ratio(img, max_width=1000, max_height=1500):
     if img is None:
         return None
     h, w = img.shape[:2]
@@ -92,7 +93,7 @@ def resize_keep_ratio(img, max_width=1200, max_height=1800):
 
 
 def prepare_image(img):
-    return resize_keep_ratio(img, max_width=1200, max_height=1800)
+    return resize_keep_ratio(img, max_width=1000, max_height=1500)
 
 
 # =========================================================
@@ -132,7 +133,7 @@ def ocr_read_label(gray_roi, ocr_engine):
 
 
 # =========================================================
-# ANALİZ MOTORU (HTML MANTIĞI)
+# ANALİZ MOTORU
 # =========================================================
 def analyze_custom_slots(field_img, json_data, raf_boxes):
     h, w = field_img.shape[:2]
@@ -246,7 +247,6 @@ def analyze_custom_slots(field_img, json_data, raf_boxes):
 DEFAULT_STATE = {
     "authenticated": False,
     "json_data": None,
-    "raf_boxes": [],
     "result_img": None,
     "summary": None,
 }
@@ -299,50 +299,61 @@ st.subheader("2. Stand Saha Fotoğrafını Seçin")
 image_file = st.file_uploader("Saha fotoğrafı yükleyin", type=["jpg", "jpeg", "png", "webp"], key="image_uploader")
 field_img = prepare_image(decode_uploaded(image_file)) if image_file is not None else None
 
-st.subheader("3. Raf Alanlarını Tanımlayın")
+st.subheader("3. Raf Alanlarını Fare ile Çizin")
+raf_boxes = []
+
 if st.session_state.json_data and field_img is not None:
     raflar = st.session_state.json_data.get("raflar", [])
     raf_secenekleri = {r["raf_numarasi"]: f"Raf {r['raf_numarasi']} (Sıralama: {', '.join(r.get('urunler',[]))})" for r in raflar}
     
     selected_raf_no = st.selectbox("Çizeceğiniz Alan Hangi Rafa Ait?", options=list(raf_secenekleri.keys()), format_func=lambda x: raf_secenekleri[x])
 
-    h, w = field_img.shape[:2]
-    
-    col_a, col_b, col_c, col_d = st.columns(4)
-    with col_a:
-        box_x = st.number_input("Başlangıç X", value=0, min_value=0, max_value=w)
-    with col_b:
-        box_y = st.number_input("Başlangıç Y", value=0, min_value=0, max_value=h)
-    with col_c:
-        box_w = st.number_input("Genişlik (Width)", value=w, min_value=10, max_value=w)
-    with col_d:
-        box_h = st.number_input("Yükseklik (Height)", value=int(h / max(len(raflar), 1)), min_value=10, max_value=h)
+    st.markdown("👇 **Aşağıdaki görsel üzerine farenizle tıklayıp sürükleyerek ilgili raf alanını (kutuyu) çizin:**")
 
-    if st.button("➕ Bu Raf Alanını Kaydet"):
-        st.session_state.raf_boxes = [b for b in st.session_state.raf_boxes if b["raf_numarasi"] != selected_raf_no]
-        st.session_state.raf_boxes.append({
-            "raf_numarasi": selected_raf_no,
-            "x": box_x, "y": box_y, "width": box_w, "height": box_h
-        })
-        st.success(f"Raf {selected_raf_no} alanı kaydedildi.")
+    # PIL Image formatına dönüştürme
+    img_rgb = cv2.cvtColor(field_img, cv2.COLOR_BGR2RGB)
+    pil_img = Image.fromarray(img_rgb)
+    img_w, img_h = pil_img.size
 
-    if st.session_state.raf_boxes:
-        st.write("Kaydedilen Raf Alanları:")
-        st.json(st.session_state.raf_boxes)
+    # Drawable Canvas bileşeni
+    canvas_result = st_canvas(
+        fill_color="rgba(255, 165, 0, 0.3)",
+        stroke_width=3,
+        stroke_color="red",
+        background_image=pil_img,
+        update_streamlit=True,
+        height=img_h,
+        width=img_w,
+        drawing_mode="rect",
+        key="canvas_raf_cizim",
+    )
 
-    if st.button("🗑️ Tüm Alanları Temizle", type="secondary"):
-        st.session_state.raf_boxes = []
-        st.session_state.result_img = None
-        st.rerun()
+    # Çizilen kutuları toplama
+    if canvas_result.json_data is not None:
+        objects = canvas_result.json_data.get("objects", [])
+        for idx, obj in enumerate(objects):
+            if obj.get("type") == "rect":
+                # Sırayla rafları atayalım veya son çizilenleri baz alalım
+                assigned_raf = raflar[idx % len(raflar)].get("raf_numarasi", idx + 1) if idx < len(raflar) else selected_raf_no
+                raf_boxes.append({
+                    "raf_numarasi": assigned_raf,
+                    "x": int(obj["left"]),
+                    "y": int(obj["top"]),
+                    "width": int(obj["width"] * obj["scaleX"]),
+                    "height": int(obj["height"] * obj["scaleY"])
+                })
+
+    if raf_boxes:
+        st.success(f"Toplam {len(raf_boxes)} adet raf alanı algılandı.")
 
 st.divider()
 
-kontrol_aktif = st.session_state.json_data is not None and field_img is not None and len(st.session_state.raf_boxes) > 0
+kontrol_aktif = st.session_state.json_data is not None and field_img is not None and len(raf_boxes) > 0
 
 if st.button("🚀 Sıralamayı Karşılaştır", type="primary", use_container_width=True, disabled=not kontrol_aktif):
     with st.spinner("Görseller işleniyor ve taranıyor, lütfen bekleyin..."):
         try:
-            result_img, summary = analyze_custom_slots(field_img, st.session_state.json_data, st.session_state.raf_boxes)
+            result_img, summary = analyze_custom_slots(field_img, st.session_state.json_data, raf_boxes)
             st.session_state.result_img = result_img
             st.session_state.summary = summary
         except Exception as exc:

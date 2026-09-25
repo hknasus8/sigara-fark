@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-ÖZÇELİK STAND KONTROL UYGULAMASI (HATASIZ TAM SÜRÜM)
+ÖZÇELİK STAND KONTROL UYGULAMASI (GÜNCELLENMİŞ TAM KOD)
 """
 
 import hmac
@@ -18,7 +18,7 @@ from streamlit_drawable_canvas import st_canvas
 # SAYFA YAPILANDIRMASI
 # =========================================================
 st.set_page_config(
-    page_title="Kesin Sıralama dan Uyum Kontrol Paneli",
+    page_title="Kesin Sıralama ve Uyum Kontrol Paneli",
     page_icon="📊",
     layout="wide",
     initial_sidebar_state="collapsed",
@@ -268,12 +268,13 @@ if st.session_state.json_data and st.session_state.field_img is not None:
     pil_img = Image.fromarray(cv2.cvtColor(st.session_state.field_img, cv2.COLOR_BGR2RGB))
     img_w, img_h = pil_img.size
 
+    # Güncellenmiş st_canvas bileşeni (update_streamlit=True yapıldı)
     canvas_result = st_canvas(
         fill_color="rgba(255, 165, 0, 0.3)",
         stroke_width=3,
         stroke_color="red",
         background_image=pil_img,
-        update_streamlit=False,
+        update_streamlit=True,
         height=img_h,
         width=img_w,
         drawing_mode="rect",
@@ -281,23 +282,24 @@ if st.session_state.json_data and st.session_state.field_img is not None:
     )
 
     if st.button("💾 Çizilen Dikdörtgeni Seçili Rafa Kaydet", type="primary"):
-        if canvas_result.json_data is not None:
+        if canvas_result is not None and canvas_result.json_data is not None:
             objects = canvas_result.json_data.get("objects", [])
             if objects:
                 latest_obj = objects[-1]
-                if latest_obj.get("type") == "rect":
-                    box_data = {
-                        "raf_numarasi": selected_raf_no,
-                        "x": int(latest_obj["left"]),
-                        "y": int(latest_obj["top"]),
-                        "width": int(latest_obj["width"] * latest_obj["scaleX"]),
-                        "height": int(latest_obj["height"] * latest_obj["scaleY"])
-                    }
-                    st.session_state.saved_raf_boxes = [b for b in st.session_state.saved_raf_boxes if b["raf_numarasi"] != selected_raf_no]
-                    st.session_state.saved_raf_boxes.append(box_data)
-                    st.success(f"✅ Raf {selected_raf_no} başarıyla kaydedildi!")
+                box_data = {
+                    "raf_numarasi": selected_raf_no,
+                    "x": int(latest_obj["left"]),
+                    "y": int(latest_obj["top"]),
+                    "width": int(latest_obj["width"] * latest_obj.get("scaleX", 1.0)),
+                    "height": int(latest_obj["height"] * latest_obj.get("scaleY", 1.0))
+                }
+                st.session_state.saved_raf_boxes = [b for b in st.session_state.saved_raf_boxes if b["raf_numarasi"] != selected_raf_no]
+                st.session_state.saved_raf_boxes.append(box_data)
+                st.success(f"✅ Raf {selected_raf_no} başarıyla kaydedildi!")
             else:
                 st.warning("⚠️ Lütfen önce görsel üzerinde bir dikdörtgen çizin.")
+        else:
+            st.warning("⚠️ Çizim algılanamadı. Lütfen kutuyu tekrar çizip kaydedin.")
 
     if st.session_state.saved_raf_boxes:
         kayitli_raflar_str = ", ".join([str(b["raf_numarasi"]) for b in st.session_state.saved_raf_boxes])

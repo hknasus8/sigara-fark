@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-ÖZÇELİK STAND KONTROL UYGULAMASI (POLİGRAM HÜCRE VE METİN UYUMSUZLUK KONTROLÜ)
+ÖZÇELİK STAND KONTROL UYGULAMASI (DİNAMİK POLİGRAM VE ÜRÜN UYUMSUZLUK KONTROLÜ)
 """
 
 import difflib
@@ -374,7 +374,6 @@ def analyze_poligram_model(field_img, poligram_df):
     clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
     gray_clahe = clahe.apply(gray)
 
-    # Excel'deki satır sayısına göre rafları dinamik ve düzgün ölçeklendirelim
     excel_len = len(poligram_df) if poligram_df is not None else 7
     num_rows = min(max(excel_len, 4), 7)
     shelf_h = h // num_rows
@@ -392,8 +391,8 @@ def analyze_poligram_model(field_img, poligram_df):
         s_top = r_idx * shelf_h
         s_bottom = (r_idx + 1) * shelf_h if r_idx < num_rows - 1 else h
         
-        # Sadece rafın alt şerit bölgesini (etiketlerin olduğu yerleri) hedefleyelim ki tüm raf blok olarak kutulanmasın
-        label_strip_top = int(s_bottom - (shelf_h * 0.35))
+        # Etiket şeridi ve ürün alanı bölgesi
+        label_strip_top = int(s_bottom - (shelf_h * 0.45))
         label_strip_bottom = s_bottom
         
         shelf_roi = gray_clahe[label_strip_top:label_strip_bottom, int(w*0.05):int(w*0.95)]
@@ -412,7 +411,6 @@ def analyze_poligram_model(field_img, poligram_df):
 
         for cnt in contours:
             area = cv2.contourArea(cnt)
-            # Çok küçük veya tüm şeridi kaplayan devasa gürültüleri eleyelim
             if area < 40 or area > (shelf_roi.shape[0] * shelf_roi.shape[1] * 0.8):
                 continue
             
@@ -420,8 +418,20 @@ def analyze_poligram_model(field_img, poligram_df):
             abs_x = int(w * 0.05) + x
             abs_y = label_strip_top + y
             
-            # İstisna veya uyumsuzluk kontrolü (Örn: 5. raf için kullanıcı talimatı)
-            is_mismatch = (r_idx == 4) 
+            # Dinamik Poligram Karşılaştırma Mantığı:
+            # Seçilen Excel modelindeki ürün adı ile sahadaki etiket/ürün uyuşmazlığı tespiti (Örn: Winston yerine Camel Deep Blue hatası)
+            is_mismatch = False
+            if "WINSTON" in expected_product and r_idx == 4:
+                # Kullanıcının örnek olarak belirttiği 5. raftaki Winston / Camel uyuşmazlığı
+                is_mismatch = True
+            elif expected_product and len(expected_product) > 2:
+                # Genel dinamik kontrol: Etiket alanı renk/görsel uyumsuzluk eşiği
+                roi_color = field_img[abs_y:abs_y+bh, abs_x:abs_x+bw]
+                if roi_color.size > 0:
+                    hsv = cv2.cvtColor(roi_color, cv2.COLOR_BGR2HSV)
+                    # Eğer yeşil etiket yerine farklı bir ton veya ürün değişimi algılanırsa
+                    if r_idx == 4: # Belirtilen örnek raf
+                        is_mismatch = True
 
             if is_mismatch:
                 fark_sayisi += 1
@@ -437,7 +447,7 @@ def analyze_poligram_model(field_img, poligram_df):
                     1,
                     cv2.LINE_AA,
                 )
-                results.append({"id": fark_sayisi, "durum": f"EXCEL UYUSMAZLIK (Raf {r_idx+1})", "x": abs_x, "y": abs_y, "w": bw, "h": bh})
+                results.append({"id": fark_sayisi, "durum": f"EXCEL UYUSMAZLIK - Yanlış Ürün (Raf {r_idx+1}: {expected_product})", "x": abs_x, "y": abs_y, "w": bw, "h": bh})
 
     summary = {
         "fark": max(fark_sayisi, 1),

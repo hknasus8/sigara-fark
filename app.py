@@ -1,43 +1,27 @@
 # -*- coding: utf-8 -*-
 """
-SIGARA STANDI AKILLI DENETIM SISTEMI - v4.0
+SIGARA STANDI AKILLI DENETIM SISTEMI - Streamlit Web Sürümü
 ---------------------------------------------------------
-Onceki surumden (v3.3) duzeltilen hatalar:
-  1) analyze_shelf() her raf icin iki kez cagriliyordu (cizim + ortalama
-     skor hesabi) -> tek seferde hesaplanip sonuc yeniden kullaniliyor.
-  2) Treeview sutun genislik sozlugunde "durum" yerine yanlislikla
-     "decor" anahtari kullanilmisti -> sutun genisligi duzeltildi.
-  3) Gorsel hizalama basarisiz oldugunda kullaniciya bildirilmiyordu
-     -> hizalama durumu hem arayuzde hem raporda gosteriliyor.
-  4) Analiz islemi ana thread'de calisip arayuzu kilitliyordu
-     -> arka plan thread'i + ilerleme cubugu eklendi.
-  5) Rapor basliginda "AKILLİ" / "AKILLI" tutarsizligi vardi
-     -> Turkce buyuk harf kullanimi tutarli hale getirildi.
-  6) Beklenmeyen hatalarda program cokebiliyordu
-     -> analiz calisan thread'de try/except ile korunuyor.
-  7) Sonuc gorseli diske kaydedilemiyordu
-     -> "Gorseli Kaydet" butonu eklendi.
----------------------------------------------------------
+Tkinter bağımlılıkları kaldırılarak Streamlit web arayüzüne 
+uyarlanmıştır. v4.0 çekirdek mantığı birebir korunmaktadır[cite: 1].
 """
 
 import os
-import threading
-import traceback
+import tempfile
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import List, Optional, Tuple
 
 import cv2
 import numpy as np
-import tkinter as tk
-from tkinter import ttk, filedialog, messagebox
-from PIL import Image, ImageTk
+import streamlit as st
+from PIL import Image
 
 
 # ===========================================================
 # AYARLAR (tum esik degerleri tek yerden yonetiliyor)
 # ===========================================================
-class Ayarlar:
+class Ayarlar: #[cite: 1]
     MAX_W = 1100
     MAX_H = 1500
 
@@ -66,8 +50,8 @@ class Ayarlar:
 # ===========================================================
 # DOSYA OKUMA / YAZMA YARDIMCILARI
 # ===========================================================
-def safe_imread(path: str) -> Optional[np.ndarray]:
-    """Turkce karakterli / Windows yollarini da okuyabilen imread."""
+def safe_imread(path: str) -> Optional[np.ndarray]: #[cite: 1]
+    """Türkçe karakterli / Windows yollarını da okuyabilen imread."""
     try:
         data = np.fromfile(path, dtype=np.uint8)
         if data.size == 0:
@@ -77,29 +61,16 @@ def safe_imread(path: str) -> Optional[np.ndarray]:
         return None
 
 
-def safe_imwrite(path: str, image: np.ndarray) -> bool:
-    """Turkce karakterli yollar icin guvenli goruntu kaydi."""
-    try:
-        ext = os.path.splitext(path)[1] or ".jpg"
-        ok, encoded = cv2.imencode(ext, image)
-        if ok:
-            encoded.tofile(path)
-            return True
-    except Exception:
-        pass
-    return False
-
-
 # ===========================================================
 # GORUNTU ISLEME VE HIZALAMA
 # ===========================================================
-def normalize_gray(img: np.ndarray) -> np.ndarray:
+def normalize_gray(img: np.ndarray) -> np.ndarray: #[cite: 1]
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
     clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
     return clahe.apply(gray)
 
 
-def resize_keep_ratio(img: np.ndarray, max_w: int, max_h: int) -> np.ndarray:
+def resize_keep_ratio(img: np.ndarray, max_w: int, max_h: int) -> np.ndarray: #[cite: 1]
     h, w = img.shape[:2]
     scale = min(max_w / w, max_h / h, 1.0)
     if scale == 1.0:
@@ -109,7 +80,7 @@ def resize_keep_ratio(img: np.ndarray, max_w: int, max_h: int) -> np.ndarray:
     )
 
 
-def crop_content(img: np.ndarray, margin_x: float, margin_y: float) -> np.ndarray:
+def crop_content(img: np.ndarray, margin_x: float, margin_y: float) -> np.ndarray: #[cite: 1]
     h, w = img.shape[:2]
     x1 = int(w * margin_x)
     x2 = int(w * (1 - margin_x))
@@ -118,15 +89,7 @@ def crop_content(img: np.ndarray, margin_x: float, margin_y: float) -> np.ndarra
     return img[y1:y2, x1:x2]
 
 
-def align_images(reference: np.ndarray, target: np.ndarray) -> Tuple[np.ndarray, bool, int]:
-    """ORB + homografi ile hedef gorseli referansa hizalar.
-    Donus: (hizalanmis_goruntu, basarili_mi, inlier_sayisi)
-    """
-    # DUZELTME: cv2.findHomography(..., cv2.RANSAC, ...) icsel olarak
-    # rastgele nokta alt kumeleri deneyerek calisir. Sabit bir tohum
-    # verilmezse, AYNI iki fotografla bile her calistirmada FARKLI bir
-    # hizalama (ve dolayisiyla farkli fark sonuclari) uretebiliyordu.
-    # Sabit seed ile sonuc artik deterministik: ayni girdi -> ayni cikti.
+def align_images(reference: np.ndarray, target: np.ndarray) -> Tuple[np.ndarray, bool, int]: #[cite: 1]
     cv2.setRNGSeed(42)
 
     ref = reference.copy()
@@ -190,7 +153,7 @@ def align_images(reference: np.ndarray, target: np.ndarray) -> Tuple[np.ndarray,
 # ===========================================================
 # DINAMIK RAF (BOLGE) ALGILAMA
 # ===========================================================
-def detect_shelf_lines(img: np.ndarray) -> List[int]:
+def detect_shelf_lines(img: np.ndarray) -> List[int]: #[cite: 1]
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
     gray = cv2.GaussianBlur(gray, (5, 5), 0)
     edges = cv2.Canny(gray, 40, 140)
@@ -240,7 +203,7 @@ def detect_shelf_lines(img: np.ndarray) -> List[int]:
     return lines
 
 
-def build_shelves(img: np.ndarray, lines: List[int]) -> List[Tuple[int, int]]:
+def build_shelves(img: np.ndarray, lines: List[int]) -> List[Tuple[int, int]]: #[cite: 1]
     h, w = img.shape[:2]
     valid = sorted(set([0] + lines + [h - 1]))
 
@@ -270,7 +233,7 @@ def build_shelves(img: np.ndarray, lines: List[int]) -> List[Tuple[int, int]]:
 # BOLGE VE AKILLI ACIKLAMALI FARK TESPITI
 # ===========================================================
 @dataclass
-class DiffBox:
+class DiffBox: #[cite: 1]
     x: int
     y: int
     w: int
@@ -283,7 +246,7 @@ class DiffBox:
 
 
 @dataclass
-class ShelfAnalysis:
+class ShelfAnalysis: #[cite: 1]
     y1: int
     y2: int
     change: float = 0.0
@@ -293,7 +256,7 @@ class ShelfAnalysis:
     diff_boxes: List[DiffBox] = field(default_factory=list)
 
 
-def analyze_shelf(ref_gray: np.ndarray, field_gray: np.ndarray, y1: int, y2: int) -> ShelfAnalysis:
+def analyze_shelf(ref_gray: np.ndarray, field_gray: np.ndarray, y1: int, y2: int) -> ShelfAnalysis: #[cite: 1]
     h, w = ref_gray.shape[:2]
     x1 = int(w * 0.03)
     x2 = int(w * 0.97)
@@ -329,20 +292,6 @@ def analyze_shelf(ref_gray: np.ndarray, field_gray: np.ndarray, y1: int, y2: int
         bw = stats[i, cv2.CC_STAT_WIDTH]
         bh = stats[i, cv2.CC_STAT_HEIGHT]
 
-        # DUZELTME (v4.1): oncekı surumde sadece ortalama parlaklik farkina
-        # bakilarak filtreleme yapiliyordu. Bu, bos bir alana urun eklenmesi
-        # / kaldirilmasi gibi GERCEK icerik degisikliklerini de yanlislikla
-        # "isik/golge" sanip siliyordu (cunku bos alan <-> urun gecisi de
-        # ortalama parlakligi buyuk olcude degistirir).
-        #
-        # Simdi hem parlaklik farkina HEM de kutu icindeki kenar (desen)
-        # yapisina birlikte bakiliyor:
-        #   - Parlaklik degismis AMA kenar deseni (aynı urunun hatlari,
-        #     yazilari) hala buyuk olcude ortusuyorsa -> gercekten sadece
-        #     isik/golgedir, atla.
-        #   - Parlaklik degismis VE kenar deseni de tamamen farkliysa
-        #     (bos yer -> urun, ya da farkli bir urun) -> gercek icerik
-        #     degisimidir, listede tut.
         sub_a = a_norm[by - y1: by - y1 + bh, bx - x1: bx - x1 + bw]
         sub_b = b_norm[by - y1: by - y1 + bh, bx - x1: bx - x1 + bw]
 
@@ -359,7 +308,7 @@ def analyze_shelf(ref_gray: np.ndarray, field_gray: np.ndarray, y1: int, y2: int
             and edge_mismatch < Ayarlar.EDGE_MATCH_TOLERANCE
         )
         if is_pure_lighting:
-            continue  # sadece isik/golge -> icerik degisimi degil, atla
+            continue
 
         desc = "Urun / Icerik Degisimi"
         diff_boxes.append(DiffBox(bx, by, bw, bh, desc))
@@ -380,10 +329,10 @@ def analyze_shelf(ref_gray: np.ndarray, field_gray: np.ndarray, y1: int, y2: int
 
 
 # ===========================================================
-# ANALIZ SONUCU VE UC-KATMAN AYRIMI (UI'DAN BAGIMSIZ HESAPLAMA)
+# ANALIZ SONUCU VERI YAPISI
 # ===========================================================
 @dataclass
-class AnalysisResult:
+class AnalysisResult: #[cite: 1]
     result_image: np.ndarray
     total_shelves: int
     total_diffs: int
@@ -391,14 +340,10 @@ class AnalysisResult:
     aligned_ok: bool
     inliers: int
     report_text: str
-    table_rows: List[Tuple[str, str, str, str, str]]  # no, bolge, boyut, aciklama, tag
+    table_rows: List[dict]
 
 
-def run_analysis(orj_path: str, saha_path: str) -> AnalysisResult:
-    """Iki fotografi karsilastirip AnalysisResult uretir.
-    Tum agir islem burada, arayuzden bagimsiz olarak yapilir; boylece
-    arka plan thread'inde calistirilabilir ve tek yerden test edilebilir.
-    """
+def run_analysis(orj_path: str, saha_path: str) -> AnalysisResult: #[cite: 1]
     ref = safe_imread(orj_path)
     field_img = safe_imread(saha_path)
 
@@ -428,7 +373,7 @@ def run_analysis(orj_path: str, saha_path: str) -> AnalysisResult:
     shelf_ranges = build_shelves(ref_work, lines)
 
     result_img = aligned_work.copy()
-    table_rows: List[Tuple[str, str, str, str, str]] = []
+    table_rows: List[dict] = []
     all_diff_items: List[str] = []
     diff_id = 1
     total_diffs = 0
@@ -438,8 +383,6 @@ def run_analysis(orj_path: str, saha_path: str) -> AnalysisResult:
     box_x2 = int(ww * 0.97)
 
     for idx, (y1, y2) in enumerate(shelf_ranges, start=1):
-        # DUZELTME: analyze_shelf artik her raf icin sadece BIR kez
-        # cagriliyor; sonuc hem cizim hem ortalama skor icin kullaniliyor.
         analysis = analyze_shelf(gray_ref, gray_saha, y1, y2)
         shelf_analyses.append(analysis)
 
@@ -452,7 +395,12 @@ def run_analysis(orj_path: str, saha_path: str) -> AnalysisResult:
                     result_img, f"#{diff_id}", (box.x, max(box.y - 5, 12)),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 2, cv2.LINE_AA,
                 )
-                table_rows.append((f"Fark #{diff_id}", f"Bolge {idx}", f"{box.area} px", box.desc, "fark"))
+                table_rows.append({
+                    "Fark No": f"Fark #{diff_id}",
+                    "Bölge": f"Bölge {idx}",
+                    "Alan": f"{box.area} px",
+                    "Akıllı Açıklama": box.desc
+                })
                 all_diff_items.append(
                     f"Fark #{diff_id} -> Bolge {idx} | Aciklama: {box.desc} (Alan: {box.area} px)"
                 )
@@ -462,13 +410,15 @@ def run_analysis(orj_path: str, saha_path: str) -> AnalysisResult:
             cv2.rectangle(result_img, (box_x1, y1), (box_x2, y2), (0, 180, 0), 1)
 
     if total_diffs == 0:
-        table_rows.append(("-", "Tumu", "0 px", "Tam Uyumlu", "normal"))
+        table_rows.append({
+            "Fark No": "-",
+            "Bölge": "Tümü",
+            "Alan": "0 px",
+            "Akıllı Açıklama": "Tam Uyumlu"
+        })
 
     avg_score = float(np.mean([s.score for s in shelf_analyses])) if shelf_analyses else 0.0
 
-    # DUZELTME: rapor artik yalnizca tespit edilen farklari listeliyor;
-    # tarih/dosya/hizalama/bolge gibi ozet bilgiler rapor metninden
-    # cikarildi (bu bilgiler zaten arayuzdeki "Ozet" panelinde gosteriliyor).
     report_lines = [
         "=== DENETIM RAPORU - TESPIT EDILEN FARKLAR ===",
         f"Tarih: {datetime.now().strftime('%d.%m.%Y %H:%M:%S')}",
@@ -489,352 +439,91 @@ def run_analysis(orj_path: str, saha_path: str) -> AnalysisResult:
 
 
 # ===========================================================
-# ANA ARAYUZ
+# STREAMLIT ARAYÜZÜ
 # ===========================================================
-class SigaraFarkDashboard:
-
-    def __init__(self, root: tk.Tk):
-        self.root = root
-        self.root.title("Sigara Standi Akilli Denetim Paneli v4.0")
-        self.root.geometry("1550x950")
-        self.root.minsize(1100, 700)
-        self.root.configure(bg="#15191f")
-
-        self.orj_path = ""
-        self.saha_path = ""
-        self.current_result: Optional[AnalysisResult] = None
-        self.current_cv_image: Optional[np.ndarray] = None
-        self.zoom_factor = 1.0
-        self.is_busy = False
-
-        self.build_ui()
-
-    # -------------------------------------------------------
-    # ARAYUZ KURULUMU
-    # -------------------------------------------------------
-    def build_ui(self):
-        top = tk.Frame(self.root, bg="#20262e", height=65)
-        top.pack(fill=tk.X)
-        top.pack_propagate(False)
-
-        tk.Label(
-            top, text="AKILLI DENETIM SISTEMI",
-            fg="white", bg="#20262e", font=("Arial", 17, "bold")
-        ).pack(side=tk.LEFT, padx=18)
-
-        tk.Label(
-            top, text="Akilli Aciklamali Numaralandirilmis Fark Analizi",
-            fg="#b9c1cc", bg="#20262e", font=("Arial", 10)
-        ).pack(side=tk.LEFT)
-
-        main = tk.Frame(self.root, bg="#15191f")
-        main.pack(fill=tk.BOTH, expand=True, padx=12, pady=12)
-
-        left = tk.Frame(main, bg="#20262e", width=820)
-        left.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(0, 6))
-
-        right = tk.Frame(main, bg="#20262e", width=520)
-        right.pack(side=tk.RIGHT, fill=tk.BOTH, expand=False, padx=(6, 0))
-
-        # --- Dosya secimi ---
-        file_frame = tk.LabelFrame(left, text="Fotograf Secimi", fg="white", bg="#20262e", font=("Arial", 10, "bold"))
-        file_frame.pack(fill=tk.X, padx=12, pady=10)
-
-        f_row1 = tk.Frame(file_frame, bg="#20262e")
-        f_row1.pack(fill=tk.X, padx=8, pady=4)
-        tk.Button(f_row1, text="Orjinal Sec", command=self.select_orj, bg="#3a4350", fg="white", relief=tk.FLAT, width=15).pack(side=tk.LEFT)
-        self.lbl_orj = tk.Label(f_row1, text="Secilmedi", fg="#8fa4b8", bg="#20262e", anchor="w")
-        self.lbl_orj.pack(side=tk.LEFT, padx=10, fill=tk.X, expand=True)
-
-        f_row2 = tk.Frame(file_frame, bg="#20262e")
-        f_row2.pack(fill=tk.X, padx=8, pady=4)
-        tk.Button(f_row2, text="Saha Foto Sec", command=self.select_saha, bg="#3a4350", fg="white", relief=tk.FLAT, width=15).pack(side=tk.LEFT)
-        self.lbl_saha = tk.Label(f_row2, text="Secilmedi", fg="#8fa4b8", bg="#20262e", anchor="w")
-        self.lbl_saha.pack(side=tk.LEFT, padx=10, fill=tk.X, expand=True)
-
-        f_row3 = tk.Frame(file_frame, bg="#20262e")
-        f_row3.pack(fill=tk.X, padx=8, pady=6)
-        self.btn_analiz = tk.Button(
-            f_row3, text="ANALIZ ET VE GORSELI GOSTER", command=self.analiz_et_baslat,
-            bg="#168a45", fg="white", relief=tk.FLAT, font=("Arial", 10, "bold"), padx=12, pady=6
-        )
-        self.btn_analiz.pack(fill=tk.X)
-
-        self.progress = ttk.Progressbar(file_frame, mode="indeterminate")
-        # Sadece analiz sirasinda pack edilir (build_ui'da gizli tutulur).
-
-        # --- Zoom kontrolleri ---
-        zoom_frame = tk.Frame(left, bg="#20262e")
-        zoom_frame.pack(fill=tk.X, padx=12, pady=(0, 6))
-
-        tk.Label(zoom_frame, text="Buyutec:", fg="#b9c1cc", bg="#20262e", font=("Arial", 9, "bold")).pack(side=tk.LEFT, padx=(0, 4))
-        tk.Button(zoom_frame, text=" + Buyut ", command=self.zoom_in, bg="#2c3540", fg="white", relief=tk.FLAT, padx=8, pady=4).pack(side=tk.LEFT, padx=2)
-        tk.Button(zoom_frame, text=" - Kucult ", command=self.zoom_out, bg="#2c3540", fg="white", relief=tk.FLAT, padx=8, pady=4).pack(side=tk.LEFT, padx=2)
-        tk.Button(zoom_frame, text=" Sifirla ", command=self.zoom_reset, bg="#2c3540", fg="white", relief=tk.FLAT, padx=8, pady=4).pack(side=tk.LEFT, padx=2)
-        self.lbl_zoom_info = tk.Label(zoom_frame, text="Oran: %100", fg="#8fa4b8", bg="#20262e", font=("Arial", 9))
-        self.lbl_zoom_info.pack(side=tk.LEFT, padx=10)
-
-        tk.Button(
-            zoom_frame, text="Gorseli Kaydet", command=self.save_image,
-            bg="#2c3540", fg="white", relief=tk.FLAT, padx=8, pady=4
-        ).pack(side=tk.RIGHT, padx=2)
-
-        # --- Goruntu alani ---
-        image_box = tk.LabelFrame(left, text="Analiz Sonucu Gorseli (Isaretli Bolgeler & Numaralar)", fg="white", bg="#20262e", font=("Arial", 10, "bold"))
-        image_box.pack(fill=tk.BOTH, expand=True, padx=12, pady=(0, 10))
-
-        canvas_container = tk.Frame(image_box, bg="#080a0d")
-        canvas_container.pack(fill=tk.BOTH, expand=True)
-
-        self.canvas = tk.Canvas(canvas_container, bg="#080a0d", highlightthickness=0)
-        hbar = ttk.Scrollbar(canvas_container, orient=tk.HORIZONTAL, command=self.canvas.xview)
-        vbar = ttk.Scrollbar(canvas_container, orient=tk.VERTICAL, command=self.canvas.yview)
-        self.canvas.configure(xscrollcommand=hbar.set, yscrollcommand=vbar.set)
-
-        vbar.pack(side=tk.RIGHT, fill=tk.Y)
-        hbar.pack(side=tk.BOTTOM, fill=tk.X)
-        self.canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-
-        self.lbl_durum = tk.Label(
-            left, text="Durum: Lutfen fotograflari secin.", fg="#dfe6ee", bg="#20262e", anchor="w", font=("Arial", 10, "bold")
-        )
-        self.lbl_durum.pack(fill=tk.X, padx=12, pady=(0, 12))
-
-        # --- Sag panel: ozet ---
-        summary = tk.LabelFrame(right, text="Ozet", fg="white", bg="#20262e", font=("Arial", 10, "bold"))
-        summary.pack(fill=tk.X, padx=12, pady=12)
-
-        self.lbl_ozet = tk.Label(
-            summary, text="Henuz analiz yapilmadi.", justify=tk.LEFT, anchor="w",
-            fg="#dfe6ee", bg="#20262e", font=("Arial", 10), padx=10, pady=10
-        )
-        self.lbl_ozet.pack(fill=tk.X)
-
-        # --- Sag panel: tablo ---
-        table_frame = tk.LabelFrame(right, text="Tespit Edilen Numarali Farklar ve Akilli Aciklamalar", fg="white", bg="#20262e", font=("Arial", 10, "bold"))
-        table_frame.pack(fill=tk.BOTH, expand=True, padx=12, pady=(0, 10))
-
-        columns = ("no", "bolge", "boyut", "durum")
-        self.tree = ttk.Treeview(table_frame, columns=columns, show="headings", height=12)
-
-        headings = {"no": "Fark No", "bolge": "Bolge", "boyut": "Alan", "durum": "Akilli Aciklama"}
-        # DUZELTME: sozluk anahtarlari artik gercek sutun adlariyla eslesiyor
-        # (eskiden "durum" yerine yanlislikla "decor" kullanilmisti).
-        widths = {"no": 70, "bolge": 70, "boyut": 90, "durum": 170}
-
-        for col in columns:
-            self.tree.heading(col, text=headings[col])
-            self.tree.column(col, width=widths[col], anchor="center")
-
-        scroll = ttk.Scrollbar(table_frame, orient="vertical", command=self.tree.yview)
-        self.tree.configure(yscrollcommand=scroll.set)
-        self.tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-        scroll.pack(side=tk.RIGHT, fill=tk.Y)
-
-        self.tree.tag_configure("fark", background="#ffd7d7")
-        self.tree.tag_configure("normal", background="#dff5e5")
-
-        # --- Sag panel: rapor ---
-        report_frame = tk.LabelFrame(right, text="Denetim Raporu", fg="white", bg="#20262e", font=("Arial", 10, "bold"))
-        report_frame.pack(fill=tk.BOTH, expand=True, padx=12, pady=(0, 12))
-
-        self.txt_rapor = tk.Text(
-            report_frame, wrap=tk.WORD, bg="#0e1217", fg="#e5ebf2",
-            insertbackground="white", font=("Consolas", 9)
-        )
-        self.txt_rapor.pack(fill=tk.BOTH, expand=True, padx=6, pady=6)
-
-        tk.Button(
-            report_frame, text="Raporu Kaydet", command=self.save_report,
-            bg="#3a4350", fg="white", relief=tk.FLAT, padx=10, pady=7
-        ).pack(fill=tk.X, padx=6, pady=(0, 6))
-
-    # -------------------------------------------------------
-    # DOSYA SECIMI
-    # -------------------------------------------------------
-    def select_orj(self):
-        path = filedialog.askopenfilename(
-            title="Orijinal fotografi secin",
-            filetypes=[("Resim Dosyalari", "*.jpg *.jpeg *.png *.webp")],
-        )
-        if path:
-            self.orj_path = path
-            self.lbl_orj.config(text=os.path.basename(path), fg="#71fc79")
-
-    def select_saha(self):
-        path = filedialog.askopenfilename(
-            title="Sahadan gelen fotografi secin",
-            filetypes=[("Resim Dosyalari", "*.jpg *.jpeg *.png *.webp")],
-        )
-        if path:
-            self.saha_path = path
-            self.lbl_saha.config(text=os.path.basename(path), fg="#71fc79")
-
-    # -------------------------------------------------------
-    # GORUNTU GOSTERIMI / ZOOM
-    # -------------------------------------------------------
-    def show_image(self):
-        if self.current_cv_image is None:
-            return
-
-        img = self.current_cv_image
-        h, w = img.shape[:2]
-
-        new_w = int(w * self.zoom_factor)
-        new_h = int(h * self.zoom_factor)
-
-        resized = cv2.resize(img, (max(50, new_w), max(50, new_h)), interpolation=cv2.INTER_LINEAR)
-        rgb = cv2.cvtColor(resized, cv2.COLOR_BGR2RGB)
-        pil = Image.fromarray(rgb)
-
-        self.tk_img = ImageTk.PhotoImage(pil)
-
-        self.canvas.delete("all")
-        self.canvas.create_image(0, 0, anchor=tk.NW, image=self.tk_img)
-        self.canvas.config(scrollregion=(0, 0, new_w, new_h))
-        self.lbl_zoom_info.config(text=f"Oran: %{int(self.zoom_factor * 100)}")
-
-    def zoom_in(self):
-        if self.current_cv_image is not None:
-            self.zoom_factor = min(5.0, self.zoom_factor + 0.25)
-            self.show_image()
-
-    def zoom_out(self):
-        if self.current_cv_image is not None:
-            self.zoom_factor = max(0.5, self.zoom_factor - 0.25)
-            self.show_image()
-
-    def zoom_reset(self):
-        if self.current_cv_image is not None:
-            self.zoom_factor = 1.0
-            self.show_image()
-
-    # -------------------------------------------------------
-    # ANALIZ (ARKA PLAN THREAD'I ILE)
-    # -------------------------------------------------------
-    def analiz_et_baslat(self):
-        if self.is_busy:
-            return
-
-        if not self.orj_path or not self.saha_path:
-            messagebox.showwarning("Uyari", "Lutfen hem orijinal hem de saha fotografini secin.")
-            return
-
-        if self.orj_path == self.saha_path:
-            messagebox.showwarning("Uyari", "Orijinal ve saha fotografi ayni dosya olamaz.")
-            return
-
-        self.is_busy = True
-        self.btn_analiz.config(state=tk.DISABLED, text="ANALIZ EDILIYOR...")
-        self.progress.pack(fill=tk.X, padx=8, pady=(0, 6))
-        self.progress.start(12)
-        self.lbl_durum.configure(text="Durum: Goruntuler hizalaniyor ve akilli farklar tespit ediliyor...")
-
-        # DUZELTME: agir islem artik ayri bir thread'de calisiyor,
-        # boylece arayuz analiz surerken kilitlenmiyor.
-        orj_path, saha_path = self.orj_path, self.saha_path
-        thread = threading.Thread(target=self._analiz_worker, args=(orj_path, saha_path), daemon=True)
-        thread.start()
-
-    def _analiz_worker(self, orj_path: str, saha_path: str):
-        try:
-            result = run_analysis(orj_path, saha_path)
-            self.root.after(0, self._analiz_bitti, result, None)
-        except Exception as exc:
-            traceback.print_exc()
-            self.root.after(0, self._analiz_bitti, None, str(exc))
-
-    def _analiz_bitti(self, result: Optional[AnalysisResult], error: Optional[str]):
-        self.progress.stop()
-        self.progress.pack_forget()
-        self.btn_analiz.config(state=tk.NORMAL, text="ANALIZ ET VE GORSELI GOSTER")
-        self.is_busy = False
-
-        if error is not None:
-            messagebox.showerror("Hata", f"Analiz sirasinda bir hata olustu:\n\n{error}")
-            self.lbl_durum.configure(text="Durum: Analiz basarisiz oldu.")
-            return
-
-        assert result is not None
-
-        for item in self.tree.get_children():
-            self.tree.delete(item)
-        for no, bolge, boyut, aciklama, tag in result.table_rows:
-            self.tree.insert("", tk.END, values=(no, bolge, boyut, aciklama), tags=(tag,))
-
-        self.txt_rapor.delete("1.0", tk.END)
-        self.txt_rapor.insert(tk.END, result.report_text)
-
-        self.current_cv_image = result.result_image
-        self.zoom_factor = 1.0
-        self.show_image()
-
-        hizalama_uyarisi = "" if result.aligned_ok else "\n[!] Hizalama basarisiz oldu, sonuclar guvenilir olmayabilir."
-        self.lbl_ozet.configure(
-            text=(
-                f"Algilanan Bolge: {result.total_shelves}\n"
-                f"Toplam Fark: {result.total_diffs}\n"
-                f"Ort. Skor: %{result.avg_score * 100:.1f}"
-                f"{hizalama_uyarisi}"
-            )
-        )
-
-        durum_metni = f"Durum: Analiz tamamlandi. {result.total_diffs} fark akilli aciklamalarla listelendi."
-        if not result.aligned_ok:
-            durum_metni += " (Uyari: goruntu hizalama basarisiz oldu)"
-        self.lbl_durum.configure(text=durum_metni)
-
-        self.current_result = result
-
-    # -------------------------------------------------------
-    # KAYIT ISLEMLERI
-    # -------------------------------------------------------
-    def save_report(self):
-        if not self.current_result:
-            messagebox.showinfo("Bilgi", "Once analiz yapin.")
-            return
-        path = filedialog.asksaveasfilename(defaultextension=".txt", filetypes=[("Metin dosyasi", "*.txt")])
-        if path:
-            try:
-                with open(path, "w", encoding="utf-8") as f:
-                    f.write(self.current_result.report_text)
-                messagebox.showinfo("Basarili", "Rapor kaydedildi.")
-            except Exception as e:
-                messagebox.showerror("Hata", str(e))
-
-    def save_image(self):
-        if self.current_cv_image is None:
-            messagebox.showinfo("Bilgi", "Once analiz yapin.")
-            return
-        path = filedialog.asksaveasfilename(
-            defaultextension=".jpg",
-            filetypes=[("JPEG", "*.jpg"), ("PNG", "*.png")],
-        )
-        if path:
-            if safe_imwrite(path, self.current_cv_image):
-                messagebox.showinfo("Basarili", "Gorsel kaydedildi.")
-            else:
-                messagebox.showerror("Hata", "Gorsel kaydedilemedi.")
-
-
-def main():
-    root = tk.Tk()
-    try:
-        from ctypes import windll
-        windll.shcore.SetProcessDpiAwareness(1)
-    except Exception:
-        pass
-
-    try:
-        app = SigaraFarkDashboard(root)
-        root.mainloop()
-    except Exception:
-        traceback.print_exc()
-        try:
-            messagebox.showerror("Beklenmeyen Hata", "Uygulama baslatilirken bir hata olustu.\nDetaylar konsolda.")
-        except Exception:
-            pass
-
-
-if __name__ == "__main__":
-    main()
+st.set_page_config(page_title="Sigara Standı Akıllı Denetim Paneli", layout="wide")
+
+st.title("Sigara Standı Akıllı Denetim Paneli")
+st.markdown("Akıllı Açıklamalı Numaralandırılmış Fark Analizi v4.0")
+st.markdown("---")
+
+col_upload1, col_upload2 = st.columns(2)
+
+with col_upload1:
+    uploaded_orj = st.file_uploader("Orijinal Fotoğrafı Seçin", type=["jpg", "jpeg", "png", "webp"])
+
+with col_upload2:
+    uploaded_saha = st.file_uploader("Sahadan Gelen Fotoğrafı Seçin", type=["jpg", "jpeg", "png", "webp"])
+
+if uploaded_orj and uploaded_saha:
+    # Geçici dosyalar oluşturarak yol uyumluluğunu sağla
+    with tempfile.NamedTemporaryFile(delete=False, suffix=".jpg") as f_orj:
+        f_orj.write(uploaded_orj.getvalue())
+        orj_path = f_orj.name
+
+    with tempfile.NamedTemporaryFile(delete=False, suffix=".jpg") as f_saha:
+        f_saha.write(uploaded_saha.getvalue())
+        saha_path = f_saha.name
+
+    if st.button("ANALİZ ET VE GÖRSELİ GÖSTER", type="primary", use_container_width=True):
+        if orj_path == saha_path:
+            st.warning("Orijinal ve saha fotoğrafı aynı dosya olamaz.")
+        else:
+            with st.spinner("Görüntüler hizalanıyor ve akıllı farklar tespit ediliyor..."):
+                try:
+                    result = run_analysis(orj_path, saha_path)
+                    
+                    st.success(f"Analiz tamamlandı. Toplam {result.total_diffs} fark tespit edildi.")
+                    
+                    # Özet Bilgiler
+                    col_info1, col_info2, col_info3 = st.columns(3)
+                    col_info1.metric("Algılanan Bölge", result.total_shelves)
+                    col_info2.metric("Toplam Fark", result.total_diffs)
+                    col_info3.metric("Ortalama Skor", f"%{result.avg_score * 100:.1f}")
+
+                    if not result.aligned_ok:
+                        st.warning("[!] Görüntü hizalama başarısız oldu, sonuçlar güvenilir olmayabilir.")
+
+                    # Sonuç Görseli ve Tablo Düzeni
+                    col_res1, col_res2 = st.columns([1.3, 1])
+
+                    with col_res1:
+                        st.subheader("İşaretli Sonuç Görseli")
+                        result_rgb = cv2.cvtColor(result.result_image, cv2.COLOR_BGR2RGB)
+                        st.image(result_rgb, use_container_width=True)
+
+                        # Görsel İndirme Butonu
+                        is_success, encoded_img = cv2.imencode(".jpg", result.result_image)
+                        if is_success:
+                            st.download_button(
+                                label="Sonuç Görselini İndir",
+                                data=encoded_img.tobytes(),
+                                file_name=f"analiz_sonucu_{datetime.now().strftime('%Y%m%d_%H%M%S')}.jpg",
+                                mime="image/jpeg"
+                            )
+
+                    with col_res2:
+                        st.subheader("Tespit Edilen Farklar")
+                        st.dataframe(result.table_rows, use_container_width=True)
+
+                        st.subheader("Denetim Raporu")
+                        st.text_area("Rapor İçeriği", result.report_text, height=150)
+                        
+                        st.download_button(
+                            label="Raporu Metin Olarak İndir",
+                            data=result.report_text,
+                            file_name=f"denetim_raporu_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt",
+                            mime="text/plain"
+                        )
+
+                except Exception as exc:
+                    st.error(f"Analiz sırasında bir hata oluştu:\n{exc}")
+
+                finally:
+                    # Geçici dosyaları temizle
+                    if os.path.exists(orj_path):
+                        os.unlink(orj_path)
+                    if os.path.exists(saha_path):
+                        os.unlink(saha_path)
+else:
+    st.info("Lütfen analiz için her iki fotoğrafı da yükleyin.")
